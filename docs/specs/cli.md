@@ -82,8 +82,9 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 
 | Field | Meaning |
 | --- | --- |
-| `paused` | Whether spawns are refused. |
-| `workers[]` | `name`, `issue`, `pr` (or null), `session_name`, `session`, `activity` (`working`, `waiting`, `done`, `failed` or `unknown`), `waiting_for` (or null), `context` (the transcript reading, or null) and `wake_cost` (`{"estimated_tokens": n}`, or null). |
+| `paused` | Whether the fleet is paused (`orchestral pause`). |
+| `workers[]` | `name`, `issue`, `pr` (or null), `session_name`, `session`, `activity` (`working`, `waiting`, `done`, `failed` or `unknown`), `waiting_for` (`waitingFor`, or `blocked` when the session's `state` is `blocked`, or null), `context` (or null) and `wake_cost` (`{"estimated_tokens": n}`, or null). |
+| `workers[].context` | `tokens`, `model`, `identity`, `window`, `percent`, `last_request_at`, `compactions` (each `at` and `post_tokens`), `cache_ttl` in seconds and `warm`, as defined in [Claude Code internals](claude-code-internals.md). |
 | `worker_cap` | The policy's `workers`. |
 | `limits` | The output of `orchestral limits --json`. |
 | `budget` | `used` (`{"estimated_tokens": n}`, or null when it can't be read), `fleet_token_budget` and `run_started_at`. |

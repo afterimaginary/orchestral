@@ -71,19 +71,25 @@ pub fn status(cwd: &Path) -> Result<Status, Failure> {
     let mut warnings = Vec::new();
 
     let agents = sessions::agents(Path::new("claude"))
-        .map_err(|err| warnings.push(format!("sessions are unknown: {}", message(&err))))
-        .unwrap_or_default();
+        .map_err(|err| warnings.push(format!("sessions are unknown: {}", message(&err))));
     let prs = open_prs()
         .map_err(|err| warnings.push(format!("PRs are unknown: {err}")))
         .unwrap_or_default();
-    let used = gate::fleet_usage(&state, &main)
-        .map_err(|err| warnings.push(format!("budget usage is unknown: {}", message(&err))))
-        .ok();
+    // Without the sessions, worker usage can't be found, so it's unknown
+    // rather than undercounted.
+    let used = match &agents {
+        Ok(agents) => gate::fleet_usage(&state, &main, agents)
+            .map_err(|err| warnings.push(format!("budget usage is unknown: {}", message(&err))))
+            .ok(),
+        Err(()) if state.run_started_at.is_none() => Some(Estimate::default()),
+        Err(()) => None,
+    };
+    let agents = agents.unwrap_or_default();
     let limits = limits::read();
 
     Ok(Status {
         paused: state.paused,
-        workers: workers(&state, &agents, &prs, Timestamp::now()),
+        workers: workers(&state, &agents, &prs, Timestamp::now(), &mut warnings),
         worker_cap: policy.settings.workers,
         limits,
         budget: Budget {
@@ -100,6 +106,7 @@ fn workers(
     agents: &[Agent],
     prs: &[(String, u64)],
     now: Timestamp,
+    warnings: &mut Vec<String>,
 ) -> Vec<WorkerStatus> {
     let projects = transcript::projects_dir();
     let organization = organization();
@@ -113,7 +120,11 @@ fn workers(
             let context = agent.and_then(|agent| {
                 let path =
                     transcript::find(projects.as_deref()?, &worker.worktree, &agent.session_id)?;
-                transcript::read(&path, now, organization.as_deref()).ok()
+                transcript::read(&path, now, organization.as_deref())
+                    .map_err(|err| {
+                        warnings.push(format!("{name}'s context is unknown: {}", message(&err)))
+                    })
+                    .ok()
             });
             let (activity, waiting_for) = match agent.map(Agent::activity) {
                 Some(Activity::Working) => ("working", None),

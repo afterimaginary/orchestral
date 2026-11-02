@@ -101,6 +101,13 @@ impl Fleet {
         }
     }
 
+    fn start_run(&self) {
+        Store::for_repo(&self.main)
+            .unwrap()
+            .update(|state| state.run_started_at = Some("2026-01-01T00:00:00Z".into()))
+            .unwrap();
+    }
+
     fn reads_everything(&self) {
         let worktree = self.main.join(".claude/worktrees/issue-12");
         self.stubs.respond(
@@ -234,4 +241,69 @@ fn parts_that_cant_be_read_are_warnings() {
     );
     assert!(text.contains("warning: sessions are unknown"), "{text}");
     assert!(text.contains("warning: PRs are unknown"), "{text}");
+}
+
+#[test]
+fn a_started_run_shows_its_usage() {
+    let fleet = Fleet::new();
+    fleet.start_run();
+    fleet.reads_everything();
+
+    let text = stdout(&fleet.status(&[]));
+    let json: Value = serde_json::from_str(stdout(&fleet.status(&["--json"])).trim_end()).unwrap();
+
+    let budget = text.lines().nth(1).unwrap();
+    assert!(budget.starts_with("Budget: about "), "{text}");
+    assert!(
+        budget.ends_with(" tokens (estimate) of 1000 used this run"),
+        "{text}"
+    );
+    assert!(json["budget"]["used"]["estimated_tokens"].as_u64().unwrap() > 0);
+    // The worker rows and the budget come from one `claude agents` call.
+    let agents_calls = fleet
+        .stubs
+        .calls("claude")
+        .iter()
+        .filter(|call| call[0] == "agents")
+        .count();
+    assert_eq!(agents_calls, 2, "one per status run");
+}
+
+#[test]
+fn usage_is_unknown_when_the_sessions_are() {
+    let fleet = Fleet::new();
+    fleet.start_run();
+
+    let text = stdout(&fleet.status(&[]));
+
+    assert_eq!(
+        text.lines().nth(1),
+        Some("Budget: usage unknown, of 1000"),
+        "{text}"
+    );
+    assert_eq!(
+        text.matches("warning: sessions are unknown").count(),
+        1,
+        "{text}"
+    );
+}
+
+#[test]
+fn an_unreadable_transcript_is_a_warning() {
+    let fleet = Fleet::new();
+    fleet.reads_everything();
+    let worktree = fleet.main.join(".claude/worktrees/issue-12");
+    let path = fleet
+        .config
+        .join("projects")
+        .join(project_dir_name(&worktree))
+        .join(format!("{SESSION}.jsonl"));
+    fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
+
+    let text = stdout(&fleet.status(&[]));
+
+    assert!(
+        text.contains("warning: issue-12's context is unknown"),
+        "{text}"
+    );
 }

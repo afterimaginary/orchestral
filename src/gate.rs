@@ -11,7 +11,7 @@ use crate::budget::{self, Estimate};
 use crate::limits::{self, Limits};
 use crate::outcome::Failure;
 use crate::policy::Settings;
-use crate::sessions;
+use crate::sessions::Agent;
 use crate::state::{State, Store};
 use crate::transcript;
 
@@ -77,8 +77,9 @@ pub fn check_budget(used: &Estimate, settings: &Settings) -> Result<(), Failure>
 }
 
 /// What the run has used: every fleet session's transcript since the run
-/// started. Before a run has started, nothing is read.
-pub fn fleet_usage(state: &State, main: &Path) -> Result<Estimate, Failure> {
+/// started, finding worker sessions in `agents`. Before a run has started,
+/// nothing is read.
+pub fn fleet_usage(state: &State, main: &Path, agents: &[Agent]) -> Result<Estimate, Failure> {
     let Some(started) = &state.run_started_at else {
         return Ok(Estimate::default());
     };
@@ -88,7 +89,6 @@ pub fn fleet_usage(state: &State, main: &Path) -> Result<Estimate, Failure> {
     let Some(projects) = transcript::projects_dir() else {
         return Ok(Estimate::default());
     };
-    let agents = sessions::agents(Path::new("claude"))?;
     let mut transcripts: Vec<PathBuf> = Vec::new();
     for worker in state.workers.values() {
         let session = agents
