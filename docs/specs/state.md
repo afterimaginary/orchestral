@@ -11,6 +11,8 @@ State lives in `orchestral/` inside the repository's git common directory, which
 | `state.json` | The current state. |
 | `events.jsonl` | Every event, one per line, append-only. |
 | `lock` | The advisory lock. Its contents don't matter. |
+| `supervisor.pid` | The running supervisor, as `{"pid": n, "started": "<ps lstart>"}`. The start time tells it from a later process that reuses the pid. |
+| `logs/supervisor.log` | The supervisor's log, one timestamped line per entry. |
 
 ## `state.json`
 
@@ -23,7 +25,7 @@ A JSON object with a `schema` version, currently `4`. A file with any other vers
 | `workers` | Each worker by name: its session name, issue, model, effort, worktree, branch, the job id `claude --bg` printed (null until launched) and when it was created. |
 | `orchestrator` | The session that claimed the repository, as its session id and when it claimed, or null. |
 | `paused` | Whether the fleet is paused. While it is, spawns are refused. |
-| `run_started_at` | When the current run started, in RFC 3339 UTC, or null before the first run. The fleet budget counts from here. |
+| `run_started_at` | When the current run started, in RFC 3339 UTC, or null before the first run. The supervisor sets it when it starts with no worker open, and the fleet budget counts from here. |
 
 Later features add their own fields here. Any change to the fields raises `schema`, so an older binary refuses the file rather than dropping fields it doesn't know.
 
