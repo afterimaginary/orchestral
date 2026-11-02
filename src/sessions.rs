@@ -77,18 +77,16 @@ pub fn is_alive(record: &Record, process: Option<&Process>, now_ms: i64) -> bool
         return false;
     };
     match (&record.proc_start, record.started_at) {
-        (Some(proc_start), _) => normalize(proc_start) == normalize(&process.started),
+        // ps pads a single-digit day with a space, so compare words.
+        (Some(proc_start), _) => proc_start
+            .split_whitespace()
+            .eq(process.started.split_whitespace()),
         (None, Some(started_at)) => {
             let real_start_ms = now_ms - process.elapsed * 1000;
             (real_start_ms - started_at).abs() <= START_TOLERANCE * 1000
         }
         (None, None) => false,
     }
-}
-
-/// `ps` pads single-digit days with a space, so compare words.
-fn normalize(time: &str) -> String {
-    time.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Looks up a process with `ps`, in UTC and the C locale so its start time
