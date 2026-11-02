@@ -5,6 +5,7 @@
 //! replaced atomically through a temp file and rename, so a reader never sees
 //! a partial write and doesn't need the lock.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -15,13 +16,15 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
     pub schema: u32,
     /// The `seq` the next event gets.
     pub next_seq: u64,
+    /// Workers by name.
+    pub workers: BTreeMap<String, Worker>,
 }
 
 impl Default for State {
@@ -29,8 +32,25 @@ impl Default for State {
         State {
             schema: SCHEMA,
             next_seq: 1,
+            workers: BTreeMap::new(),
         }
     }
+}
+
+/// A worker session and its worktree.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct Worker {
+    /// `<repo slug>-<name>`.
+    pub session_name: String,
+    pub issue: u64,
+    pub model: String,
+    pub effort: String,
+    pub worktree: PathBuf,
+    pub branch: String,
+    /// The id `claude --bg` printed, once the launch succeeded.
+    pub job_id: Option<String>,
+    /// RFC 3339, in UTC.
+    pub created_at: String,
 }
 
 /// One line of `events.jsonl`.

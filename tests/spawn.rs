@@ -1,0 +1,318 @@
+//! `orchestral spawn` against a local origin, with a stub `claude`.
+
+mod common;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use common::Stubs;
+use orchestral::sessions;
+use orchestral::state::Store;
+use serde_json::{Value, json};
+use tempfile::TempDir;
+
+const ORCHESTRATOR: &str = "00000000-0000-4000-8000-0000000000c1";
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git should run");
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+}
+
+/// A bare origin whose `main` has a policy, a clone of it named `app`, and a
+/// Claude config directory.
+struct Repo {
+    dir: TempDir,
+    main: PathBuf,
+    stubs: Stubs,
+}
+
+impl Repo {
+    fn new() -> Self {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        git(&root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(&root, &["clone", "-q", "origin.git", "app"]);
+        let main = root.join("app");
+        fs::create_dir(main.join(".orchestral")).unwrap();
+        fs::write(
+            main.join(".orchestral/policy.md"),
+            "---\nfleet_token_budget: 1000\ndefault_model: claude-sonnet-5-5\ndefault_effort: medium\n---\nRules.\n",
+        )
+        .unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-q", "-m", "policy"]);
+        git(&main, &["push", "-q", "origin", "main"]);
+        fs::create_dir(root.join("config")).unwrap();
+
+        let stubs = Stubs::new();
+        stubs.respond(
+            "claude",
+            &["plugin", "list", "--json"],
+            r#"[{"id":"orchestral@local","enabled":true},{"id":"other@market","enabled":true}]"#,
+            0,
+        );
+        Repo { dir, main, stubs }
+    }
+
+    fn config(&self) -> PathBuf {
+        self.dir.path().canonicalize().unwrap().join("config")
+    }
+
+    fn launches(&self, stdout: &str, code: i32) {
+        self.stubs.respond("claude", &["--bg"], stdout, code);
+    }
+
+    fn spawn(&self, args: &[&str]) -> Output {
+        self.stubs
+            .orchestral()
+            .arg("spawn")
+            .args(args)
+            .current_dir(&self.main)
+            .env("CLAUDE_CONFIG_DIR", self.config())
+            .env("CLAUDE_CODE_SESSION_ID", ORCHESTRATOR)
+            .output()
+            .unwrap()
+    }
+
+    fn store(&self) -> Store {
+        Store::for_repo(&self.main).unwrap()
+    }
+
+    fn worker_file(&self, name: &str, file: &str) -> String {
+        fs::read_to_string(self.store().dir().join("workers").join(name).join(file)).unwrap()
+    }
+
+    fn bg_calls(&self) -> Vec<Vec<String>> {
+        self.stubs
+            .calls("claude")
+            .into_iter()
+            .filter(|call| call.first().map(String::as_str) == Some("--bg"))
+            .collect()
+    }
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+const STARTED: &str = "backgrounded · 558b988a · app-issue-12\n  claude agents   list sessions\n";
+
+#[test]
+fn starts_a_worker_in_its_own_worktree() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Implement #12."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let worktree = repo.main.join(".claude/worktrees/issue-12");
+    assert!(stdout(&output).starts_with("Started issue-12 as app-issue-12 (job 558b988a)"));
+    assert!(worktree.join(".orchestral/policy.md").exists());
+
+    let settings_path = repo.store().dir().join("workers/issue-12/settings.json");
+    let prompt_path = repo.store().dir().join("workers/issue-12/prompt.md");
+    let expected: Vec<String> = [
+        "--bg",
+        "--name",
+        "app-issue-12",
+        "--remote-control",
+        "app-issue-12",
+        "--settings",
+        settings_path.to_str().unwrap(),
+        "--append-system-prompt-file",
+        prompt_path.to_str().unwrap(),
+        "--permission-mode",
+        "auto",
+        "--model",
+        "claude-sonnet-5-5",
+        "--effort",
+        "medium",
+        "--",
+        "Implement #12.",
+    ]
+    .map(String::from)
+    .to_vec();
+    assert_eq!(repo.bg_calls(), vec![expected]);
+
+    let state = repo.store().read().unwrap();
+    let worker = &state.workers["issue-12"];
+    assert_eq!(worker.job_id.as_deref(), Some("558b988a"));
+    assert_eq!(worker.issue, 12);
+    assert_eq!(worker.branch, "issue-12");
+    assert_eq!(worker.worktree, worktree);
+
+    let exclude = fs::read_to_string(repo.main.join(".git/info/exclude")).unwrap();
+    assert!(exclude.lines().any(|line| line == "/.claude/worktrees/"));
+}
+
+#[test]
+fn the_worker_gets_its_own_settings_and_prompt() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+
+    repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    let settings: Value =
+        serde_json::from_str(&repo.worker_file("issue-12", "settings.json")).unwrap();
+    assert_eq!(settings["crossSessionInbound"], "accept");
+    assert_eq!(settings["worktree"]["bgIsolation"], "none");
+    assert_eq!(
+        settings["enabledPlugins"],
+        json!({"orchestral@local": false})
+    );
+    assert_eq!(settings["env"]["ORCHESTRAL_WORKER"], "issue-12");
+    assert_eq!(
+        settings["env"]["ORCHESTRAL_REPO"],
+        repo.main.to_str().unwrap()
+    );
+    assert!(
+        settings["env"]["PATH"]
+            .as_str()
+            .unwrap()
+            .contains(repo.stubs.dir().to_str().unwrap())
+    );
+    let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(
+        hook.starts_with('/') && hook.ends_with(" hook worker-guard"),
+        "{hook}"
+    );
+
+    let prompt = repo.worker_file("issue-12", "prompt.md");
+    assert!(prompt.contains(&format!("Your orchestrator is {ORCHESTRATOR}.")));
+}
+
+#[test]
+fn model_and_effort_override_the_policy() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+
+    repo.spawn(&[
+        "issue-12",
+        "--issue",
+        "12",
+        "--model",
+        "claude-opus-5-5",
+        "--effort",
+        "xhigh",
+        "--prompt",
+        "Go.",
+    ]);
+
+    let call = &repo.bg_calls()[0];
+    let after = |flag: &str| &call[call.iter().position(|arg| arg == flag).unwrap() + 1];
+    assert_eq!(after("--model"), "claude-opus-5-5");
+    assert_eq!(after("--effort"), "xhigh");
+}
+
+#[test]
+fn a_worker_name_in_use_is_refused() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+    repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    let output = repo.spawn(&["issue-12", "--issue", "13", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("a worker named issue-12 already exists"));
+    assert_eq!(repo.bg_calls().len(), 1);
+}
+
+#[test]
+fn a_live_session_with_the_name_is_refused() {
+    let repo = Repo::new();
+    // This test's own process stands in for the live session.
+    let pid = std::process::id();
+    let started = sessions::process(pid).unwrap().unwrap().started;
+    let records = repo.config().join("sessions");
+    fs::create_dir(&records).unwrap();
+    fs::write(
+        records.join(format!("{pid}.json")),
+        json!({"pid": pid, "sessionId": "s", "cwd": "/", "name": "app-issue-12", "procStart": started}).to_string(),
+    )
+    .unwrap();
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("a live session is already named app-issue-12"));
+    assert!(repo.bg_calls().is_empty());
+    assert!(!repo.main.join(".claude/worktrees/issue-12").exists());
+}
+
+#[test]
+fn a_session_name_over_32_characters_is_refused() {
+    let repo = Repo::new();
+
+    let output = repo.spawn(&[
+        "a-very-long-worker-name-indeed",
+        "--issue",
+        "12",
+        "--prompt",
+        "Go.",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("longer than 32 characters"));
+}
+
+#[test]
+fn a_failed_launch_is_undone_so_the_name_can_be_retried() {
+    let repo = Repo::new();
+    repo.launches("", 1);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("didn't start app-issue-12"));
+    assert!(repo.store().read().unwrap().workers.is_empty());
+    assert!(!repo.main.join(".claude/worktrees/issue-12").exists());
+    let branch = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "refs/heads/issue-12"])
+        .current_dir(&repo.main)
+        .status()
+        .unwrap();
+    assert!(!branch.success());
+}
+
+#[test]
+fn an_untrusted_repository_is_refused_with_how_to_trust_it() {
+    let repo = Repo::new();
+    // As 2.1.314 prints it, with the worktree's path.
+    repo.launches(
+        "Workspace not trusted. Run `claude` in /x/.claude/worktrees/issue-12 once and accept the trust prompt, then retry.\n",
+        1,
+    );
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let main = repo.main.display();
+    assert!(stderr(&output).contains(&format!(
+        "fix: run `claude` in {main} once and accept the trust prompt"
+    )));
+}
+
+#[test]
+fn the_worker_guard_allows_commands_for_now() {
+    let stubs = Stubs::new();
+
+    let output = stubs
+        .orchestral()
+        .args(["hook", "worker-guard"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+}

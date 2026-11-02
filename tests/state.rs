@@ -108,7 +108,7 @@ fn a_state_from_another_schema_is_a_schema_error() {
     // Another schema can have another shape, here with no `next_seq`.
     fs::write(
         dir.path().join("state.json"),
-        r#"{"schema": 2, "workers": {}}"#,
+        r#"{"schema": 99, "agents": []}"#,
     )
     .unwrap();
 
@@ -116,7 +116,7 @@ fn a_state_from_another_schema_is_a_schema_error() {
         panic!("expected an error");
     };
 
-    assert!(message.contains("has schema 2"), "{message}");
+    assert!(message.contains("has schema 99"), "{message}");
 }
 
 #[test]
