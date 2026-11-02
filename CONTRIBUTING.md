@@ -15,10 +15,10 @@ Requires a Rust toolchain. To run `make ready` before every push:
 git config core.hooksPath .githooks
 ```
 
-| Command       | Does                                                                     |
-| ------------- | ------------------------------------------------------------------------ |
-| `make ready`  | Format check, lints and tests. Run it before opening a pull request.     |
-| `make verify` | `ready`, a release build and plugin validation. CI runs it on every PR.  |
+| Command       | Does                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `make ready`  | Format check, lints, unit tests and CLI tests. Run it before opening a pull request.          |
+| `make verify` | `ready`, integration tests, a release build and plugin validation. CI runs it on every PR.   |
 
 ## Pull requests
 
