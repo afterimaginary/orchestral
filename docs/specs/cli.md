@@ -88,11 +88,11 @@ Hooks that stop a worker by accident doing what only the owner or the supervisor
 `hook worker-guard` is the `PreToolUse` hook on `Bash` in every worker's settings. It reads the hook event on stdin and prints a deny decision, with a reason the worker sees, for:
 
 - `gh pr merge`, and `gh api` on `…/pulls/<n>/merge`
-- `gh pr review` with `--approve` or `-a`
-- `git push` with a refspec whose destination is `main`
-- `/approve` or `/hold` as a word in any command that runs `gh`, or in a body file it names with `--body-file`, `-F`, or `-F body=@<file>` (ADR-0005)
+- `gh pr review` with `--approve` or `-a`, and `gh api` with `event=APPROVE`
+- `git push` with a refspec whose destination is `main`, or with `--all` or `--mirror`
+- `/approve` or `/hold` as a word in a command that posts through `gh pr comment`, `gh issue comment`, `gh pr review` or `gh api`, or in a body file it names with `--body-file`, `-F`, or `-F body=@<file>` (ADR-0005). The whole command is checked, so a heredoc body counts.
 
-Commands are split at `;`, `&`, `|`, parentheses and newlines, with quotes removed. Anything else is allowed, with no output.
+Commands are split at `;`, `&`, `|`, parentheses and newlines, with quotes and line continuations removed. Flags before a subcommand, such as `gh -R owner/app pr merge` or `git -C app push`, are skipped. Anything else is allowed, with no output.
 
 `hook pre-push` is a git pre-push hook. When `ORCHESTRAL_WORKER` is set, it rejects a push whose remote ref is `refs/heads/main`. Without it, as in the owner's own shell, every push goes through. Installing it into a project is separate.
 

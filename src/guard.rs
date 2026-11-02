@@ -66,39 +66,72 @@ pub fn pre_push() -> Result<(), Failure> {
 
 /// Why `command` is denied, if it is. Relative body files are read from
 /// `cwd`.
-pub fn denial(command: &str, cwd: &Path) -> Option<&'static str> {
+fn denial(command: &str, cwd: &Path) -> Option<&'static str> {
     let segments = segments(command);
-    let mut uses_gh = false;
+    let mut posting = vec![];
     for words in &segments {
         if let Some(gh) = words.iter().position(|w| is_program(w, "gh")) {
-            uses_gh = true;
             let args = &words[gh + 1..];
-            if has_pair(args, "pr", "merge") || is_api_merge(args) {
+            let names = subcommand(args, &["-R", "--repo"]);
+            let approves = args.iter().any(|a| a == "--approve" || a == "-a")
+                || args.iter().any(|a| a.eq_ignore_ascii_case("event=APPROVE"));
+            if names.starts_with(&["pr", "merge"]) || is_api_merge(args) {
                 return Some("Merging a PR is denied.");
             }
-            if has_pair(args, "pr", "review") && args.iter().any(|a| a == "--approve" || a == "-a")
-            {
+            if (names.starts_with(&["pr", "review"]) || names.starts_with(&["api"])) && approves {
                 return Some("Approving a PR is denied.");
             }
+            if names.starts_with(&["pr", "comment"])
+                || names.starts_with(&["issue", "comment"])
+                || names.starts_with(&["pr", "review"])
+                || names.starts_with(&["api"])
+            {
+                posting.push(words);
+            }
         }
-        if let Some(git) = words.iter().position(|w| is_program(w, "git"))
-            && let Some(push) = words[git + 1..].iter().position(|w| w == "push")
-            && words[git + 1 + push + 1..].iter().any(|w| targets_main(w))
-        {
-            return Some("Pushing to main is denied.");
+        if let Some(git) = words.iter().position(|w| is_program(w, "git")) {
+            let args = &words[git + 1..];
+            if subcommand(args, &["-C", "-c"]).first() == Some(&"push")
+                && args
+                    .iter()
+                    .any(|w| targets_main(w) || w == "--all" || w == "--mirror")
+            {
+                return Some("Pushing to main is denied.");
+            }
         }
     }
-    if uses_gh {
-        let bodies = segments.iter().flat_map(|words| body_files(words));
+    // A heredoc body lands in segments of its own, so a command that posts
+    // is checked as a whole.
+    if !posting.is_empty() {
         let posts_command = mentions_command(command)
-            || bodies.into_iter().any(|file| {
-                fs::read_to_string(cwd.join(file)).is_ok_and(|text| mentions_command(&text))
-            });
+            || posting
+                .iter()
+                .flat_map(|words| body_files(words))
+                .any(|file| {
+                    fs::read_to_string(cwd.join(file)).is_ok_and(|text| mentions_command(&text))
+                });
         if posts_command {
             return Some("Posting /approve or /hold is denied, since the owner uses them.");
         }
     }
     None
+}
+
+/// The words of `args` that aren't flags, skipping the value after each of
+/// `with_value`, as in `-R owner/app pr merge` or `-C app push`.
+fn subcommand<'a>(args: &'a [String], with_value: &[&str]) -> Vec<&'a str> {
+    let mut names = vec![];
+    let mut skip = false;
+    for arg in args {
+        if skip {
+            skip = false;
+        } else if with_value.contains(&arg.as_str()) {
+            skip = true;
+        } else if !arg.starts_with('-') {
+            names.push(arg.as_str());
+        }
+    }
+    names
 }
 
 /// Splits a command line into the words of each simple command, at `;`,
@@ -132,10 +165,14 @@ fn segments(command: &str) -> Vec<Vec<String>> {
                     }
                 }
             }
-            '\\' => {
-                in_word = true;
-                word.extend(chars.next());
-            }
+            // A backslash-newline continues the line.
+            '\\' => match chars.next() {
+                Some('\n') | None => {}
+                Some(c) => {
+                    in_word = true;
+                    word.push(c);
+                }
+            },
             ';' | '&' | '|' | '\n' | '(' | ')' => {
                 end_word(&mut words, &mut word, &mut in_word);
                 if !words.is_empty() {
@@ -161,14 +198,9 @@ fn is_program(word: &str, name: &str) -> bool {
     word == name || word.ends_with(&format!("/{name}"))
 }
 
-fn has_pair(args: &[String], first: &str, second: &str) -> bool {
-    args.windows(2)
-        .any(|pair| pair[0] == first && pair[1] == second)
-}
-
 /// `gh api …/pulls/<n>/merge`.
 fn is_api_merge(args: &[String]) -> bool {
-    args.first().is_some_and(|a| a == "api")
+    subcommand(args, &["-R", "--repo"]).first() == Some(&"api")
         && args
             .iter()
             .any(|a| a.contains("pulls/") && a.trim_end_matches('/').ends_with("/merge"))
@@ -229,6 +261,10 @@ mod tests {
         assert!(denied("cd app && gh -R owner/app pr merge 12"));
         assert!(denied("/opt/homebrew/bin/gh pr merge"));
         assert!(denied("gh api -X PUT repos/owner/app/pulls/12/merge"));
+        assert!(denied("gh pr -R owner/app merge 12"));
+        assert!(denied(
+            "gh --repo owner/app api -X PUT repos/owner/app/pulls/12/merge"
+        ));
         assert!(!denied("gh pr view 12"));
         assert!(!denied("echo 'run gh pr list then merge'"));
     }
@@ -237,6 +273,7 @@ mod tests {
     fn denies_approving() {
         assert!(denied("gh pr review 12 --approve"));
         assert!(denied("gh pr review -a 12"));
+        assert!(denied("gh api repos/o/a/pulls/12/reviews -f event=APPROVE"));
         assert!(!denied("gh pr review 12 --comment -b 'Looks fine'"));
     }
 
@@ -246,6 +283,9 @@ mod tests {
         assert!(denied("git push --force origin HEAD:main"));
         assert!(denied("git push origin +refs/heads/main"));
         assert!(denied("git -C app push origin feature:main"));
+        assert!(denied("git push --all origin"));
+        assert!(denied("git push origin \\\n  main"));
+        assert!(!denied("git stash push -m main"));
         assert!(!denied("git push -u origin issue-12"));
         assert!(!denied("git push --force-with-lease origin issue-12"));
         assert!(!denied("git checkout main"));
@@ -261,7 +301,12 @@ mod tests {
         ));
         assert!(!denied("gh pr comment 12 --body 'see src/hold/approve.rs'"));
         assert!(!denied("gh pr comment 12 --body 'waiting for approval'"));
+        assert!(denied(
+            "gh pr comment 12 --body \"$(cat <<'EOF'\nDone.\n/approve\nEOF\n)\""
+        ));
         assert!(!denied("echo /approve"));
+        assert!(!denied("gh pr create --title 'Handle /approve comments'"));
+        assert!(!denied("gh pr view 12 --comments | grep /approve"));
     }
 
     #[test]
