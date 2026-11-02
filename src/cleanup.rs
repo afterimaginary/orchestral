@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::git::git;
 use crate::outcome::Failure;
 use crate::sessions;
 use crate::spawn::main_checkout;
@@ -26,15 +27,16 @@ pub struct CleanedUp {
     pub name: String,
     /// The merged or closed PR that finished the worker, if it had one.
     pub pr: Option<u64>,
+    /// What was there to remove, of `session`, `worktree` and `branch`.
+    pub removed: Vec<&'static str>,
 }
 
 impl fmt::Display for CleanedUp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Removed {}: its session, worktree and local branch.",
-            self.name
-        )
+        match self.removed.as_slice() {
+            [] => write!(f, "Removed {} from the fleet.", self.name),
+            removed => write!(f, "Removed {} and its {}.", self.name, removed.join(", ")),
+        }
     }
 }
 
@@ -44,6 +46,7 @@ struct Pr {
     number: u64,
     state: String,
     head_ref_oid: String,
+    is_cross_repository: bool,
 }
 
 pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure> {
@@ -55,9 +58,6 @@ pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure
         .ok_or_else(|| Failure::Error(format!("there's no worker named {name}")))?;
     let main = main_checkout(store.dir())?;
     let pr = finished_pr(&main, name, &worker, force)?;
-    if worker.worktree.exists() && !force {
-        check_saved(name, &worker, pr.as_ref())?;
-    }
 
     let agent = match &worker.job_id {
         Some(job_id) => sessions::agents(Path::new("claude"))?
@@ -73,9 +73,19 @@ pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure
             fix: "manage it from where it runs".into(),
         });
     }
+    // Stopped before the work is checked, so nothing lands after the check.
     if agent.as_ref().is_some_and(|agent| agent.pid.is_some()) {
         crate::stop::stop(cwd, name)?;
     }
+    // A worktree whose directory is gone would hold its branch.
+    git(&main, &["worktree", "prune"])?;
+    let branch = format!("refs/heads/{}", worker.branch);
+    let has_branch = git(&main, &["rev-parse", "--verify", "--quiet", &branch]).is_ok();
+    if !force {
+        check_saved(&main, name, &worker, has_branch, pr.as_ref())?;
+    }
+
+    let mut removed = Vec::new();
     if worker.worktree.exists() {
         let path = worker.worktree.display().to_string();
         let mut args = vec!["worktree", "remove"];
@@ -84,22 +94,15 @@ pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure
         }
         args.push(&path);
         git(&main, &args)?;
+        removed.push("worktree");
     }
-    if git(
-        &main,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{}", worker.branch),
-        ],
-    )
-    .is_ok()
-    {
+    if has_branch {
         git(&main, &["branch", "-D", &worker.branch])?;
+        removed.push("branch");
     }
     if let (Some(job_id), Some(_)) = (&worker.job_id, &agent) {
         remove_session(job_id)?;
+        removed.insert(0, "session");
     }
 
     store.update(|state| {
@@ -110,11 +113,12 @@ pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure
     Ok(CleanedUp {
         name: name.into(),
         pr: pr.map(|pr| pr.number),
+        removed,
     })
 }
 
-/// The worker's merged or closed PR, if it has one. Refuses while one is
-/// open, unless `force`.
+/// The worker's merged or closed PR from this repository, if it has one,
+/// preferring a merged one. Refuses while one is open, unless `force`.
 fn finished_pr(
     main: &Path,
     name: &str,
@@ -130,7 +134,7 @@ fn finished_pr(
             "--state",
             "all",
             "--json",
-            "number,state,headRefOid",
+            "number,state,headRefOid,isCrossRepository",
         ])
         .current_dir(main)
         .output()
@@ -143,6 +147,11 @@ fn finished_pr(
     }
     let prs: Vec<Pr> = serde_json::from_slice(&output.stdout)
         .map_err(|err| Failure::Error(format!("gh pr list printed something unexpected: {err}")))?;
+    // A fork's PR can share the branch name.
+    let mut prs: Vec<Pr> = prs
+        .into_iter()
+        .filter(|pr| !pr.is_cross_repository)
+        .collect();
     if let Some(open) = prs.iter().find(|pr| pr.state == "OPEN")
         && !force
     {
@@ -151,43 +160,80 @@ fn finished_pr(
             fix: format!("wait until it merges or closes, or stop {name} instead"),
         });
     }
-    Ok(prs.into_iter().find(|pr| pr.state != "OPEN"))
+    // gh lists the newest first.
+    prs.retain(|pr| pr.state != "OPEN");
+    let merged = prs.iter().position(|pr| pr.state == "MERGED");
+    Ok(match merged {
+        Some(index) => Some(prs.swap_remove(index)),
+        None => prs.into_iter().next(),
+    })
 }
 
-/// Refuses when the worktree has changes or commits its PR doesn't have. A
-/// worker with no PR, such as a reviewer, may have no commits of its own.
-fn check_saved(name: &str, worker: &Worker, pr: Option<&Pr>) -> Result<(), Failure> {
+/// Refuses when the worktree has changes, or the branch has commits its PR
+/// doesn't have. A worker with no PR, such as a reviewer, may have no
+/// commits of its own: its branch must not have moved from `origin/main`,
+/// where it started.
+fn check_saved(
+    main: &Path,
+    name: &str,
+    worker: &Worker,
+    has_branch: bool,
+    pr: Option<&Pr>,
+) -> Result<(), Failure> {
     let refuse = |what: &str| Failure::Refused {
         reason: format!("{name}'s worktree has {what}"),
         fix: format!("run `orchestral cleanup {name} --force` to discard it"),
     };
-    if !git(&worker.worktree, &["status", "--porcelain"])?
-        .trim()
-        .is_empty()
+    if worker.worktree.exists()
+        && !git(&worker.worktree, &["status", "--porcelain"])?
+            .trim()
+            .is_empty()
     {
         return Err(refuse("uncommitted changes"));
     }
+    if !has_branch {
+        return Ok(());
+    }
+    let branch = format!("refs/heads/{}", worker.branch);
     match pr {
         // The PR's head holds everything that was pushed, whatever the merge
         // did to the branch.
         Some(pr) => {
-            let args = ["merge-base", "--is-ancestor", "HEAD", &pr.head_ref_oid];
-            if git(&worker.worktree, &args).is_err() {
+            let head = format!("{}^{{commit}}", pr.head_ref_oid);
+            if git(main, &["cat-file", "-e", &head]).is_err() {
+                git(
+                    main,
+                    &["fetch", "-q", "origin", &format!("pull/{}/head", pr.number)],
+                )?;
+            }
+            if !is_ancestor(main, &branch, &pr.head_ref_oid)? {
                 return Err(refuse("commits its PR doesn't have"));
             }
         }
         None => {
-            // Workers start from origin/main.
-            let own = git(
-                &worker.worktree,
-                &["rev-list", "HEAD", "--not", "origin/main"],
-            )?;
-            if !own.trim().is_empty() {
+            if !is_ancestor(main, &branch, "origin/main")? {
                 return Err(refuse("commits and no merged or closed PR"));
             }
         }
     }
     Ok(())
+}
+
+/// Whether `commit` is in `of`'s history. Any failure but a plain "no" is
+/// an error.
+fn is_ancestor(dir: &Path, commit: &str, of: &str) -> Result<bool, Failure> {
+    let status = Command::new("git")
+        .args(["merge-base", "--is-ancestor", commit, of])
+        .current_dir(dir)
+        .status()
+        .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(Failure::Error(format!(
+            "git merge-base --is-ancestor {commit} {of} failed"
+        ))),
+    }
 }
 
 /// `claude rm`, retried while the stopped session still holds its lock.
@@ -209,20 +255,4 @@ fn remove_session(job_id: &str) -> Result<(), Failure> {
         }
         thread::sleep(Duration::from_millis(500));
     }
-}
-
-fn git(dir: &Path, args: &[&str]) -> Result<String, Failure> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
-    if !output.status.success() {
-        return Err(Failure::Error(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        )));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }

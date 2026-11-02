@@ -5,6 +5,7 @@ pub mod claim;
 pub mod cleanup;
 pub mod deadline;
 pub mod gate;
+mod git;
 pub mod github;
 pub mod guard;
 pub mod heartbeat;

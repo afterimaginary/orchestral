@@ -92,7 +92,7 @@ impl Repo {
     /// current head.
     fn pr(&self, state: &str) {
         let head = git(&self.worktree, &["rev-parse", "HEAD"]);
-        let prs = json!([{"number": 40, "state": state, "headRefOid": head.trim()}]);
+        let prs = json!([{"number": 40, "state": state, "headRefOid": head.trim(), "isCrossRepository": false}]);
         self.stubs
             .respond("gh", &["pr", "list"], &prs.to_string(), 0);
     }
@@ -140,12 +140,9 @@ impl Repo {
         assert!(self.worktree.exists());
         assert!(self.has_branch());
         assert!(self.has_worker());
-        assert!(
-            !self
-                .claude_calls()
-                .iter()
-                .any(|call| call == "stop" || call == "rm")
-        );
+        // The session may be stopped before the work is checked, but it's
+        // never removed.
+        assert!(!self.claude_calls().iter().any(|call| call == "rm"));
     }
 }
 
@@ -205,6 +202,7 @@ fn refuses_while_the_pr_is_open() {
     let output = repo.run(&["cleanup", "issue-12"]);
 
     repo.assert_refused(&output, "PR #40 is still open");
+    assert_eq!(repo.claude_calls(), Vec::<String>::new());
 }
 
 #[test]
@@ -263,4 +261,59 @@ fn never_touches_an_interactive_session() {
     let output = repo.run(&["cleanup", "issue-12"]);
 
     repo.assert_refused(&output, "isn't a background session");
+}
+
+#[test]
+fn a_missing_worktree_directory_still_has_its_branch_checked() {
+    let repo = Repo::new();
+    repo.lists("background");
+    repo.pr("MERGED");
+    git(
+        &repo.worktree,
+        &["commit", "-q", "--allow-empty", "-m", "After the PR"],
+    );
+    fs::remove_dir_all(&repo.worktree).unwrap();
+
+    let output = repo.run(&["cleanup", "issue-12"]);
+
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(stderr(&output).contains("commits its PR doesn't have"));
+    assert!(repo.has_branch());
+    let forced = repo.run(&["cleanup", "issue-12", "--force"]);
+    assert_eq!(forced.status.code(), Some(0), "{}", stderr(&forced));
+    assert!(!repo.has_branch());
+}
+
+#[test]
+fn a_pr_head_the_worker_never_fetched_is_fetched() {
+    let repo = Repo::new();
+    repo.lists("background");
+    // Someone else pushed to the PR, so its head isn't in this clone.
+    let other = repo.main.parent().unwrap().join("other");
+    let origin = repo.main.parent().unwrap().join("origin.git");
+    git(
+        repo.main.parent().unwrap(),
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "issue-12",
+            origin.to_str().unwrap(),
+            "other",
+        ],
+    );
+    git(
+        &other,
+        &["commit", "-q", "--allow-empty", "-m", "Review fix"],
+    );
+    git(&other, &["push", "-q", "origin", "HEAD:refs/pull/40/head"]);
+    let head = git(&other, &["rev-parse", "HEAD"]);
+    let prs = json!([{"number": 40, "state": "MERGED", "headRefOid": head.trim(), "isCrossRepository": false}]);
+    repo.stubs
+        .respond("gh", &["pr", "list"], &prs.to_string(), 0);
+
+    let output = repo.run(&["cleanup", "issue-12"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(!repo.has_worker());
 }

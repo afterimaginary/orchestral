@@ -10,6 +10,7 @@ use std::process::Command;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::git::git;
 use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::spawn::main_checkout;
@@ -166,7 +167,7 @@ pub fn init(cwd: &Path) -> Result<Initialized, Failure> {
 /// `core.hooksPath` when it's set. The block runs first and hands the refs
 /// on stdin to the rest of an existing hook.
 fn install_pre_push(main: &Path) -> Result<PathBuf, Failure> {
-    let hooks = git_output(
+    let hooks = git(
         main,
         &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
     )?;
@@ -332,7 +333,7 @@ fn policy(cwd: &Path, main: &Path) -> Check {
         return fail("policy", &message);
     }
     let local = fs::read_to_string(main.join(POLICY)).ok();
-    let pushed = git_output(main, &["show", &format!("origin/main:{POLICY}")]).ok();
+    let pushed = git(main, &["show", &format!("origin/main:{POLICY}")]).ok();
     match (local, pushed) {
         (Some(local), Some(pushed)) if local != pushed => warn(
             "policy",
@@ -345,7 +346,7 @@ fn policy(cwd: &Path, main: &Path) -> Check {
 /// Whether the pre-push hook has Orchestral's block, and the binary it calls
 /// is still there. A plugin update moves the binary.
 fn hook(main: &Path) -> Check {
-    let hook = git_output(
+    let hook = git(
         main,
         &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
     )
@@ -413,22 +414,6 @@ fn run(program: &str, args: &[&str]) -> Option<(bool, String)> {
         output.status.success(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
     ))
-}
-
-fn git_output(dir: &Path, args: &[&str]) -> Result<String, Failure> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
-    if !output.status.success() {
-        return Err(Failure::Error(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        )));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn ok(name: &'static str, detail: String) -> Check {

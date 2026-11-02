@@ -219,14 +219,14 @@ Resumed issue-12 (job 558b988a). It's idle until it gets a message.
 
 ### `orchestral cleanup <name> [--force] [--json]`
 
-Removes a finished worker: its session, worktree and local branch, and its entry in the state. A worker is finished when its PR merged or closed, as `gh pr list --head <branch> --state all` shows. Git isn't asked, since a squash merge leaves the branch's own commits off `main`. A worker with no PR, such as a reviewer, can be removed when it has no commits beyond `origin/main`.
+Removes a finished worker: its session, worktree and local branch, and its entry in the state. A worker is finished when its PR merged or closed, as `gh pr list --head <branch> --state all` shows. PRs from forks are ignored, and a merged PR is preferred over a closed one. Git isn't asked, since a squash merge leaves the branch's own commits off `main`. A worker with no PR, such as a reviewer, can be removed when its branch has no commits beyond `origin/main`, where it started.
 
-It refuses, exiting `2`, while the worker's PR is open, when its worktree has uncommitted changes, when it has commits its PR's head doesn't contain, or when it has commits and no PR. `--force` skips these checks and discards that work. Like `stop`, it refuses anything but a background session.
+It refuses, exiting `2`, while the worker's PR is open, before touching anything. Otherwise it stops the session as `stop` does, so nothing lands after the check, and refuses when the worktree has uncommitted changes, when the branch has commits its PR's head doesn't contain (fetching `pull/<n>/head` when that head isn't local), or when it has commits and no PR. A refusal leaves the worker stopped, with its worktree and branch. `--force` skips these checks and discards that work. Like `stop`, it refuses anything but a background session.
 
-In order, it stops the session as `stop` does, runs `git worktree remove`, deletes the local branch, then runs `claude rm <job id>`, retrying for 15 seconds while the stopped session still holds its lock. It never runs `git clean`. A session `claude agents` no longer lists is skipped. It records a `<name> cleaned up` event.
+Then it runs `git worktree remove`, after `git worktree prune` so a deleted worktree directory doesn't hold the branch, deletes the local branch, then runs `claude rm <job id>`, retrying for 15 seconds while the stopped session still holds its lock. It never runs `git clean`. A session `claude agents` no longer lists is skipped. It records a `<name> cleaned up` event.
 
 ```text
-Removed issue-12: its session, worktree and local branch.
+Removed issue-12 and its session, worktree, branch.
 ```
 
 ### `orchestral claim [--json]`
