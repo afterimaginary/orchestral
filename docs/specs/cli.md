@@ -258,7 +258,7 @@ uds:/tmp/cc-socks/41001.sock
 Sets a repository up. First it checks that `claude` and `gh` are installed and logged in, that `git` works, and that Claude Code trusts the main checkout, and refuses, exiting `2`, naming the first problem. Then it:
 
 1. Creates `.orchestral/policy.md` in the main checkout from a template, unless one exists. The template's `fleet_token_budget` is an example to replace. The file takes effect once it's on `origin/main`.
-2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. If the binary later moves, the block warns on each push and lets it through, until init runs again. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
+2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. If the binary later moves, as a plugin update does, the block warns on each push and, when `ORCHESTRAL_WORKER` is set, still rejects a push to `refs/heads/main` itself, until init runs again. `doctor` warns when the hook is missing or calls a binary that has moved. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
 
 ```text
 Created /home/dev/app/.orchestral/policy.md. Set fleet_token_budget, then commit it and push it to main.
@@ -271,13 +271,14 @@ Checks what a run needs and prints one line per check, as `ok`, `warn` or `FAIL`
 
 | Check | Fails or warns when |
 | --- | --- |
-| `repo` | Fails outside a git repository, in place of `trust` and `policy`. |
+| `repo` | Fails outside a git repository, in place of `trust`, `policy` and `hook`. |
 | `claude` | Fails when it's missing. Warns when its version isn't the one Orchestral was tested on, 2.1.314. |
 | `auth` | Fails when `claude auth status` doesn't report `loggedIn`. |
 | `gh` | Fails when it's missing or `gh auth status` fails. |
 | `git` | Fails when it's missing. |
 | `trust` | Fails when Claude Code doesn't trust the main checkout. |
 | `policy` | Fails when the policy can't be read. Warns when the main checkout's copy differs from `origin/main`'s, since that one is used. |
+| `hook` | Warns when the pre-push hook isn't installed, or calls a binary that has moved; `orchestral init` fixes both. |
 | `portless` | Warns when it's missing, since previews can run without it. |
 | `tailscale` | Warns when it's missing or not running, since previews can run without it. |
 

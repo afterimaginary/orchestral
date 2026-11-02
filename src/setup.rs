@@ -96,6 +96,7 @@ pub fn doctor(cwd: &Path) -> Report {
         Ok(main) => {
             checks.push(trust(&main));
             checks.push(policy(cwd, &main));
+            checks.push(hook(&main));
         }
         Err(
             Failure::Error(message)
@@ -210,6 +211,13 @@ if [ -x '{exe}' ]; then
   printf '%s\\n' \"$orchestral_refs\" | '{exe}' hook pre-push \"$@\" || exit 1
 else
   echo \"orchestral isn't at {exe} any more; run orchestral init again\" >&2
+  # Without the binary, still reject a worker's push to main, as
+  # guard::pre_push does.
+  if [ -n \"$ORCHESTRAL_WORKER\" ] && printf '%s\\n' \"$orchestral_refs\" |
+    awk '$3 == \"refs/heads/main\" {{ found = 1 }} END {{ exit !found }}'; then
+    echo \"workers can't push to main; push your branch and open a PR\" >&2
+    exit 1
+  fi
 fi
 exec 0<<ORCHESTRAL_REFS
 $orchestral_refs
@@ -331,6 +339,40 @@ fn policy(cwd: &Path, main: &Path) -> Check {
             "the local policy differs from origin/main, which is the copy that's used".into(),
         ),
         _ => ok("policy", "valid".into()),
+    }
+}
+
+/// Whether the pre-push hook has Orchestral's block, and the binary it calls
+/// is still there. A plugin update moves the binary.
+fn hook(main: &Path) -> Check {
+    let hook = git_output(
+        main,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    )
+    .map(|hooks| PathBuf::from(hooks.trim()).join("pre-push"));
+    let text = hook.ok().and_then(|hook| fs::read_to_string(hook).ok());
+    let Some(text) = text.filter(|text| text.contains(BLOCK_START)) else {
+        return warn(
+            "hook",
+            "the pre-push hook isn't installed; run `orchestral init`".into(),
+        );
+    };
+    let exe = text[text.find(BLOCK_START).unwrap_or(0)..]
+        .split_once("if [ -x '")
+        .and_then(|(_, rest)| rest.split_once("' ]; then"))
+        .map(|(exe, _)| exe.replace("'\\''", "'"));
+    match exe {
+        // As the hook's `[ -x ]` test.
+        Some(exe)
+            if fs::metadata(&exe)
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0) =>
+        {
+            ok("hook", format!("calls {exe}"))
+        }
+        _ => warn(
+            "hook",
+            "the pre-push hook calls a binary that has moved; run `orchestral init` again".into(),
+        ),
     }
 }
 
