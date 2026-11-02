@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up: a minimal binary that only prints its version, the plugin manifest, `make ready` and `make verify`, and a `verify` check on a self-hosted runner. No product behaviour exists yet. Milestone 1 is under way, and its test rigs live outside the repository, with results in `docs/decisions/`. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0007, with two still running. The binary has its CLI conventions and one command, `limits`, which reports limits as unavailable until they can be read. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -19,10 +19,13 @@ The repository is set up: a minimal binary that only prints its version, the plu
 - Repository setup and `verify` check
 - Milestones and issues filed for milestones 1 to 4
 - Plugin monitor shown to wake idle sessions, with a long idle still to test. Workers run with the plugin turned off (ADR-0001)
+- Tested and recorded: proposals from background workers, the merge command, worker permissions under auto mode, `/approve` comments, preview servers and reminder sessions (ADR-0002 to ADR-0007)
+- CLI conventions: exit codes, refusals and `--json` (`docs/specs/cli.md`)
 
 ## Up Next
 
-1. Finish milestone 1, which tests the behaviour the design relies on (#2 to #9). #2 needs at least 48 idle hours and runs in the background.
+1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
+2. Milestone 2 (Core), in work order, starting with the test harness (#11) and the state store (#12).
 
 ## Needs Your Decision
 
