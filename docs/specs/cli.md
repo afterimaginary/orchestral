@@ -59,8 +59,20 @@ Starts a worker on an issue as a background Claude Code session. `<name>` uses l
 It refuses, exiting `2`, when:
 
 - the session name is longer than 32 characters,
-- a worker with that name is already in the state, or
-- a live session already has that session name.
+- a worker with that name is already in the state,
+- a live session already has that session name,
+- the fleet is paused (see `orchestral pause`),
+- the state already has `workers` workers, the policy's cap. Every recorded worker counts, stopped or not, until it's cleaned up,
+- the run's fleet usage (see [Budget](budget.md)) has reached `fleet_token_budget`. Before a run has started, nothing counts, and until the supervisor (#25) starts runs, no run has. The fleet is every worker whose session `claude agents --json --all` still lists, and the orchestrator, or
+- any plan window from `orchestral limits` is at or past `plan_limit_percent`. When several are, the refusal names the one that resets last, and the fix gives its reset time.
+
+When the plan limits can't be read, spawn warns on stderr and carries on, so unavailable limits never stop work:
+
+```text
+warning: plan limits are unavailable, so they weren't checked: claude -p /usage exited with exit status: 1
+```
+
+The pause and the cap are checked again under the state lock as the worker is recorded, so two spawns at once can't both take the last place.
 
 Then it:
 
@@ -91,6 +103,18 @@ Started issue-12 as app-issue-12 (job 558b988a) in /home/dev/app/.claude/worktre
 
 ```json
 {"name":"issue-12","session_name":"app-issue-12","job_id":"558b988a","worktree":"/home/dev/app/.claude/worktrees/issue-12"}
+```
+
+### `orchestral pause [--json]` and `orchestral unpause [--json]`
+
+Set and clear the fleet's pause flag in the state. While paused, `spawn` refuses. Changing the flag records an event; setting it to what it already is changes nothing.
+
+```text
+The fleet is paused. Spawns are refused until `orchestral unpause`.
+```
+
+```json
+{"paused":true}
 ```
 
 ### `orchestral hook worker-guard` and `orchestral hook pre-push`

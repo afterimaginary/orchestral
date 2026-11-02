@@ -10,9 +10,9 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::outcome::Failure;
-use crate::policy::Policy;
-use crate::sessions;
+use crate::policy::{Policy, Settings};
 use crate::state::{Store, Worker};
+use crate::{gate, limits, sessions};
 
 /// Claude Code renames a session whose name is taken, and names longer than
 /// this get cut, so session names stay within it.
@@ -62,12 +62,21 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
     let session_name = format!("{slug}-{name}");
     check_name(name, &session_name)?;
     refuse_live_duplicate(&session_name)?;
-    if store.read()?.workers.contains_key(name) {
+    let state = store.read()?;
+    if state.workers.contains_key(name) {
         return Err(Failure::Refused {
             reason: format!("a worker named {name} already exists"),
             fix: "choose another name".into(),
         });
     }
+    gate::check_capacity(&state, &policy.settings)?;
+    let used = gate::fleet_usage(&state, &main)?;
+    gate::check_budget(&used, &policy.settings)?;
+    let limits = limits::read();
+    if let Some(reason) = &limits.reason {
+        eprintln!("warning: plan limits are unavailable, so they weren't checked: {reason}");
+    }
+    gate::check_plan_limits(&limits, &policy.settings)?;
 
     let worktree = main.join(WORKTREES).join(name);
     git(&main, &["fetch", "--quiet", "origin", "main"])?;
@@ -87,11 +96,11 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
     let model = request
         .model
         .clone()
-        .unwrap_or(policy.settings.default_model);
+        .unwrap_or_else(|| policy.settings.default_model.clone());
     let effort = request
         .effort
         .clone()
-        .unwrap_or(policy.settings.default_effort);
+        .unwrap_or_else(|| policy.settings.default_effort.clone());
     let launch = Launch {
         store: &store,
         main: &main,
@@ -99,6 +108,7 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
         session_name: &session_name,
         model: &model,
         effort: &effort,
+        settings: &policy.settings,
     };
     let job_id = match launch.run(&request) {
         Ok(id) => id,
@@ -143,6 +153,7 @@ struct Launch<'a> {
     session_name: &'a str,
     model: &'a str,
     effort: &'a str,
+    settings: &'a Settings,
 }
 
 impl Launch<'_> {
@@ -157,7 +168,10 @@ impl Launch<'_> {
             write(&settings, &settings_json(name, self.main, &plugin_ids()?)?)?;
             write(&prompt, &worker_prompt(name, request.issue))?;
             // Recorded before launching, so a crash leaves a visible entry.
+            // Pause and the cap are checked again under the lock, so two
+            // spawns at once can't both take the last place.
             self.store.update(|state| {
+                gate::check_capacity(state, self.settings)?;
                 state.workers.insert(
                     name.clone(),
                     Worker {
@@ -170,8 +184,9 @@ impl Launch<'_> {
                         job_id: None,
                         created_at: jiff::Timestamp::now().to_string(),
                     },
-                )
-            })?;
+                );
+                Ok(())
+            })??;
             Ok((settings, prompt))
         };
         let (settings, prompt) = prepare().map_err(Launched::No)?;

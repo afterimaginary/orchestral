@@ -320,3 +320,183 @@ fn an_untrusted_repository_is_refused_with_how_to_trust_it() {
         "fix: run `claude` in {main} once and accept the trust prompt"
     )));
 }
+
+impl Repo {
+    fn orchestral(&self, args: &[&str]) -> Output {
+        self.stubs
+            .orchestral()
+            .args(args)
+            .current_dir(&self.main)
+            .output()
+            .unwrap()
+    }
+
+    /// Replaces the policy's settings on `origin/main`, keeping the budget.
+    fn policy(&self, settings: &str) {
+        fs::write(
+            self.main.join(".orchestral/policy.md"),
+            format!("---\nfleet_token_budget: 1000\n{settings}---\nRules.\n"),
+        )
+        .unwrap();
+        git(&self.main, &["commit", "-q", "-am", "policy"]);
+        git(&self.main, &["push", "-q", "origin", "main"]);
+    }
+
+    fn usage(&self, output: &str) {
+        self.stubs.respond("claude", &["-p", "/usage"], output, 0);
+    }
+}
+
+fn assert_refused(output: &Output, reason: &str, fix: &str) {
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(output));
+    let stderr = stderr(output);
+    assert!(stderr.contains(&format!("refused: {reason}")), "{stderr}");
+    assert!(stderr.contains(&format!("fix: {fix}")), "{stderr}");
+}
+
+#[test]
+fn a_paused_fleet_refuses_until_unpaused() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+
+    assert_eq!(repo.orchestral(&["pause"]).status.code(), Some(0));
+    let refused = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+    assert_eq!(repo.orchestral(&["unpause"]).status.code(), Some(0));
+    let started = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_refused(&refused, "the fleet is paused", "run `orchestral unpause`");
+    assert_eq!(started.status.code(), Some(0), "{}", stderr(&started));
+    assert_eq!(repo.bg_calls().len(), 1);
+    let events = fs::read_to_string(repo.store().dir().join("events.jsonl")).unwrap();
+    assert!(
+        events.contains(r#""text":"the fleet is paused""#),
+        "{events}"
+    );
+    assert!(
+        events.contains(r#""text":"the fleet is unpaused""#),
+        "{events}"
+    );
+}
+
+#[test]
+fn spawning_past_the_worker_cap_is_refused() {
+    let repo = Repo::new();
+    repo.policy("workers: 1\n");
+    repo.launches(STARTED, 0);
+
+    let first = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+    let second = repo.spawn(&["issue-13", "--issue", "13", "--prompt", "Go."]);
+
+    assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
+    assert_refused(
+        &second,
+        "the fleet is at its cap of 1 workers",
+        "wait until a worker is cleaned up after its PR merges",
+    );
+    assert!(!repo.main.join(".claude/worktrees/issue-13").exists());
+    assert_eq!(repo.bg_calls().len(), 1);
+}
+
+#[test]
+fn a_window_at_the_plan_limit_is_refused() {
+    let repo = Repo::new();
+    repo.policy("plan_limit_percent: 80\n");
+    repo.usage(
+        "Current session: 95% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n\
+         Current week (all models): 80% used · resets Nov 4 at 1pm (America/Los_Angeles)\n",
+    );
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    // The zone abbreviation, PST or PDT, depends on the year.
+    assert_refused(
+        &output,
+        "the week (all models) window is 80% used, at or past plan_limit_percent (80%)",
+        "wait until it resets at Nov 4 at 1:00pm P",
+    );
+    assert!(repo.bg_calls().is_empty());
+}
+
+#[test]
+fn windows_under_the_plan_limit_spawn() {
+    let repo = Repo::new();
+    repo.usage("Current session: 84% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n");
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("warning"), "{}", stderr(&output));
+}
+
+#[test]
+fn unreadable_plan_limits_warn_and_spawn() {
+    let repo = Repo::new();
+    repo.stubs.respond("claude", &["-p", "/usage"], "", 1);
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        stderr(&output).starts_with("warning: plan limits are unavailable"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn a_run_over_its_fleet_budget_is_refused() {
+    const SESSION: &str = "00000000-0000-4000-8000-00000000b002";
+    let repo = Repo::new();
+    // A worker whose transcript holds about 3,011 tokens since the run
+    // started, over the policy's 1,000.
+    let worktree = repo.main.join(".claude/worktrees/issue-11");
+    let projects = repo
+        .config()
+        .join("projects")
+        .join(orchestral::transcript::project_dir_name(&worktree));
+    fs::create_dir_all(&projects).unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/claude/2.1.314/fleet")
+            .join(format!("{SESSION}.jsonl")),
+        projects.join(format!("{SESSION}.jsonl")),
+    )
+    .unwrap();
+    repo.store()
+        .update(|state| {
+            state.run_started_at = Some("2026-11-02T00:00:00Z".into());
+            state.workers.insert(
+                "issue-11".into(),
+                orchestral::state::Worker {
+                    session_name: "app-issue-11".into(),
+                    issue: 11,
+                    model: "claude-sonnet-5-5".into(),
+                    effort: "medium".into(),
+                    worktree: worktree.clone(),
+                    branch: "issue-11".into(),
+                    job_id: Some("job11".into()),
+                    created_at: "2026-11-02T00:00:01Z".into(),
+                },
+            );
+        })
+        .unwrap();
+    repo.stubs.respond(
+        "claude",
+        &["agents"],
+        &json!([{"id": "job11", "sessionId": SESSION, "cwd": worktree}]).to_string(),
+        0,
+    );
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_refused(
+        &output,
+        "the fleet has used about 3011 tokens (estimate), and fleet_token_budget is 1000",
+        "ask the owner to raise fleet_token_budget in .orchestral/policy.md",
+    );
+    assert!(repo.bg_calls().is_empty());
+}
