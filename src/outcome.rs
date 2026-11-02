@@ -13,8 +13,6 @@ pub enum Failure {
     /// Something went wrong. Exit code 1.
     Error(String),
     /// A rule stopped the command. Exit code 2.
-    // No command refuses yet; the first ones arrive with spawn and claim.
-    #[allow(dead_code)]
     Refused {
         reason: String,
         /// What would make the command succeed.
