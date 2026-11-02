@@ -66,3 +66,36 @@ Percentages of the window aren't capped at 100.
 ### Reading large files
 
 Only the last 1 MiB is read when it holds a real response, and the whole file otherwise. If that part has no model identity, the first 1 MiB is searched for one, since a session is usually told its identity near the start.
+
+## Session records
+
+Each running session writes `<config>/sessions/<pid>.json`. The fields read here:
+
+| Field | Meaning |
+| --- | --- |
+| `pid` | The session's process. |
+| `sessionId` | The session's id. |
+| `cwd` | Its working directory. |
+| `name` | Its name, when it has one. |
+| `kind` | `interactive` or `background`. |
+| `status` | `idle`, `busy` or `waiting`, or `shell` while a Monitor runs. |
+| `procStart` | The process start time, as `ps -o lstart=` prints it with `TZ=UTC` and `LC_ALL=C`, such as `Mon Nov  2 08:35:48 2026`. |
+| `startedAt` | The session start time, in Unix milliseconds. |
+| `messagingSocketPath` | The socket other sessions message it through. |
+
+A record can outlive its process, and the system reuses pids, so a session is alive only when `ps` finds its pid and the process started when the record says. That's `procStart` matching `ps -o lstart=`, compared word by word since a single-digit day is padded with a space. A record without `procStart` falls back to `startedAt` being within 30 seconds of the start `ps -o etime=` implies. On 2.1.314, every live record checked matched `ps` exactly.
+
+A record may be half-written when read, so one that doesn't parse is skipped.
+
+## `claude agents --json`
+
+`claude agents --json --all` prints a JSON array of sessions, including finished ones. Each entry has `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
+
+| Field | Meaning |
+| --- | --- |
+| `pid` | Missing once the session has ended. |
+| `status` | As in the session record. |
+| `state` | `working`, `blocked`, `done` or `failed`. Background sessions only. |
+| `waitingFor` | What the session waits for, such as `input needed`. Only while it waits. |
+
+`waitingFor` is the most direct signal that a session needs someone, so it's read first, and `state` only when it's missing.
