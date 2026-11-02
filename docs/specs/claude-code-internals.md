@@ -93,13 +93,19 @@ A record may be half-written when read, so one that doesn't parse is skipped.
 
 ## `claude agents --json`
 
-`claude agents --json --all` prints a JSON array of sessions, including finished ones. Each entry has `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
+`claude agents --json --all` prints a JSON array of sessions, including finished and stopped ones. Each entry has `id`, the short job id `claude --bg` printed, and `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
 
 | Field | Meaning |
 | --- | --- |
 | `pid` | Missing once the session has ended. |
 | `status` | As in the session record. |
-| `state` | `working`, `blocked`, `done` or `failed`. Background sessions only. |
+| `state` | `working`, `blocked`, `done`, `failed` or `stopped`. Background sessions only. |
 | `waitingFor` | What the session waits for, such as `input needed`. Only while it waits. |
 
 `waitingFor` is the most direct signal that a session needs someone, so it's read first, and `state` only when it's missing.
+
+## Stopping and resuming
+
+`claude stop <job id>` prints `stopped <job id>` and returns before the session's process exits. Until it exits, `claude --bg --resume <session id>` starts a copy under a new job id and says so.
+
+Once it has exited, a bare `claude --bg --resume <session id>` wakes the same session under the same job id, with the options it was started with, such as `--settings` and `--append-system-prompt-file`. It prints a note listing those options, then `backgrounded · <job id> · <name> (idle — send a prompt to start)`.

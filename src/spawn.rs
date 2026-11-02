@@ -394,7 +394,7 @@ fn worker_prompt(name: &str, issue: u64) -> String {
 
 /// The job id from `backgrounded · <id> · <name>`, after removing any ANSI
 /// escape sequences.
-fn parse_job_id(output: &str) -> Option<String> {
+pub(crate) fn parse_job_id(output: &str) -> Option<String> {
     strip_ansi(output).lines().find_map(|line| {
         let mut parts = line.trim().strip_prefix("backgrounded")?.split('·');
         parts.next()?;

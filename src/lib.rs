@@ -7,4 +7,5 @@ pub mod policy;
 pub mod sessions;
 pub mod spawn;
 pub mod state;
+pub mod stop;
 pub mod transcript;

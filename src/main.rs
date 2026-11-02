@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{limits, spawn};
+use orchestral::{limits, spawn, stop};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -37,6 +37,20 @@ enum Command {
         /// The worker's first message.
         #[arg(long)]
         prompt: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop a worker, keeping its worktree and conversation.
+    Stop {
+        name: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resume a stopped worker where it left off.
+    Resume {
+        name: String,
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -82,9 +96,7 @@ fn run(command: Command) -> Result<(), Failure> {
             prompt,
             json,
         } => {
-            let cwd = std::env::current_dir().map_err(|err| {
-                Failure::Error(format!("can't read the current directory: {err}"))
-            })?;
+            let cwd = current_dir()?;
             let request = spawn::Request {
                 name,
                 issue,
@@ -94,9 +106,18 @@ fn run(command: Command) -> Result<(), Failure> {
             };
             outcome::print(&spawn::spawn(&cwd, request)?, json)
         }
+        Command::Stop { name, json } => outcome::print(&stop::stop(&current_dir()?, &name)?, json),
+        Command::Resume { name, json } => {
+            outcome::print(&stop::resume(&current_dir()?, &name)?, json)
+        }
         // Allows everything until the worker's denies exist.
         Command::Hook {
             hook: Hook::WorkerGuard,
         } => Ok(()),
     }
+}
+
+fn current_dir() -> Result<std::path::PathBuf, Failure> {
+    std::env::current_dir()
+        .map_err(|err| Failure::Error(format!("can't read the current directory: {err}")))
 }
