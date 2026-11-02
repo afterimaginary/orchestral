@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::state::Store;
-use crate::{gate, github, heartbeat, limits, observe, sessions, transcript};
+use crate::{gate, github, heartbeat, limits, observe, pace, sessions, transcript};
 
 /// How often the supervisor checks the workers and whether it can exit.
 const TICK: Duration = Duration::from_secs(2);
@@ -139,6 +139,8 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         let new_run = state.workers.is_empty() || state.run_started_at.is_none();
         if new_run {
             state.run_started_at = Some(jiff::Timestamp::now().to_string());
+            state.usage = None;
+            state.budget_reached = false;
         }
         Ok(Some(new_run))
     })??;
@@ -243,6 +245,13 @@ impl Ticks {
                 let used = match fleet_usage(&store) {
                     Ok(used) => {
                         log(&format!("fleet usage: {used}"));
+                        match check_budget(&store, &used) {
+                            Ok(Some(line)) => log(&line),
+                            Ok(None) => {}
+                            Err(err) => {
+                                log(&format!("can't check the budget: {}", failure_text(&err)))
+                            }
+                        }
                         Some(used)
                     }
                     Err(err) => {
@@ -259,12 +268,23 @@ impl Ticks {
         }
         if due(self.last_five_minutes, now, FIVE_MINUTES) && finished(&self.five_minutes) {
             self.last_five_minutes = Some(now);
-            // Every 5 minutes: the plan windows.
-            self.five_minutes = Some(thread::spawn(|| {
+            // Every 5 minutes: the plan windows, winding the fleet down past
+            // plan_limit_percent and back up after the reset.
+            let store = store.clone();
+            self.five_minutes = Some(thread::spawn(move || {
+                let limits = limits::read();
                 log(&format!(
                     "plan limits: {}",
-                    limits::read().to_string().replace('\n', "; ")
-                ))
+                    limits.to_string().replace('\n', "; ")
+                ));
+                match check_plan_limits(&store, &limits) {
+                    Ok(Some(line)) => log(&line),
+                    Ok(None) => {}
+                    Err(err) => log(&format!(
+                        "can't check the plan limits: {}",
+                        failure_text(&err)
+                    )),
+                }
             }));
         }
     }
@@ -285,6 +305,26 @@ fn fleet_usage(store: &Store) -> Result<crate::budget::Estimate, Failure> {
         None => Vec::new(),
     };
     gate::fleet_usage(&state, &crate::spawn::main_checkout(store.dir())?, &agents)
+}
+
+fn check_budget(store: &Store, used: &crate::budget::Estimate) -> Result<Option<String>, Failure> {
+    let policy = Policy::load(&crate::spawn::main_checkout(store.dir())?)?;
+    pace::budget(
+        store,
+        used,
+        policy.settings.fleet_token_budget,
+        jiff::Timestamp::now(),
+    )
+}
+
+fn check_plan_limits(store: &Store, limits: &limits::Limits) -> Result<Option<String>, Failure> {
+    let policy = Policy::load(&crate::spawn::main_checkout(store.dir())?)?;
+    pace::plan_limits(
+        store,
+        limits,
+        policy.settings.plan_limit_percent,
+        jiff::Timestamp::now(),
+    )
 }
 
 /// Records a heartbeat when one is due, with the fleet's state. A part

@@ -46,15 +46,17 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Review step: `spawn --role reviewer --pr`, one reviewer per PR, `orchestral review` verdicts by commit, and `blocked` after two failed rounds (#37)
 - Planning: from a brief or the open issues, the skill drafts milestones and issues, has a fresh agent check them, publishes the plan as an artifact, and files it once the owner approves (#33)
 - Summaries: a milestone summary once none of its issues is left for the fleet, and a final summary with the proposed work at the end of a run, each published as an artifact (#43)
+- Pacing: the supervisor winds the fleet down past `plan_limit_percent` and back up after the reset, saves the run's usage every minute, and reports the budget once (#38)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next winding down at limits (#38), compaction (#39), crash recovery (#40) and stuck-worker reminders (#41). #93 needs the owner's decision.
+2. Milestone 3 (Autonomous loop), next compaction (#39), crash recovery (#40) and stuck-worker reminders (#41). #93 and #100 need the owner's decision.
 
 ## Needs Your Decision
 
 - #93: auto mode blocks workers from acting on the orchestrator's messages (pushes, `gh pr ready`). Pick how workers get those permissions.
+- #100: ready PRs can fill the worker cap so no reviewer can start. Pick how reviewers get a slot.
 
 ## Notes
 

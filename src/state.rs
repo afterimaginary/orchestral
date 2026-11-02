@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 6;
+pub const SCHEMA: u32 = 7;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -37,6 +37,28 @@ pub struct State {
     pub observed: BTreeMap<String, crate::observe::Observed>,
     /// The latest review verdict on each PR, by PR number.
     pub reviews: BTreeMap<u64, Review>,
+    /// The plan window the fleet wound down for, until it resets.
+    pub wound_down: Option<WoundDown>,
+    /// The run's fleet usage as the supervisor last read it.
+    pub usage: Option<Usage>,
+    /// Whether this run has reached its `fleet_token_budget`.
+    pub budget_reached: bool,
+}
+
+/// A plan window past `plan_limit_percent`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WoundDown {
+    pub window: String,
+    /// When the window resets, in RFC 3339 UTC, if `/usage` gave a time.
+    pub resets_at: Option<String>,
+}
+
+/// The run's weighted token total at one moment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Usage {
+    pub estimated_tokens: u64,
+    /// RFC 3339, in UTC.
+    pub at: String,
 }
 
 /// A reviewer's verdict on one commit of a PR.
@@ -68,6 +90,9 @@ impl Default for State {
             run_started_at: None,
             observed: BTreeMap::new(),
             reviews: BTreeMap::new(),
+            wound_down: None,
+            usage: None,
+            budget_reached: false,
         }
     }
 }

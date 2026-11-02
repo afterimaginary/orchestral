@@ -12,6 +12,7 @@ pub mod heartbeat;
 pub mod limits;
 pub mod observe;
 pub mod outcome;
+pub mod pace;
 pub mod policy;
 pub mod review;
 pub mod sessions;
