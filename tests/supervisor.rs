@@ -171,14 +171,14 @@ fn stays_up_while_a_worker_is_open() {
 #[test]
 fn stays_up_while_an_issue_waits_on_the_owner() {
     let mut repo = Repo::new();
-    let snapshot = |labels: &str| {
+    let snapshot = |escalations: &str| {
         format!(
-            r#"{{"issues":{{"12":{{"title":"Add login","labels":[{labels}]}}}},"prs":{{}},"polled_at":"2026-11-02T10:00:00Z","seen_comments":[],"failures":0,"retry_after":"2999-01-01T00:00:00Z"}}"#
+            r#"{{"issues":{{"12":{{"title":"Add login","labels":["needs-discussion"]}}}},"prs":{{}},"polled_at":"2026-11-02T10:00:00Z","seen_comments":[],"failures":0,"retry_after":"2999-01-01T00:00:00Z","escalations":[{escalations}]}}"#
         )
     };
     // The far-off retry keeps the poll from replacing the snapshot.
     fs::create_dir_all(repo.file("")).unwrap();
-    fs::write(repo.file("github.json"), snapshot(r#""needs-discussion""#)).unwrap();
+    fs::write(repo.file("github.json"), snapshot("12")).unwrap();
     let pid = repo.up("0.0005")["pid"].as_u64().unwrap() as u32;
 
     thread::sleep(Duration::from_secs(6));

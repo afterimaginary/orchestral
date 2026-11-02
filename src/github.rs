@@ -51,6 +51,10 @@ pub struct Snapshot {
     pub failures: u32,
     /// While failing, no poll runs before this.
     pub retry_after: Option<Timestamp>,
+    /// Open issues that gained the escalation label during the run. A label
+    /// that was there at the first poll isn't the fleet's.
+    #[serde(default)]
+    pub escalations: BTreeSet<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -100,7 +104,9 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
             Some(old) => changes(old, &fetched, &state, gh, &main)?,
             None => Vec::new(),
         };
-        Ok((fetched.snapshot, lines))
+        let mut snapshot = fetched.snapshot;
+        snapshot.escalations = escalations(old.as_ref(), &snapshot);
+        Ok((snapshot, lines))
     };
     let (snapshot, lines) = match attempt() {
         // A successful poll starts the snapshot afresh, failures included.
@@ -130,18 +136,31 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     Ok(lines)
 }
 
-/// Whether an open issue in the last snapshot waits on the owner's
+/// Whether an issue escalated during the run still waits on the owner's
 /// decision. An unreadable snapshot counts as none.
 pub fn has_escalation(store: &Store) -> bool {
     read_snapshot(&store.dir().join("github.json"))
         .ok()
         .flatten()
-        .is_some_and(|snapshot| {
-            snapshot
-                .issues
-                .values()
-                .any(|issue| issue.labels.iter().any(|label| label == ESCALATION))
+        .is_some_and(|snapshot| !snapshot.escalations.is_empty())
+}
+
+/// The open issues in `new` with the escalation label that either had it
+/// counted already or gained it since `old`.
+fn escalations(old: Option<&Snapshot>, new: &Snapshot) -> BTreeSet<u64> {
+    let Some(old) = old.filter(|old| old.polled_at.is_some()) else {
+        return BTreeSet::new();
+    };
+    let escalated = |issue: &Issue| issue.labels.iter().any(|label| label == ESCALATION);
+    new.issues
+        .iter()
+        .filter(|(number, issue)| {
+            escalated(issue)
+                && (old.escalations.contains(number)
+                    || !old.issues.get(number).is_some_and(escalated))
         })
+        .map(|(number, _)| *number)
+        .collect()
 }
 
 /// What one successful read of GitHub found.
