@@ -25,7 +25,7 @@ An unplanned run also showed what happens when a merge is tried too soon. Right 
 ## Decision
 
 - The supervisor merges with `gh pr merge <n> --match-head-commit <sha>`, where `<sha>` is the head the merge check passed. #49 takes the method flag from the policy's `merge_method`, with `--squash` as the default.
-- The supervisor doesn't wait for GitHub's mergeable state before merging. A refused merge isn't retried at once. The supervisor waits for the next tick and runs the whole merge check again, because a refusal usually means the PR changed or GitHub hasn't settled.
+- A refused merge isn't retried at once. The supervisor waits for the next tick and runs the whole merge check again, because a refusal usually means the PR changed or GitHub hasn't settled.
 - The merge API with `sha` refuses a moved head in the same way, so it can replace `gh pr merge` if that ever changes. A successful merge through the API wasn't tested.
 
 ## Consequences
