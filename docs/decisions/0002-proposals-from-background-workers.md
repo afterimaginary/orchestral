@@ -11,7 +11,7 @@ A user-visible feature gets a design proposal before any code. Looks go on a Cla
 
 ## Test
 
-Tested on Claude Code 2.1.314 with a Sonnet 5.5 background session in auto mode, at low effort, with no Orchestral plugin loaded. Workers will also run in auto mode with the plugin turned off (ADR-0001), so these conditions match. Its prompt asked it to publish a one-paragraph page, then create a Design canvas with one artboard, and to record each link or error. It got no other help.
+Tested on Claude Code 2.1.314 with a Sonnet 5.5 background session in auto mode, at low effort. Its prompt asked it to publish a one-paragraph page, then create a Design canvas with one artboard, and to record each link or error. It got no other help.
 
 | Format | Result |
 | --- | --- |
