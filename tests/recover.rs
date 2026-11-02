@@ -145,11 +145,7 @@ fn a_restarted_supervisor_reports_a_lost_worker_once() {
         .update(|state| {
             state.workers.insert(
                 "issue-12".into(),
-                worker(
-                    &main.join("gone"),
-                    Some("558b988a"),
-                    "2026-11-02T10:00:00Z",
-                ),
+                worker(&main.join("gone"), Some("558b988a"), "2026-11-02T10:00:00Z"),
             )
         })
         .unwrap();
@@ -160,7 +156,9 @@ fn a_restarted_supervisor_reports_a_lost_worker_once() {
 
     assert_eq!(
         first,
-        ["issue-12 is lost: its worktree is gone, so it can't be resumed: clean it up with `orchestral cleanup issue-12`, and start its issue again, on its PR if it has one"]
+        [
+            "issue-12 is lost: its worktree is gone, so it can't be resumed: clean it up with `orchestral cleanup issue-12`, and start its issue again, on its PR if it has one"
+        ]
     );
     assert!(second.is_empty());
     assert_eq!(

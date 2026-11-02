@@ -267,8 +267,14 @@ fn shows_the_verdict_on_each_open_pr() {
     let text = stdout(&fleet.status(&[]));
     let json: Value = serde_json::from_str(stdout(&fleet.status(&["--json"])).trim_end()).unwrap();
 
-    assert!(text.contains("\nReviews:\n  PR #41 passed at 4f2c9e1"), "{text}");
-    assert_eq!(json["reviews"], json!([{"pr": 41, "sha": "4f2c9e1a0b", "passed": true}]));
+    assert!(
+        text.contains("\nReviews:\n  PR #41 passed at 4f2c9e1"),
+        "{text}"
+    );
+    assert_eq!(
+        json["reviews"],
+        json!([{"pr": 41, "sha": "4f2c9e1a0b", "passed": true}])
+    );
 }
 
 #[test]
