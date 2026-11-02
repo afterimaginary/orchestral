@@ -2,7 +2,18 @@
 
 A small workflow layer for Claude Code, as a plugin plus a Rust binary. Give it a brief, and it plans the work, runs a fleet of worker sessions, respects your budget, and brings you in for the designs and decisions that are yours.
 
-**Status:** early development. Nothing is usable yet; see [`STATE.md`](STATE.md).
+**Status:** early development. A fleet can be started and watched, but it doesn't yet react to events, review or merge; see [`STATE.md`](STATE.md).
+
+## Trying it
+
+Build the binary, then start Claude Code in your project with this checkout as a plugin:
+
+```bash
+cargo build --release
+claude --plugin-dir /path/to/orchestral
+```
+
+In the project, run `orchestral init` once (as `/path/to/orchestral/bin/orchestral init`), set `fleet_token_budget` in `.orchestral/policy.md`, and push the policy to `main`. Then `/orchestral:orchestrate` checks the setup, claims the project, starts the supervisor and hands issues to workers. The plugin's `bin/orchestral` runs the build from this checkout, and the skill calls it by that path, so another `orchestral` on `PATH` doesn't get in the way.
 
 ## Development
 
