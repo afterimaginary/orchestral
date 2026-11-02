@@ -42,6 +42,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - The pre-push hook keeps rejecting a worker's push to `main` after the binary moves, and `doctor` checks the hook (#88)
 - Work starts in dependency order: ready issues by milestone and priority, skipping ones that wait on an unmerged PR, an undecided design or already have a PR (#34)
 - `orchestral cleanup` removes a finished worker by its PR's state, so a squash merge needs no `--force`, and frees its slot (#42)
+- New work waits for the owner's batch approval as `untriaged`, and the run ends when the approved list is resolved (#36)
 
 ## Up Next
 
