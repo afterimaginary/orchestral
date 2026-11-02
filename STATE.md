@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0007, with two still running. The binary has its CLI conventions, `limits`, which reports limits as unavailable until they can be read, `spawn`, which starts a worker, and `stop` and `resume`. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0007, with two still running. The binary has its CLI conventions, `limits`, which reports limits as unavailable until they can be read, `spawn`, which starts a worker, `stop` and `resume`, and `claim` and `resolve`. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -29,11 +29,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Fleet token accounting, shown as an estimate (`docs/specs/budget.md`)
 - `orchestral spawn`: starts a worker in its own worktree, with its own settings and prompt
 - `orchestral stop` and `resume`: pause a worker and pick it up later
+- `orchestral claim` and `resolve`: one orchestrator per repository, and checked messaging addresses
 
 ## Up Next
 
 1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next refusing at limits (#20, after #16), claiming a worker (#21), and the supervisor (#25).
+2. Milestone 2 (Core), in work order, next refusing at limits (#20, after #16), fleet status (#22, after #16), worker permissions (#23) and the supervisor (#25).
 
 ## Needs Your Decision
 

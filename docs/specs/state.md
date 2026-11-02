@@ -14,13 +14,14 @@ State lives in `orchestral/` inside the repository's git common directory, which
 
 ## `state.json`
 
-A JSON object with a `schema` version, currently `2`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
+A JSON object with a `schema` version, currently `3`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
 
 | Field | Meaning |
 | --- | --- |
 | `schema` | The schema version. |
 | `next_seq` | The `seq` the next event gets, starting at `1`. |
 | `workers` | Each worker by name: its session name, issue, model, effort, worktree, branch, the job id `claude --bg` printed (null until launched) and when it was created. |
+| `orchestrator` | The session that claimed the repository, as its session id and when it claimed, or null. |
 
 Later features add their own fields here. Any change to the fields raises `schema`, so an older binary refuses the file rather than dropping fields it doesn't know.
 

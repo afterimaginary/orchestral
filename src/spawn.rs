@@ -251,7 +251,8 @@ fn check_name(name: &str, session_name: &str) -> Result<(), Failure> {
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-    if !valid {
+    // `resolve` reads this name as the orchestrator.
+    if !valid || name == crate::claim::ORCHESTRATOR {
         return Err(Failure::Error(format!(
             "{name} isn't a valid worker name: use lowercase letters, digits and dashes"
         )));
@@ -480,7 +481,7 @@ mod tests {
     #[test]
     fn names_are_lowercase_letters_digits_and_dashes() {
         assert!(check_name("issue-12", "app-issue-12").is_ok());
-        for bad in ["", "-x", "Issue-12", "issue_12", "a/b"] {
+        for bad in ["", "-x", "Issue-12", "issue_12", "a/b", "orchestrator"] {
             assert!(
                 matches!(check_name(bad, "app-x"), Err(Failure::Error(_))),
                 "{bad}"

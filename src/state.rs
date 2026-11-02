@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 2;
+pub const SCHEMA: u32 = 3;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -25,6 +25,16 @@ pub struct State {
     pub next_seq: u64,
     /// Workers by name.
     pub workers: BTreeMap<String, Worker>,
+    /// The session that claimed this repository, if any.
+    pub orchestrator: Option<Orchestrator>,
+}
+
+/// The session acting as orchestrator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Orchestrator {
+    pub session_id: String,
+    /// RFC 3339, in UTC.
+    pub claimed_at: String,
 }
 
 impl Default for State {
@@ -33,6 +43,7 @@ impl Default for State {
             schema: SCHEMA,
             next_seq: 1,
             workers: BTreeMap::new(),
+            orchestrator: None,
         }
     }
 }

@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{limits, spawn, stop};
+use orchestral::{claim, limits, spawn, stop};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -50,6 +50,19 @@ enum Command {
     },
     /// Resume a stopped worker where it left off.
     Resume {
+        name: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Make this Claude Code session the repository's orchestrator.
+    Claim {
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the SendMessage address of a worker, or of `orchestrator`.
+    Resolve {
         name: String,
         /// Print JSON instead of text.
         #[arg(long)]
@@ -109,6 +122,10 @@ fn run(command: Command) -> Result<(), Failure> {
         Command::Stop { name, json } => outcome::print(&stop::stop(&current_dir()?, &name)?, json),
         Command::Resume { name, json } => {
             outcome::print(&stop::resume(&current_dir()?, &name)?, json)
+        }
+        Command::Claim { json } => outcome::print(&claim::claim(&current_dir()?)?, json),
+        Command::Resolve { name, json } => {
+            outcome::print(&claim::resolve(&current_dir()?, &name)?, json)
         }
         // Allows everything until the worker's denies exist.
         Command::Hook {

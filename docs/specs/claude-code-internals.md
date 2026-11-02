@@ -109,3 +109,7 @@ A record may be half-written when read, so one that doesn't parse is skipped.
 `claude stop <job id>` prints `stopped <job id>` and returns before the session's process exits. Until it exits, `claude --bg --resume <session id>` starts a copy under a new job id and says so.
 
 Once it has exited, a bare `claude --bg --resume <session id>` wakes the same session under the same job id, with the options it was started with, such as `--settings` and `--append-system-prompt-file`. It prints a note listing those options, then `backgrounded · <job id> · <name> (idle — send a prompt to start)`.
+
+## Messaging addresses
+
+SendMessage delivers to a session on the same machine given either its name or `uds:<messagingSocketPath>`, from its session record. A message arrives wrapped as `<cross-session-message from="uds:<sender's socket>">`, so the socket form is the one that names a sender exactly. Names can be shared by more than one session.
