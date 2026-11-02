@@ -6,7 +6,7 @@ A run has one fleet token budget, `fleet_token_budget` in the policy. This page 
 
 The total is the weighted tokens of every response in every fleet session's transcript since the run started, including each session's subagent transcripts in `<session id>/subagents/`. Before a run has started, the total is zero.
 
-Each response is counted once. A response is written as several transcript entries sharing a `message.id`, each with the same usage. Responses before the run started, and API errors, which have no usage, add nothing. A session with no transcript yet adds nothing.
+Each response is counted once. A response is written as several transcript entries sharing a `message.id`, each with the same usage. Responses whose first entry is before the run started, and API errors, which have no usage, add nothing. A session with no transcript yet adds nothing.
 
 ## Weights
 

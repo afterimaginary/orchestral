@@ -54,16 +54,17 @@ pub fn fleet_usage(
                 if entry["type"] != "assistant" {
                     continue;
                 }
-                let at: Option<Timestamp> =
-                    entry["timestamp"].as_str().and_then(|ts| ts.parse().ok());
-                if at.is_none_or(|at| at < since) {
-                    continue;
-                }
-                // One response spans many entries sharing a `message.id`.
+                // One response spans many entries sharing a `message.id`, and
+                // its first entry decides whether it's part of the run.
                 let Some(id) = entry["message"]["id"].as_str() else {
                     continue;
                 };
-                if seen.insert(id.to_owned()) {
+                if !seen.insert(id.to_owned()) {
+                    continue;
+                }
+                let at: Option<Timestamp> =
+                    entry["timestamp"].as_str().and_then(|ts| ts.parse().ok());
+                if at.is_some_and(|at| at >= since) {
                     total += weighted(&entry["message"]["usage"]);
                 }
             }

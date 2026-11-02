@@ -10,6 +10,8 @@ A session's transcript is `<config>/projects/<project>/<session id>.jsonl`, wher
 
 `<project>` is the session's working directory with every character that isn't an ASCII letter or digit replaced by `-`. For example, `/home/dev/my_app` becomes `-home-dev-my-app`. Long paths are shortened, so when that directory has no transcript, every project directory is scanned for `<session id>.jsonl`.
 
+A session's subagents write their own transcripts to `<project>/<session id>/subagents/agent-*.jsonl`, and every entry in them has `isSidechain` of `true`.
+
 ### Entries
 
 Each line is one JSON object with a `type`. The ones read here:
@@ -45,6 +47,8 @@ The time the last response was requested is the `timestamp` of the last `user` o
 ### Prompt cache
 
 Scanning back from the end, the first `usage.cache_creation` with tokens decides the cache lifetime: `ephemeral_5m_input_tokens` above 0 means 300 seconds, otherwise `ephemeral_1h_input_tokens` above 0 means 3600 seconds. The cache is warm while less than that has passed since the last request, and no compaction followed it.
+
+Every response seen on 2.1.314 had a `cache_creation` breakdown. Token accounting prices writes without one at the 5-minute rate, the lower of the two.
 
 ### Model and context window
 

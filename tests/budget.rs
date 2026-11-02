@@ -36,18 +36,14 @@ fn sums_every_session_and_subagent_since_the_run_started() {
 }
 
 #[test]
-fn counts_a_response_split_across_entries_once() {
-    // Without the subagent and the other session: msg_01A once, and msg_01B.
-    let main_only = 40_103.0 + 3_052.3;
-    assert_eq!(
-        total(&[WORKER], at("10:00:00")),
-        (main_only + 10_044.0_f64).round() as u64
-    );
+fn leaves_out_responses_before_the_run_started() {
+    // msg_01A's entries are at 10:00:05 and 10:00:06.
+    assert_eq!(total(&[WORKER, OTHER], at("10:00:10")), 16_107);
 }
 
 #[test]
-fn leaves_out_responses_before_the_run_started() {
-    assert_eq!(total(&[WORKER, OTHER], at("10:00:10")), 16_107);
+fn a_response_that_started_before_the_run_adds_nothing() {
+    assert_eq!(total(&[WORKER, OTHER], at("10:00:06")), 16_107);
 }
 
 #[test]
