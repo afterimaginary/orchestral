@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0007, with two still running. The binary has its CLI conventions, `limits`, which reports limits as unavailable until they can be read, `spawn`, which starts a worker, `stop` and `resume`, and `claim` and `resolve`. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, still running. The binary has its CLI conventions, `limits`, which reports limits as unavailable until they can be read, `spawn`, `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -32,11 +32,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - `orchestral claim` and `resolve`: one orchestrator per repository, and checked messaging addresses
 - Worker guard and pre-push hooks: workers can't merge, approve, push to `main`, or post `/approve` or `/hold`
 - `orchestral init` and `doctor`: project setup and pre-run checks
+- Plan limits read from `/usage` in a throwaway print session, and a resume after the reset shown to wake an idle session (ADR-0008)
 
 ## Up Next
 
-1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next refusing at limits (#20, after #16), fleet status (#22, after #16) and the supervisor (#25).
+1. Finish milestone 1: #2 (a long idle) needs at least 48 idle hours.
+2. Milestone 2 (Core), in work order, next the plan limits reader (#16), then refusing at limits (#20), fleet status (#22) and the supervisor (#25).
 
 ## Needs Your Decision
 
