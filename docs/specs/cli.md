@@ -203,7 +203,7 @@ Commands are split at `;`, `&`, `|`, parentheses and newlines, with quotes and l
 
 ### `orchestral stop <name> [--json]`
 
-Stops a worker's session and keeps its worktree, branch and conversation. It finds the session in `claude agents` by the worker's job id, and refuses, exiting `2`, unless it's a background session, so an interactive session is never stopped. Then it runs `claude stop <job id>` and waits up to 15 seconds for the process to exit. A worker that isn't running is reported as already stopped.
+Stops a worker's session and keeps its worktree, branch and conversation. It finds the session in `claude agents` by the worker's job id, and refuses, exiting `2`, unless it's a background session, so an interactive session is never stopped. Then it records the worker as observed exited, so the supervisor doesn't report the stop as a session that exited, runs `claude stop <job id>`, and waits up to 15 seconds for the process to exit. A worker that isn't running is reported as already stopped.
 
 ```text
 Stopped issue-12. Its worktree and conversation are kept.

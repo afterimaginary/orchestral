@@ -40,3 +40,29 @@ Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as ever
 - To message a worker, get its address with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resolve <name>`, then use SendMessage with that address. Messages from workers come from the same addresses.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orchestral stop <name>` stops a worker and keeps its worktree and conversation. `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resume <name>` brings it back.
 - Answer a worker's question when the policy and the issue already settle it. When the owner has to decide, ask the owner, and keep other work moving.
+
+## Events
+
+Fleet events arrive as notifications from the `orchestral-events` monitor, one line each. A line names the issue or PR and its worker, and most end with the action needed. Act only when a line needs it. When it says `no action needed`, or only reports something, such as a worker starting or stopping, do nothing: no message to a worker, no command, and no reply beyond a word.
+
+- **Feedback, a comment, a review, or a reply to a design proposal:** forward it to the worker it names, in the commenter's own words, quoted as the line gives it. The line has only the comment's first line, so tell the worker where the full comment is (the PR or issue, and who wrote it). Add nothing of your own unless the policy settles a question it raises. A comment with no worker: answer it if it's yours to answer, and otherwise leave it for the owner.
+- **CI failed on a worker's PR, or a review requested changes:** tell the worker what failed and that it should fix it. Don't say how. CI failing on a PR with no worker isn't yours to act on.
+- **A worker is waiting:** see what it needs, as in Keep in touch.
+- **A worker is idle:** check its PR with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status`. If its issue still has work the worker can do, send it its next step. If its PR is waiting on review, CI or the owner, send nothing. A reviewer that has posted its findings is finished: stop it with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral stop <name>`.
+- **A worker's session exited:** it ended without being stopped. Resume it with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resume <name>` if its issue isn't done.
+- **A PR opened as a draft:** nothing to do yet.
+- **A PR is ready for review:** start a fresh reviewer, so the author never reviews its own work:
+
+  ```bash
+  ${CLAUDE_PLUGIN_ROOT}/bin/orchestral spawn review-42 --issue 12 --prompt "Review PR #42 against issue #12. Post your findings as one PR comment, and change nothing."
+  ```
+
+  If spawn refuses because the fleet is at its worker cap, start the reviewer as soon as a slot frees, before any new issue.
+- **A PR merged:** its worker is finished. Stop it, and its reviewer if it has one. Then start the next ready issue if there's a free slot.
+- **A PR closed without merging, or an issue closed:** stop the worker if it's still on it, and don't restart the work unless the owner asks.
+- **An issue opened:** decide whether it's ready for a worker, as in Start work.
+- **A heartbeat:** nothing to do. It keeps your cache warm. Never message a worker because of one.
+- **Limits or budget:** follow the refusal rules in Start work. Past the plan limit, workers finish their turn and you start nothing new until the reset. When the budget is reached, ask the owner how to continue.
+- **Polls failed:** tell the owner GitHub can't be read, with the error, once.
+
+A worker whose cache is cold re-reads its whole context on the next message, which `status` shows as an expensive wake. For a cold worker, hold anything that doesn't need it to act now, and send it together with the next message that does.

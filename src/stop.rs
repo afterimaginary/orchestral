@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::observe::Observed;
 use crate::outcome::Failure;
 use crate::sessions::{self, Agent};
 use crate::spawn::parse_job_id;
@@ -63,6 +64,9 @@ pub fn stop(cwd: &Path, name: &str) -> Result<Stopped, Failure> {
             was_running: false,
         });
     };
+    // Seen as exited already, so the supervisor doesn't report a stop it
+    // was asked for as a session that exited.
+    store.update(|state| state.observed.insert(name.into(), Observed::Exited))?;
     run_claude(&["stop", &job_id])?;
     let deadline = Instant::now() + EXIT_TIMEOUT;
     while sessions::process(pid)?.is_some() {
