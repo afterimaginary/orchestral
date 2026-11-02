@@ -98,7 +98,7 @@ For each worker it shows:
 - the cost to wake it: the context sent with the next message, weighted as in [Budget](budget.md). A warm cache is read at 0.1. A cold one is written again at 2 when the session last used a 1-hour cache, and at 1.25 otherwise. It's an estimate, and
 - `proposal` while it's on a design proposal, with what the proposal has used since it started.
 
-A `Design proposals` line shows what proposals used this run, the finished ones (`orchestral proposal --done`) and the open ones so far, when that's more than nothing. Variants cost real tokens, so this keeps their cost in view. It reads `usage unknown` when an open proposal's transcript can't be read.
+A `Design proposals` line shows what proposals used this run, the finished ones (`orchestral proposal-done`) and the open ones so far, when that's more than nothing. Variants cost real tokens, so this keeps their cost in view. It reads `usage unknown` when an open proposal's transcript can't be read.
 
 ```text
 Fleet: not paused
@@ -131,7 +131,7 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 
 ### `orchestral spawn <name> --issue <n> [--role worker|reviewer] [--pr <n>] [--proposal] --prompt <text> [--model <m>] [--effort <e>] [--json]`
 
-Starts a worker on an issue as a background Claude Code session. With `--role reviewer --pr <n>`, it starts a reviewer of that PR instead: the same kind of session, with the reviewer prompt below. `--pr` is required for a reviewer and refused for a worker. `--proposal` starts a worker on its issue's design proposal, which `status` counts the spend of until `orchestral proposal <name> --done`; it's refused for a reviewer. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
+Starts a worker on an issue as a background Claude Code session. With `--role reviewer --pr <n>`, it starts a reviewer of that PR instead: the same kind of session, with the reviewer prompt below. `--pr` is required for a reviewer and refused for a worker. `--proposal` starts a worker on its issue's design proposal, which `status` counts the spend of until `orchestral proposal-done <name>`; it's refused for a reviewer. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
 
 It refuses, exiting `2`, when:
 
@@ -174,7 +174,7 @@ The worker's settings apply to its process only:
 | `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
 
-The prompt names the worker and its issue, tells it to find its orchestrator's SendMessage address with `<this binary's path> resolve orchestrator` (and that messages from that address are its orchestrator's), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`. It says how to make a design proposal when the first message asks for one: files under `.proposals/`, a Claude Design canvas for looks or an interactive artifact for behaviour with the policy's `design_variants` variants, or an artifact page with one or two options and a recommendation for architecture, linked on the issue with `needs-discussion`, and no code until the orchestrator passes on the owner's choice.
+The prompt names the worker and its issue, tells it to find its orchestrator's SendMessage address with `<this binary's path> resolve orchestrator` (and that messages from that address are its orchestrator's), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`. With `--proposal`, it also says how to make the issue's design proposal: files under `.proposals/`, a Claude Design canvas for looks or an interactive artifact for behaviour with the policy's `design_variants` variants, or an artifact page with one or two options and a recommendation for architecture, linked on the issue with `needs-discussion`, and no code until the orchestrator passes on the owner's choice.
 
 A reviewer's prompt names the PR and its issue. It says what to check: the policy's `review_command` verbatim when set, or else that the PR meets the issue's acceptance criteria and keeps to its non-goals. It asks for realistic failures in normal use rather than speculative hardening. The reviewer posts one PR comment, then records its verdict on the head commit it reviewed with `orchestral review`, and never edits code.
 
@@ -186,9 +186,9 @@ Started issue-12 as app-issue-12 (job 558b988a) in /home/dev/app/.claude/worktre
 {"name":"issue-12","session_name":"app-issue-12","job_id":"558b988a","worktree":"/home/dev/app/.claude/worktrees/issue-12"}
 ```
 
-### `orchestral proposal <name> --done [--json]`
+### `orchestral proposal-done <name> [--json]`
 
-Records that worker `<name>`'s design proposal is over, because the owner chose a design or rejected it. It adds what the proposal used, from its start to now, to the run's finished proposals, which `status` shows, and the worker is no longer shown as on a proposal. It refuses when the worker isn't on one. When its transcript can't be read, it's done but not counted, and says so.
+Records that worker `<name>`'s design proposal is over, because the owner chose a design or rejected it. It adds what the proposal used this run, from its start (or the run's, if later) to now, to the run's finished proposals, which `status` shows, and the worker is no longer shown as on a proposal. It refuses when the worker isn't on one. When its usage can't be read, because `claude agents` fails or its transcript can't be found or read, it's done but not counted, and says so.
 
 ```text
 issue-12's proposal is done. It used about 412000 tokens (estimate).

@@ -402,7 +402,7 @@ fn proposals_show_their_spend_until_done() {
     let done = fleet
         .stubs
         .orchestral()
-        .args(["proposal", "issue-12", "--done"])
+        .args(["proposal-done", "issue-12"])
         .current_dir(&fleet.main)
         .env("CLAUDE_CONFIG_DIR", &fleet.config)
         .output()
@@ -420,10 +420,42 @@ fn proposals_show_their_spend_until_done() {
     let again = fleet
         .stubs
         .orchestral()
-        .args(["proposal", "issue-12", "--done"])
+        .args(["proposal-done", "issue-12"])
         .current_dir(&fleet.main)
         .env("CLAUDE_CONFIG_DIR", &fleet.config)
         .output()
         .unwrap();
     assert_eq!(again.status.code(), Some(2));
+}
+
+#[test]
+fn a_proposal_whose_usage_cant_be_read_still_ends() {
+    let fleet = Fleet::new();
+    fleet.start_run();
+    // No stub replies, so `claude agents` fails.
+    let store = Store::for_repo(&fleet.main).unwrap();
+    store
+        .update(|state| {
+            state
+                .proposals
+                .insert("issue-12".into(), "2026-01-01T00:00:00Z".into());
+        })
+        .unwrap();
+
+    let done = fleet
+        .stubs
+        .orchestral()
+        .args(["proposal-done", "issue-12"])
+        .current_dir(&fleet.main)
+        .env("CLAUDE_CONFIG_DIR", &fleet.config)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        stdout(&done),
+        "issue-12's proposal is done. Its usage couldn't be read, so it isn't counted.\n"
+    );
+    let state = store.read().unwrap();
+    assert!(state.proposals.is_empty());
+    assert_eq!(state.proposal_tokens, 0);
 }

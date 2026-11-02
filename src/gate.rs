@@ -120,8 +120,8 @@ pub fn fleet_usage(state: &State, main: &Path, agents: &[Agent]) -> Result<Estim
     budget::fleet_usage(&transcripts, Some(started))
 }
 
-/// What worker `name` has used since its design proposal started, or `None`
-/// when it isn't on one or its transcript can't be found.
+/// What worker `name` has used this run since its design proposal started,
+/// or `None` when it isn't on one or its transcript can't be found.
 pub fn proposal_usage(
     state: &State,
     name: &str,
@@ -130,9 +130,15 @@ pub fn proposal_usage(
     let (Some(worker), Some(since)) = (state.workers.get(name), state.proposals.get(name)) else {
         return Ok(None);
     };
-    let since = since.parse().map_err(|err| {
+    let since: jiff::Timestamp = since.parse().map_err(|err| {
         Failure::Error(format!("{name}'s proposal start {since} is invalid: {err}"))
     })?;
+    // Only this run counts, as for the fleet's usage.
+    let run: Option<jiff::Timestamp> = state
+        .run_started_at
+        .as_deref()
+        .and_then(|started| started.parse().ok());
+    let since = run.map_or(since, |run| run.max(since));
     let Some(path) = transcript::projects_dir()
         .and_then(|projects| worker_transcript(&projects, worker, agents))
     else {

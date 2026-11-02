@@ -1,4 +1,4 @@
-//! `orchestral proposal <name> --done`: the end of a worker's design
+//! `orchestral proposal-done <name>`: the end of a worker's design
 //! proposal, once the owner chose a design or rejected it.
 //!
 //! A worker spawned with `--proposal` is on its proposal from its start until
@@ -46,8 +46,12 @@ pub fn done(cwd: &Path, name: &str) -> Result<Done, Failure> {
             fix: "name a worker spawned with --proposal whose proposal isn't done".into(),
         });
     }
-    let agents = sessions::agents(Path::new("claude"))?;
-    let used = gate::proposal_usage(&state, name, &agents)?;
+    // The proposal ends either way: an unreadable usage isn't counted, rather
+    // than holding up the owner's choice.
+    let used = sessions::agents(Path::new("claude"))
+        .and_then(|agents| gate::proposal_usage(&state, name, &agents))
+        .ok()
+        .flatten();
     let tokens = used.as_ref().map_or(0, |used| used.estimated_tokens);
     store.update(|state| {
         if state.proposals.remove(name).is_some() {

@@ -44,7 +44,7 @@ enum Command {
         #[arg(long, required_if_eq("role", "reviewer"))]
         pr: Option<u64>,
         /// The worker starts on its issue's design proposal, whose token
-        /// spend `status` shows until `orchestral proposal <name> --done`.
+        /// spend `status` shows until `orchestral proposal-done <name>`.
         #[arg(long)]
         proposal: bool,
         /// Overrides the policy's default model.
@@ -60,13 +60,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Record that a worker's design proposal is decided or rejected, keeping
-    /// what it spent for `status`.
-    Proposal {
+    /// Record that a worker's design proposal is over, because the owner chose
+    /// a design or rejected it, keeping what it spent for `status`.
+    ProposalDone {
         name: String,
-        /// The owner chose a design or rejected the proposal.
-        #[arg(long, required = true)]
-        done: bool,
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -296,11 +293,9 @@ fn run(command: Command) -> Result<(), Failure> {
             false => outcome::print(&preview::try_pr(&current_dir()?, pr)?, json),
         },
         Command::Previews { json } => outcome::print(&preview::list(&current_dir()?)?, json),
-        Command::Proposal {
-            name,
-            done: _,
-            json,
-        } => outcome::print(&proposal::done(&current_dir()?, &name)?, json),
+        Command::ProposalDone { name, json } => {
+            outcome::print(&proposal::done(&current_dir()?, &name)?, json)
+        }
         Command::MergeCheck { pr, json } => {
             let check = merge::check(&current_dir()?, pr)?;
             outcome::print(&check, json)?;
