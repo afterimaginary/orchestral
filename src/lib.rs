@@ -5,6 +5,7 @@ pub mod claim;
 pub mod gate;
 pub mod guard;
 pub mod limits;
+pub mod observe;
 pub mod outcome;
 pub mod policy;
 pub mod sessions;

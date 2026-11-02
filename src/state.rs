@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 4;
+pub const SCHEMA: u32 = 5;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -32,6 +32,9 @@ pub struct State {
     /// When the current run started, in RFC 3339 UTC. The fleet budget
     /// counts from here.
     pub run_started_at: Option<String>,
+    /// What the supervisor last saw each worker's session doing: `busy`,
+    /// `idle`, `waiting` or `exited`.
+    pub observed: BTreeMap<String, String>,
 }
 
 /// The session acting as orchestrator.
@@ -51,6 +54,7 @@ impl Default for State {
             orchestrator: None,
             paused: false,
             run_started_at: None,
+            observed: BTreeMap::new(),
         }
     }
 }

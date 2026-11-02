@@ -98,6 +98,7 @@ fn this_process_is_alive_by_its_own_ps_entry() {
         proc_start: Some(me.started.clone()),
         started_at: None,
         messaging_socket_path: None,
+        waiting_for: None,
     };
 
     let now = sessions::process(pid).unwrap();
