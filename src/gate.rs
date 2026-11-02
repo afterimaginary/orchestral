@@ -55,6 +55,21 @@ pub fn check_plan_limits(limits: &Limits, settings: &Settings) -> Result<(), Fai
     })
 }
 
+/// Refuses while the supervisor has the fleet wound down at a plan limit and
+/// the limits can't be read to check it again.
+pub fn check_wound_down(state: &State, limits: &Limits) -> Result<(), Failure> {
+    match &state.wound_down {
+        Some(wound) if !limits.available => Err(Failure::Refused {
+            reason: format!(
+                "the fleet is wound down for the {} window, and the plan limits can't be read to check it",
+                wound.window
+            ),
+            fix: "wait for the supervisor to record that the window has reset".into(),
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// Of the windows at or past `threshold`, the one that resets last, which is
 /// what spawning waits on. A window with no reset time sorts last.
 pub fn limiting_window(limits: &Limits, threshold: u8) -> Option<&Window> {

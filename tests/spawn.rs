@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 
 use common::Stubs;
 use orchestral::sessions;
-use orchestral::state::Store;
+use orchestral::state::{Store, WoundDown};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -449,6 +449,25 @@ fn unreadable_plan_limits_warn_and_spawn() {
         "{}",
         stderr(&output)
     );
+}
+
+#[test]
+fn a_wound_down_fleet_with_unreadable_limits_is_refused() {
+    let repo = Repo::new();
+    repo.stubs.respond("claude", &["-p", "/usage"], "", 1);
+    repo.store()
+        .update(|state| {
+            state.wound_down = Some(WoundDown {
+                window: "session".into(),
+                resets_at: None,
+            })
+        })
+        .unwrap();
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(stderr(&output).contains("the fleet is wound down for the session window"));
 }
 
 #[test]

@@ -128,3 +128,71 @@ fn the_budget_is_reported_once_and_the_usage_saved_every_time() {
     assert_eq!(usage.estimated_tokens, 1100);
     assert_eq!(usage.at, "2026-11-02T16:02:00Z");
 }
+
+#[test]
+fn a_read_without_the_window_waits_for_its_reset() {
+    let (_dir, store) = store();
+    pace::plan_limits(&store, &session(87), LIMIT, at("2026-11-02T16:00:00Z")).unwrap();
+    let no_windows = Limits {
+        available: true,
+        reason: None,
+        windows: Vec::new(),
+    };
+
+    let early = pace::plan_limits(&store, &no_windows, LIMIT, at("2026-11-02T17:00:00Z")).unwrap();
+
+    assert_eq!(early, None);
+    assert!(store.read().unwrap().wound_down.is_some());
+}
+
+#[test]
+fn another_window_past_the_limit_keeps_the_fleet_wound_down() {
+    let (_dir, store) = store();
+    pace::plan_limits(&store, &session(87), LIMIT, at("2026-11-02T16:00:00Z")).unwrap();
+    let week = Limits {
+        available: true,
+        reason: None,
+        windows: vec![
+            Window {
+                name: "session".into(),
+                percent: 3,
+                resets: Some("2026-11-02T23:00:00Z[UTC]".parse::<Zoned>().unwrap()),
+            },
+            Window {
+                name: "week (all models)".into(),
+                percent: 90,
+                resets: Some("2026-11-04T21:00:00Z[UTC]".parse::<Zoned>().unwrap()),
+            },
+        ],
+    };
+
+    let line = pace::plan_limits(&store, &week, LIMIT, at("2026-11-02T18:05:00Z")).unwrap();
+    // Unreadable after the session's reset: still wound down for the week.
+    let later =
+        pace::plan_limits(&store, &unavailable(), LIMIT, at("2026-11-03T00:00:00Z")).unwrap();
+
+    assert_eq!(line, None);
+    assert_eq!(later, None);
+    assert_eq!(
+        store.read().unwrap().wound_down.unwrap().window,
+        "week (all models)"
+    );
+    assert_eq!(events(&store).len(), 1);
+}
+
+#[test]
+fn the_budget_is_reported_once_a_run_even_if_usage_falls_back() {
+    let (_dir, store) = store();
+    let used = |tokens| Estimate {
+        estimated_tokens: tokens,
+    };
+    let now = at("2026-11-02T16:00:00Z");
+
+    pace::budget(&store, &used(1000), 1000, now).unwrap();
+    // A finished worker cleaned up drops out of the total.
+    pace::budget(&store, &used(400), 1000, now).unwrap();
+    let again = pace::budget(&store, &used(1000), 1000, now).unwrap();
+
+    assert_eq!(again, None);
+    assert_eq!(events(&store).len(), 1);
+}
