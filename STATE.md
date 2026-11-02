@@ -44,11 +44,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - `orchestral cleanup` removes a finished worker by its PR's state, so a squash merge needs no `--force`, and frees its slot (#42)
 - New work waits for the owner's batch approval as `untriaged`, and the run ends when the approved list is resolved (#36)
 - Review step: `spawn --role reviewer --pr`, one reviewer per PR, `orchestral review` verdicts by commit, and `blocked` after two failed rounds (#37)
+- Planning: from a brief or the open issues, the skill drafts milestones and issues, has a fresh agent check them, publishes the plan as an artifact, and files it once the owner approves (#33)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next planning from a brief (#33). #93 needs the owner's decision.
+2. Milestone 3 (Autonomous loop), next milestone and final summaries (#43), then winding down at limits (#38), compaction (#39), crash recovery (#40) and stuck-worker reminders (#41). #93 needs the owner's decision.
 
 ## Needs Your Decision
 

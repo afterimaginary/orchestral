@@ -2,7 +2,7 @@
 
 Orchestral is a Claude Code plugin plus a Rust binary. Claude decides and Rust enforces: an orchestrator session plans and assigns work, and the binary runs processes, reads data and refuses anything that breaks a limit or gate. GitHub is the source of truth for issues, PRs, CI and merges.
 
-**Built so far:** the orchestrator's `/orchestrate` skill for starting a fleet, the CLI's commands for spawning, stopping and watching workers, the supervisor, which records worker and GitHub events, the event stream that delivers them to the orchestrator, the state store and the policy file. Reviews, routing and merges aren't built yet. This page describes the intended structure, and tracks what is built.
+**Built so far:** the orchestrator's `/orchestrate` skill for planning from a brief and starting a fleet, the CLI's commands for spawning, stopping and watching workers, the supervisor, which records worker and GitHub events, the event stream that delivers them to the orchestrator, the state store and the policy file. Routing and merges aren't built yet. This page describes the intended structure, and tracks what is built.
 
 ```text
 user ── brief, approvals, feedback ──▶ orchestrator session (Claude, /orchestrate skill)

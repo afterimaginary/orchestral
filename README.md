@@ -13,7 +13,7 @@ cargo build --release
 claude --plugin-dir /path/to/orchestral
 ```
 
-In the project, run `orchestral init` once (as `/path/to/orchestral/bin/orchestral init`), set `fleet_token_budget` in `.orchestral/policy.md`, and push the policy to `main`. Then `/orchestral:orchestrate` checks the setup, claims the project, starts the supervisor and hands issues to workers. The plugin's `bin/orchestral` runs the build from this checkout, and the skill calls it by that path, so another `orchestral` on `PATH` doesn't get in the way.
+In the project, run `orchestral init` once (as `/path/to/orchestral/bin/orchestral init`), set `fleet_token_budget` in `.orchestral/policy.md`, and push the policy to `main`. Then `/orchestral:orchestrate` checks the setup, claims the project, starts the supervisor and hands issues to workers. Give it a brief, as in `/orchestral:orchestrate plan from docs/brief.md`, and it first drafts milestones and issues for you to approve, and files them once you do. The plugin's `bin/orchestral` runs the build from this checkout, and the skill calls it by that path, so another `orchestral` on `PATH` doesn't get in the way.
 
 ## Development
 
