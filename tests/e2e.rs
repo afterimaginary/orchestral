@@ -17,17 +17,18 @@ use serde_json::Value;
 
 const MODEL: &str = "claude-sonnet-5-5";
 
-/// A command with the caller's Claude Code session variables cleared, so it
-/// runs as if from a plain terminal. `CLAUDE_CONFIG_DIR` is kept, since it
-/// says which account to use.
-fn clean(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut command = Command::new(program);
+/// Clears the caller's Claude Code session variables from this process, so
+/// everything it runs, including the library's own `claude` calls, runs as
+/// if from a plain terminal. `CLAUDE_CONFIG_DIR` is kept, since it says which
+/// account to use.
+fn clear_session_env() {
     for (key, _) in std::env::vars() {
         if key == "CLAUDECODE" || (key.starts_with("CLAUDE_") && key != "CLAUDE_CONFIG_DIR") {
-            command.env_remove(key);
+            // SAFETY: the make targets run these tests one at a time, and
+            // this runs first, before the test starts any thread.
+            unsafe { std::env::remove_var(key) };
         }
     }
-    command
 }
 
 fn run(command: &mut Command) -> Output {
@@ -49,7 +50,7 @@ fn text(output: &Output) -> String {
 }
 
 fn orchestral(cwd: &Path, args: &[&str]) -> Output {
-    clean(env!("CARGO_BIN_EXE_orchestral"))
+    Command::new(env!("CARGO_BIN_EXE_orchestral"))
         .args(args)
         .current_dir(cwd)
         .output()
@@ -99,12 +100,13 @@ fn step(message: &str) {
 }
 
 fn installed_version() -> String {
-    text(&run(clean("claude").arg("--version")))
+    text(&run(Command::new("claude").arg("--version")))
 }
 
 #[test]
 #[ignore = "runs the installed claude; run with `make e2e`"]
 fn compatibility() {
+    clear_session_env();
     step(&format!("claude {}", installed_version()));
     let pinned = fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude"))
         .unwrap()
@@ -116,7 +118,7 @@ fn compatibility() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().canonicalize().unwrap();
     let started = Timestamp::now();
-    let reply = run(clean("claude")
+    let reply = run(Command::new("claude")
         .args(["-p", "Reply with the single word ok.", "--model", MODEL])
         .args(["--output-format", "json"])
         .current_dir(&cwd));
@@ -151,7 +153,7 @@ fn compatibility() {
 
     step("claude agents");
     let agents = sessions::parse_agents(&text(&run(
-        clean("claude").args(["agents", "--json", "--all"])
+        Command::new("claude").args(["agents", "--json", "--all"])
     )))
     .unwrap();
     eprintln!("{} sessions listed", agents.len());
@@ -171,6 +173,7 @@ fn local_root() -> PathBuf {
 #[test]
 #[ignore = "runs real workers; run with `make e2e`"]
 fn local_runner() {
+    clear_session_env();
     let root = local_root();
     let repo = root.join("repo");
     let origin = root.join("origin.git");
@@ -220,6 +223,8 @@ fn local_runner() {
             "user.name=e2e",
             "-c",
             "user.email=e2e@example.com",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-q",
             "-m",
@@ -244,7 +249,10 @@ fn local_runner() {
         &["up", "--json", "--keepalive-hours", "0.01"],
     ))
     .unwrap();
-    let supervisor = up["pid"].as_u64().unwrap();
+    let _run = LocalRun {
+        repo: repo.clone(),
+        supervisor: up["pid"].as_u64().unwrap(),
+    };
     assert!(status(&repo)["budget"]["run_started_at"].is_string());
 
     step("spawn a worker that commits and pushes");
@@ -289,18 +297,28 @@ fn local_runner() {
     eprintln!("{}", orchestral_ok(&repo, &["resume", "e2e-hello"]));
     assert_eq!(worker(&status(&repo), "e2e-hello")["session"], "running");
     eprintln!("{}", orchestral_ok(&repo, &["stop", "e2e-hello"]));
-
-    let _ = Command::new("kill").arg(supervisor.to_string()).output();
     step("done");
 }
 
-/// The sandbox clone. `ORCHESTRAL_SANDBOX` overrides it.
+/// Stops the local run's worker and supervisor, whether the run passed or
+/// failed, so the next run doesn't find them live.
+struct LocalRun {
+    repo: PathBuf,
+    supervisor: u64,
+}
+
+impl Drop for LocalRun {
+    fn drop(&mut self) {
+        let _ = orchestral(&self.repo, &["stop", "e2e-hello"]);
+        let _ = Command::new("kill")
+            .arg(self.supervisor.to_string())
+            .output();
+    }
+}
+
+/// The sandbox clone.
 fn sandbox() -> PathBuf {
-    std::env::var_os("ORCHESTRAL_SANDBOX")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap()).join("src/orchestral-sandbox")
-        })
+    PathBuf::from(std::env::var_os("HOME").unwrap()).join("src/orchestral-sandbox")
 }
 
 fn gh(cwd: &Path, args: &[&str]) -> String {
@@ -310,6 +328,7 @@ fn gh(cwd: &Path, args: &[&str]) -> String {
 #[test]
 #[ignore = "files an issue and a PR in the sandbox repository; run with `make sandbox`"]
 fn sandbox_runner() {
+    clear_session_env();
     let clone = sandbox();
     let store = Store::for_repo(&clone).unwrap();
 
@@ -356,6 +375,11 @@ fn sandbox_runner() {
     );
     let issue: u64 = url.rsplit('/').next().unwrap().parse().unwrap();
     eprintln!("{url}");
+    let _run = SandboxRun {
+        clone: clone.clone(),
+        name: name.clone(),
+        issue,
+    };
 
     step("spawn a worker that opens a PR");
     eprintln!(
@@ -398,36 +422,77 @@ fn sandbox_runner() {
     eprintln!("{worker}");
     assert_eq!(worker["pr"], pr);
 
-    step("close the PR and issue, and remove the worker");
-    let _ = orchestral(&clone, &["stop", &name]);
-    // The worktree goes first: `gh pr close --delete-branch` also deletes
-    // the local branch, which a worktree would still hold.
-    let worktree = clone.join(".claude/worktrees").join(&name);
-    git(
-        &clone,
-        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
-    );
-    gh(
-        &clone,
-        &[
-            "pr",
-            "close",
-            &pr.to_string(),
-            "--delete-branch",
-            "--comment",
-            "<!-- orchestral -->\nClosed by the sandbox runner.",
-        ],
-    );
-    gh(
-        &clone,
-        &[
-            "issue",
-            "close",
-            &issue.to_string(),
-            "--reason",
-            "not planned",
-        ],
-    );
-    store.update(|state| state.workers.remove(&name)).unwrap();
     step("done");
+}
+
+/// Undoes what a sandbox run made, whether it passed or failed: stops the
+/// worker, removes its worktree, closes any PR it opened with its branch, and
+/// closes the issue. Each step is best effort.
+struct SandboxRun {
+    clone: PathBuf,
+    name: String,
+    issue: u64,
+}
+
+impl Drop for SandboxRun {
+    fn drop(&mut self) {
+        step("close the PR and issue, and remove the worker");
+        let clone = &self.clone;
+        let name = self.name.as_str();
+        let quiet = |program: &str, args: &[&str]| {
+            let _ = Command::new(program).args(args).current_dir(clone).output();
+        };
+        let _ = orchestral(clone, &["stop", name]);
+        // The worktree goes first: `gh pr close --delete-branch` also deletes
+        // the local branch, which a worktree would still hold.
+        let worktree = clone.join(".claude/worktrees").join(name);
+        quiet(
+            "git",
+            &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+        );
+        let prs = Command::new("gh")
+            .args([
+                "pr",
+                "list",
+                "--head",
+                name,
+                "--json",
+                "number",
+                "-q",
+                ".[].number",
+            ])
+            .current_dir(clone)
+            .output()
+            .map(|output| text(&output))
+            .unwrap_or_default();
+        for pr in prs.lines() {
+            quiet(
+                "gh",
+                &[
+                    "pr",
+                    "close",
+                    pr,
+                    "--delete-branch",
+                    "--comment",
+                    "<!-- orchestral -->\nClosed by the sandbox runner.",
+                ],
+            );
+        }
+        // Without a PR, the branch may still be on either side.
+        quiet("git", &["branch", "-D", name]);
+        quiet("git", &["push", "-q", "origin", "--delete", name]);
+        quiet(
+            "gh",
+            &[
+                "issue",
+                "close",
+                &self.issue.to_string(),
+                "--reason",
+                "not planned",
+            ],
+        );
+        if let Ok(store) = Store::for_repo(clone) {
+            let _ = store.update(|state| state.workers.remove(name));
+        }
+    }
 }

@@ -13,6 +13,6 @@ e2e:
 	cargo test --test e2e -- --ignored --nocapture --test-threads=1 compatibility local_runner
 
 sandbox:
-	cargo test --test e2e -- --ignored --nocapture sandbox_runner
+	cargo test --test e2e -- --ignored --nocapture --test-threads=1 sandbox_runner
 
 .PHONY: ready verify e2e sandbox
