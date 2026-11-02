@@ -13,4 +13,5 @@ pub mod spawn;
 pub mod state;
 pub mod status;
 pub mod stop;
+pub mod supervisor;
 pub mod transcript;

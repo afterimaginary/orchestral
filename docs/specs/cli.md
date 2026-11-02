@@ -52,6 +52,26 @@ Plan limits are unavailable: claude -p /usage printed no usage windows.
 {"available":false,"reason":"claude -p /usage printed no usage windows"}
 ```
 
+### `orchestral up [--keepalive-hours <h>] [--json]`
+
+Starts the supervisor in the background, in its own process group with its output going to `.git/orchestral/logs/supervisor.log`, and waits for it to record its pid in `.git/orchestral/supervisor.pid`. When a supervisor is already running, it reports that one and exits `0`.
+
+```text
+Started the supervisor (pid 64028).
+The supervisor is already running (pid 64028).
+```
+
+```json
+{"pid":64028,"started":true}
+```
+
+The supervisor:
+
+- claims `supervisor.pid` under the state lock, so only one runs, and exits if another holds it or later takes it over,
+- starts a new run when no worker is open, setting `run_started_at` and recording a `run` event. With workers open, it continues the run in progress, such as after a crash, and keeps its start,
+- on macOS, holds a sleep assertion with `caffeinate -i -w <pid>` for its lifetime. Elsewhere, or without `caffeinate`, it logs that the machine may sleep,
+- every 2 seconds checks the state, and exits once no worker is open and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since one was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
+
 ### `orchestral status [--json]`
 
 One view of the fleet: whether it's paused, the run's budget, the plan windows from `orchestral limits`, and each worker. A part that can't be read, such as `claude agents` or `gh pr list`, is left empty and named in a warning, and the command still exits `0`.

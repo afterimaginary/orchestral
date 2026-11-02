@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{claim, gate, guard, limits, setup, spawn, status, stop};
+use orchestral::{claim, gate, guard, limits, setup, spawn, status, stop, supervisor};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -74,6 +74,21 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Start the supervisor in the background, unless it's running.
+    Up {
+        /// Hours the supervisor stays up after the last worker closes.
+        #[arg(long, default_value_t = 8.0)]
+        keepalive_hours: f64,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// The supervisor process that `up` starts. Not for direct use.
+    #[command(hide = true)]
+    Supervise {
+        #[arg(long)]
+        keepalive_hours: f64,
+    },
     /// Refuse new spawns until `unpause`.
     Pause {
         /// Print JSON instead of text.
@@ -137,6 +152,13 @@ fn main() -> ExitCode {
 fn run(command: Command) -> Result<(), Failure> {
     match command {
         Command::Limits { json } => outcome::print(&limits::read(), json),
+        Command::Up {
+            keepalive_hours,
+            json,
+        } => outcome::print(&supervisor::up(&current_dir()?, keepalive_hours)?, json),
+        Command::Supervise { keepalive_hours } => {
+            supervisor::supervise(&current_dir()?, keepalive_hours)
+        }
         Command::Status { json } => outcome::print(&status::status(&current_dir()?)?, json),
         Command::Pause { json } => outcome::print(&gate::set_paused(&current_dir()?, true)?, json),
         Command::Unpause { json } => {
