@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use orchestral::outcome::{self, Failure};
 use orchestral::{
-    claim, cleanup, compact, gate, guard, limits, review, setup, spawn, status, stop, supervisor,
-    watch,
+    claim, cleanup, compact, gate, guard, limits, merge, review, setup, spawn, status, stop,
+    supervisor, watch,
 };
 
 /// A small workflow layer for Claude Code.
@@ -52,6 +52,13 @@ enum Command {
         /// The worker's first message.
         #[arg(long)]
         prompt: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show which merge conditions a PR meets at its head commit. Never merges.
+    MergeCheck {
+        pr: u64,
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -243,6 +250,17 @@ fn run(command: Command) -> Result<(), Failure> {
                 review_of,
             };
             outcome::print(&spawn::spawn(&cwd, request)?, json)
+        }
+        Command::MergeCheck { pr, json } => {
+            let check = merge::check(&current_dir()?, pr)?;
+            outcome::print(&check, json)?;
+            match check.mergeable() {
+                true => Ok(()),
+                false => Err(Failure::Refused {
+                    reason: format!("PR #{pr} can't merge yet"),
+                    fix: "meet the failed conditions above".into(),
+                }),
+            }
         }
         Command::Review {
             pr,

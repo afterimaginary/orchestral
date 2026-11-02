@@ -561,7 +561,7 @@ fn pr_subject(number: u64, pr: &Pr, worker: Option<&str>) -> String {
 }
 
 /// The CI result for a PR's head, from its status check rollup.
-fn ci(checks: &[GhCheck]) -> Ci {
+pub(crate) fn ci(checks: &[GhCheck]) -> Ci {
     if checks.is_empty() {
         return Ci::None;
     }
@@ -590,6 +590,14 @@ fn ci(checks: &[GhCheck]) -> Ci {
         pending |= !complete;
     }
     if pending { Ci::Pending } else { Ci::Passed }
+}
+
+/// Whether any check succeeded, so a rollup of only skipped or neutral
+/// checks doesn't count as passing.
+pub(crate) fn succeeded(checks: &[GhCheck]) -> bool {
+    checks
+        .iter()
+        .any(|check| check.conclusion.as_deref().or(check.state.as_deref()) == Some("SUCCESS"))
 }
 
 fn is_ours(body: &str) -> bool {
@@ -707,7 +715,7 @@ struct GhPr {
 }
 
 #[derive(Deserialize)]
-struct GhCheck {
+pub(crate) struct GhCheck {
     status: Option<String>,
     conclusion: Option<String>,
     state: Option<String>,
