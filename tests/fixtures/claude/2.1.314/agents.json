@@ -1,0 +1,43 @@
+[
+  {
+    "pid": 41001,
+    "id": "a001",
+    "cwd": "/home/dev/app/.worktrees/app-issue-12",
+    "kind": "background",
+    "startedAt": 1793608548120,
+    "sessionId": "00000000-0000-4000-8000-00000000a001",
+    "name": "app-issue-12",
+    "status": "idle",
+    "state": "done"
+  },
+  {
+    "pid": 41002,
+    "id": "a002",
+    "cwd": "/home/dev/app/.worktrees/app-issue-13",
+    "kind": "background",
+    "startedAt": 1793610605400,
+    "sessionId": "00000000-0000-4000-8000-00000000a002",
+    "name": "app-issue-13",
+    "status": "waiting",
+    "waitingFor": "input needed",
+    "state": "blocked"
+  },
+  {
+    "pid": 41003,
+    "cwd": "/home/dev/app",
+    "kind": "interactive",
+    "startedAt": 1793570400500,
+    "sessionId": "00000000-0000-4000-8000-00000000a003",
+    "name": "app-orchestrator",
+    "status": "shell"
+  },
+  {
+    "id": "a005",
+    "cwd": "/home/dev/app/.worktrees/app-issue-9",
+    "kind": "background",
+    "startedAt": 1793500000000,
+    "sessionId": "00000000-0000-4000-8000-00000000a005",
+    "name": "app-issue-9",
+    "state": "working"
+  }
+]
