@@ -18,7 +18,7 @@ claude --bg --name <slug>-nag-<n> --settings <settings> --model claude-haiku-5-5
   -- "Load the PushNotification tool with ToolSearch, then send one PushNotification with status proactive and exactly this text, then stop: <message>"
 ```
 
-Runs 1 and 2 used an earlier prompt without the `ToolSearch` step, and the rest of the command was the same. Remote Control's default for new sessions was on. The session was stopped afterwards. Delivery was read from Notification Center's accessibility tree every second for 45 seconds, not from the tool's result.
+Runs 1 and 2 used an earlier prompt without the `ToolSearch` step, and the rest of the command was the same. The session was stopped afterwards. Delivery was read from Notification Center's accessibility tree every second for 45 seconds, not from the tool's result.
 
 | Run | Settings | Tool result | Seen in Notification Center |
 | --- | --- | --- | --- |
@@ -38,7 +38,7 @@ What this shows:
 
 ## Decision
 
-- Reminders come from one-shot background sessions, on Haiku at low effort, which #41 sets to keep each reminder cheap. The fallback of accepting an extra alert isn't needed.
+- Reminders come from one-shot background sessions, on Haiku at low effort. The fallback of accepting an extra alert isn't needed.
 - Remote Control stays on for reminder sessions. `remoteControlAtStartup: false` isn't used, because it stops the banner.
 - The reminder prompt tells the session to load `PushNotification` with `ToolSearch` first and send with `status: proactive`.
 - **Open:** whether reminder settings set `CLAUDE_CODE_DISABLE_NOTIFICATION_PRESENCE_CHECK=1`. With it, every reminder also requests a phone push, even while the owner is at a terminal. Without it, the Mac banner still arrives, but whether the phone gets anything is unknown. This is the owner's call, and the phone result decides it.
