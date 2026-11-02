@@ -56,20 +56,13 @@ impl fmt::Display for Resumed {
 
 pub fn stop(cwd: &Path, name: &str) -> Result<Stopped, Failure> {
     let store = Store::for_repo(cwd)?;
-    let (_, agent) = find(&store, name)?;
-    if agent.kind.as_deref() != Some("background") {
-        return Err(Failure::Refused {
-            reason: format!("{name}'s session isn't a background session"),
-            fix: "stop it from where it runs".into(),
-        });
-    }
+    let (_, job_id, agent) = find(&store, name)?;
     let Some(pid) = agent.pid else {
         return Ok(Stopped {
             name: name.into(),
             was_running: false,
         });
     };
-    let job_id = agent.id.clone().unwrap_or_default();
     run_claude(&["stop", &job_id])?;
     let deadline = Instant::now() + EXIT_TIMEOUT;
     while sessions::process(pid)?.is_some() {
@@ -89,7 +82,7 @@ pub fn stop(cwd: &Path, name: &str) -> Result<Stopped, Failure> {
 
 pub fn resume(cwd: &Path, name: &str) -> Result<Resumed, Failure> {
     let store = Store::for_repo(cwd)?;
-    let (worker, agent) = find(&store, name)?;
+    let (worker, job_id, agent) = find(&store, name)?;
     if agent.pid.is_some() {
         return Err(Failure::Refused {
             reason: format!("{name} is still running"),
@@ -104,16 +97,23 @@ pub fn resume(cwd: &Path, name: &str) -> Result<Resumed, Failure> {
         .output()
         .map_err(|err| Failure::Error(format!("can't run claude: {err}")))?;
     let printed = String::from_utf8_lossy(&output.stdout);
-    let job_id = match parse_job_id(&printed) {
-        Some(id) if output.status.success() && Some(&id) == agent.id.as_ref() => id,
+    match parse_job_id(&printed) {
+        Some(id) if output.status.success() && id == job_id => {}
+        Some(copy) if output.status.success() => {
+            // A copy would work in the worker's worktree unrecorded.
+            run_claude(&["stop", &copy])?;
+            return Err(Failure::Error(format!(
+                "claude started a copy of {name}'s session as {copy}, which was stopped; try again once {name} has exited"
+            )));
+        }
         _ => {
             return Err(Failure::Error(format!(
-                "claude --bg --resume didn't resume {name}: {}{}",
+                "claude --bg --resume didn't resume {name}: {}\n{}",
                 printed.trim_end(),
                 String::from_utf8_lossy(&output.stderr).trim_end()
             )));
         }
-    };
+    }
     store.record("worker", &format!("{name} resumed"))?;
     Ok(Resumed {
         name: name.into(),
@@ -121,8 +121,10 @@ pub fn resume(cwd: &Path, name: &str) -> Result<Resumed, Failure> {
     })
 }
 
-/// The worker named `name` and its session in `claude agents`.
-fn find(store: &Store, name: &str) -> Result<(Worker, Agent), Failure> {
+/// The worker named `name`, its job id, and its session in `claude agents`.
+/// Only background sessions are touched, so an interactive session is never
+/// stopped or restarted.
+fn find(store: &Store, name: &str) -> Result<(Worker, String, Agent), Failure> {
     let worker = store
         .read()?
         .workers
@@ -139,7 +141,13 @@ fn find(store: &Store, name: &str) -> Result<(Worker, Agent), Failure> {
                 "`claude agents` doesn't list {name}'s session {job_id}"
             ))
         })?;
-    Ok((worker, agent))
+    if agent.kind.as_deref() != Some("background") {
+        return Err(Failure::Refused {
+            reason: format!("{name}'s session isn't a background session"),
+            fix: "manage it from where it runs".into(),
+        });
+    }
+    Ok((worker, job_id, agent))
 }
 
 fn run_claude(args: &[&str]) -> Result<(), Failure> {

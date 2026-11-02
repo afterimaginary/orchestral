@@ -33,7 +33,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 ## Up Next
 
 1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next refusing at limits (#20, after #16) and claiming a worker (#21).
+2. Milestone 2 (Core), in work order, next refusing at limits (#20, after #16), claiming a worker (#21), and the supervisor (#25).
 
 ## Needs Your Decision
 

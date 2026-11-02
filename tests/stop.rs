@@ -177,6 +177,17 @@ fn resume_refuses_a_running_worker() {
 }
 
 #[test]
+fn resume_never_touches_an_interactive_session() {
+    let repo = Repo::new();
+    repo.lists("interactive", None);
+
+    let output = repo.run(&["resume", "issue-12"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(repo.calls().len(), 1);
+}
+
+#[test]
 fn a_resume_that_starts_a_copy_is_an_error() {
     let repo = Repo::new();
     repo.lists("background", None);
@@ -187,10 +198,14 @@ fn a_resume_that_starts_a_copy_is_an_error() {
         0,
     );
 
+    repo.stubs
+        .respond("claude", &["stop"], "stopped 20c5e5d0\n", 0);
+
     let output = repo.run(&["resume", "issue-12"]);
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(stderr(&output).contains("didn't resume issue-12"));
+    assert!(stderr(&output).contains("started a copy of issue-12's session as 20c5e5d0"));
+    assert_eq!(repo.calls().last().unwrap(), &args(&["stop", "20c5e5d0"]));
 }
 
 #[test]

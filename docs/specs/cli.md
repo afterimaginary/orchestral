@@ -93,7 +93,7 @@ Stopped issue-12. Its worktree and conversation are kept.
 
 ### `orchestral resume <name> [--json]`
 
-Resumes a stopped worker with a bare `claude --bg --resume <session id>`, run in its worktree. Any other flag would start a copy under a new id, and the bare form keeps every option the worker was started with. It refuses, exiting `2`, while the worker is still running. A resumed worker is idle until it gets a message.
+Resumes a stopped worker with a bare `claude --bg --resume <session id>`, run in its worktree. Any other flag would start a copy under a new id, and the bare form keeps every option the worker was started with. It refuses, exiting `2`, while the worker is still running, and, like `stop`, for anything but a background session. If Claude Code starts a copy anyway, `resume` stops the copy and reports an error. A resumed worker is idle until it gets a message.
 
 ```text
 Resumed issue-12 (job 558b988a). It's idle until it gets a message.
