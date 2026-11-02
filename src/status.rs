@@ -41,6 +41,8 @@ pub struct WorkerStatus {
     pub issue: u64,
     /// The open PR from the worker's branch.
     pub pr: Option<u64>,
+    /// Whether that PR is a draft.
+    pub draft: bool,
     pub session_name: String,
     /// `running`, `stopped`, or `unknown` when `claude agents` doesn't list
     /// the session.
@@ -104,7 +106,7 @@ pub fn status(cwd: &Path) -> Result<Status, Failure> {
 fn workers(
     state: &State,
     agents: &[Agent],
-    prs: &[(String, u64)],
+    prs: &[(String, u64, bool)],
     now: Timestamp,
     warnings: &mut Vec<String>,
 ) -> Vec<WorkerStatus> {
@@ -126,6 +128,7 @@ fn workers(
                     })
                     .ok()
             });
+            let pr = prs.iter().find(|(branch, _, _)| *branch == worker.branch);
             let (activity, waiting_for) = match agent.map(Agent::activity) {
                 Some(Activity::Working) => ("working", None),
                 Some(Activity::Waiting(reason)) => ("waiting", Some(reason)),
@@ -136,10 +139,8 @@ fn workers(
             WorkerStatus {
                 name: name.clone(),
                 issue: worker.issue,
-                pr: prs
-                    .iter()
-                    .find(|(branch, _)| *branch == worker.branch)
-                    .map(|(_, number)| *number),
+                pr: pr.map(|(_, number, _)| *number),
+                draft: pr.is_some_and(|(_, _, draft)| *draft),
                 session_name: worker.session_name.clone(),
                 session: match agent {
                     Some(agent) if agent.pid.is_some() => "running",
@@ -170,7 +171,8 @@ pub fn wake_cost(context: &Context) -> Estimate {
 }
 
 /// Open PRs as `(head branch, number)`.
-fn open_prs() -> Result<Vec<(String, u64)>, String> {
+/// Each open PR's branch, number, and whether it's a draft.
+fn open_prs() -> Result<Vec<(String, u64, bool)>, String> {
     let output = Command::new("gh")
         .args([
             "pr",
@@ -180,7 +182,7 @@ fn open_prs() -> Result<Vec<(String, u64)>, String> {
             "--limit",
             "200",
             "--json",
-            "number,headRefName",
+            "number,headRefName,isDraft",
         ])
         .output()
         .map_err(|err| format!("can't run gh: {err}"))?;
@@ -198,6 +200,7 @@ fn open_prs() -> Result<Vec<(String, u64)>, String> {
             Some((
                 pr["headRefName"].as_str()?.to_string(),
                 pr["number"].as_u64()?,
+                pr["isDraft"].as_bool().unwrap_or(false),
             ))
         })
         .collect())
@@ -273,6 +276,9 @@ impl fmt::Display for WorkerStatus {
         write!(f, "{} · issue #{}", self.name, self.issue)?;
         if let Some(pr) = self.pr {
             write!(f, " · PR #{pr}")?;
+            if self.draft {
+                write!(f, " (draft)")?;
+            }
         }
         write!(f, " · {}", self.session)?;
         match &self.waiting_for {

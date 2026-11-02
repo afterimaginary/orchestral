@@ -129,7 +129,7 @@ impl Fleet {
         self.stubs.respond(
             "gh",
             &["pr", "list"],
-            r#"[{"number":40,"headRefName":"issue-12"},{"number":41,"headRefName":"other"}]"#,
+            r#"[{"number":40,"headRefName":"issue-12","isDraft":true},{"number":41,"headRefName":"other","isDraft":false}]"#,
             0,
         );
     }
@@ -172,7 +172,7 @@ fn shows_workers_limits_budget_and_pause() {
     // so waking rewrites it at 2 per token.
     assert_eq!(
         lines[7],
-        "  issue-12 · issue #12 · PR #40 · running, done · context 20505 tokens (2%) · cache cold · wake about 41010 tokens (estimate)"
+        "  issue-12 · issue #12 · PR #40 (draft) · running, done · context 20505 tokens (2%) · cache cold · wake about 41010 tokens (estimate)"
     );
     assert_eq!(lines[8], "  issue-13 · issue #13 · unknown");
     assert_eq!(lines.len(), 9, "{text}");
@@ -195,6 +195,7 @@ fn json_carries_the_same_data() {
     let worker = &status["workers"][0];
     assert_eq!(worker["name"], "issue-12");
     assert_eq!(worker["pr"], 40);
+    assert_eq!(worker["draft"], true);
     assert_eq!(worker["session"], "running");
     assert_eq!(worker["activity"], "done");
     assert_eq!(worker["context"]["tokens"], 20_505);
