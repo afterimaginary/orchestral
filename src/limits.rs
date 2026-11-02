@@ -3,10 +3,8 @@
 
 use std::fmt;
 use std::fs;
-use std::io::Read;
-use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use jiff::fmt::strtime;
 use jiff::tz::TimeZone;
@@ -99,7 +97,7 @@ fn run_usage() -> Result<String, String> {
         jiff::Timestamp::now().as_nanosecond()
     ));
     fs::create_dir(&dir).map_err(|err| format!("can't create {}: {err}", dir.display()))?;
-    let output = run_with_deadline(
+    let output = crate::deadline::output(
         Command::new("claude")
             .args([
                 "-p",
@@ -111,6 +109,8 @@ fn run_usage() -> Result<String, String> {
             .current_dir(&dir)
             .env_remove("CLAUDE_CODE_SESSION_ID")
             .env_remove("CLAUDECODE"),
+        DEADLINE,
+        "claude -p /usage",
     );
     let _ = fs::remove_dir_all(&dir);
     let output = output?;
@@ -127,51 +127,6 @@ fn run_usage() -> Result<String, String> {
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-/// Runs `command`, killing it if it hasn't finished within [`DEADLINE`], so a
-/// hung read can't hold up the command that asked for the limits.
-fn run_with_deadline(command: &mut Command) -> Result<Output, String> {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("can't run claude: {err}"))?;
-    // Read both pipes while waiting, so a full pipe can't stall the child.
-    let mut stdout = child.stdout.take().expect("stdout is piped");
-    let mut stderr = child.stderr.take().expect("stderr is piped");
-    let stdout = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stdout.read_to_end(&mut bytes);
-        bytes
-    });
-    let stderr = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
-        bytes
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < DEADLINE => thread::sleep(Duration::from_millis(100)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "claude -p /usage didn't finish within {} seconds",
-                    DEADLINE.as_secs()
-                ));
-            }
-            Err(err) => return Err(format!("can't wait for claude: {err}")),
-        }
-    };
-    Ok(Output {
-        status,
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
-    })
 }
 
 /// Reads the `Current …` lines of `/usage` output and ignores the rest. Any

@@ -10,6 +10,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 | --- | --- |
 | `state.json` | The current state. |
 | `events.jsonl` | Every event, one per line, append-only. |
+| `github.json` | The supervisor's last GitHub snapshot: open issues and PRs, PR drafts, heads, CI results and reviews, comment ids seen recently, when the last poll succeeded, and its failures and backoff. |
 | `watch-cursor` | The `seq` of the last event `orchestral watch` delivered to the orchestrator, as a number and a newline. |
 | `lock` | The advisory lock. Its contents don't matter. |
 | `supervisor.pid` | The running supervisor, as `{"pid": n, "started": "<ps lstart>"}`. The start time tells it from a later process that reuses the pid. |

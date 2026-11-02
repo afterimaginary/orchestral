@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::outcome::Failure;
 use crate::state::Store;
-use crate::{gate, limits, observe, sessions};
+use crate::{gate, github, limits, observe, sessions};
 
 /// How often the supervisor checks the workers and whether it can exit.
 const TICK: Duration = Duration::from_secs(2);
@@ -227,11 +227,17 @@ impl Ticks {
         let now = jiff::Timestamp::now();
         if due(self.last_minute, now, MINUTE) && finished(&self.minute) {
             self.last_minute = Some(now);
-            // Every minute: the fleet's usage this run.
+            // Every minute: GitHub, and the fleet's usage this run.
             let store = store.clone();
-            self.minute = Some(thread::spawn(move || match fleet_usage(&store) {
-                Ok(used) => log(&format!("fleet usage: {used}")),
-                Err(err) => log(&format!("can't read fleet usage: {}", failure_text(&err))),
+            self.minute = Some(thread::spawn(move || {
+                match github::poll(&store, Path::new("gh")) {
+                    Ok(lines) => lines.iter().for_each(|line| log(line)),
+                    Err(err) => log(&format!("can't poll GitHub: {}", failure_text(&err))),
+                }
+                match fleet_usage(&store) {
+                    Ok(used) => log(&format!("fleet usage: {used}")),
+                    Err(err) => log(&format!("can't read fleet usage: {}", failure_text(&err))),
+                }
             }));
         }
         if due(self.last_five_minutes, now, FIVE_MINUTES) && finished(&self.five_minutes) {
@@ -342,7 +348,7 @@ fn check_keepalive(hours: f64) -> Result<(), Failure> {
     }
 }
 
-fn failure_text(failure: &Failure) -> String {
+pub(crate) fn failure_text(failure: &Failure) -> String {
     match failure {
         Failure::Error(message) => message.clone(),
         Failure::Refused { reason, .. } => reason.clone(),
