@@ -17,7 +17,9 @@ list)
     read -r name port pid tailnet <"$route"
     kill -0 "$pid" 2>/dev/null || continue
     printf '  \033[36mhttps://%s.localhost\033[0m  ->  localhost:%s  \033[2m(pid %s)\033[0m\n' "$name" "$port" "$pid"
-    [ -n "$tailnet" ] && printf '    tailscale: %s\n' "$tailnet"
+    if [ -n "$tailnet" ]; then
+      printf '    tailscale: %s\n' "$tailnet"
+    fi
   done
   ;;
 *)

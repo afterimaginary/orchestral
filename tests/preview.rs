@@ -717,3 +717,26 @@ fn without_tailscale_a_portless_preview_has_a_local_link_and_no_comment() {
     repo.reconcile();
     assert_eq!(repo.route_pid("main-pr-43"), None);
 }
+
+#[test]
+fn when_portless_runs_no_route_the_preview_falls_back_to_port() {
+    let repo = repo(&format!("  run: '{SERVER}'\n"), &[44]);
+    repo.stubs
+        .respond("portless", &["--version"], "0.15.6\n", 0);
+    repo.stubs
+        .respond("portless", &["list"], "No active routes.\n", 0);
+    repo.stubs.respond("portless", &["main-pr-44"], "", 1);
+    repo.stubs.respond("tailscale", &["status"], "", 1);
+
+    repo.stdout(&["try", "44"]);
+    let lines = repo.reconcile();
+
+    assert!(
+        lines[0]
+            .starts_with("portless didn't list the route main-pr-44, so it runs on $PORT instead"),
+        "{lines:?}"
+    );
+    assert_eq!(repo.url(44), None);
+    assert!(!repo.state().previews[&44].server.as_ref().unwrap().portless);
+    assert_eq!(fetch(repo.port(44)).as_deref(), Some("PR 44\n"));
+}
