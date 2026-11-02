@@ -21,7 +21,7 @@ A stand-in supervisor, a plain shell script detached with `nohup`, started two p
 | Restart one | SIGINT to the pid `portless list` showed removed its route and its `tailscale serve` entry. Starting it again gave a new local port, and its link was read from `portless list` and served the right content. |
 | Stop both | SIGINT to each pid shown removed both routes and both `tailscale serve` entries. No server processes were left. |
 
-The machine already had a stale `tailscale serve` entry on port 443, pointing at local port 4249 with nothing listening. That's inside portless's 4000–4999 range, so #52's cleanup rule would have removed it. Because of it, the previews got ports 8443 and 8444 instead of 443 and 8443. In this run, the restarted preview happened to get its old tailnet port back, but that isn't guaranteed, because ports are handed out in start order.
+The machine already had a stale `tailscale serve` entry on port 443. Because of it, the previews got ports 8443 and 8444 instead of 443 and 8443. In this run, the restarted preview happened to get its old tailnet port back, but that isn't guaranteed, because ports are handed out in start order.
 
 ## Decision
 
