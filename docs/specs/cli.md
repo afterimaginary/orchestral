@@ -98,3 +98,27 @@ Resumes a stopped worker with a bare `claude --bg --resume <session id>`, run in
 ```text
 Resumed issue-12 (job 558b988a). It's idle until it gets a message.
 ```
+
+### `orchestral claim [--json]`
+
+Makes the calling Claude Code session the repository's orchestrator, so two orchestrators never give workers conflicting instructions. The session is identified by `CLAUDE_CODE_SESSION_ID` (ADR-0001), and without it, claim is an error.
+
+It refuses, exiting `2`, while another live session holds the claim. A holder whose session has ended loses the claim to the next caller, and claiming again from the holder succeeds.
+
+```text
+Session 00000000-0000-4000-8000-0000000000c1 is the orchestrator.
+```
+
+### `orchestral resolve <name> [--json]`
+
+Prints the SendMessage address of a worker, or of the claimed orchestrator when `<name>` is `orchestrator`. The address is `uds:<messaging socket>`, which is also the `from` on messages that session sends, so it identifies a sender exactly.
+
+It refuses, exiting `2`, when no live session matches, when more than one does, when a worker's session runs outside its worktree, or when the session has no messaging socket. A worker's session is found by its session name, and the orchestrator's by its session id.
+
+```text
+uds:/tmp/cc-socks/41001.sock
+```
+
+```json
+{"name":"issue-12","session_id":"00000000-0000-4000-8000-00000000a001","address":"uds:/tmp/cc-socks/41001.sock"}
+```
