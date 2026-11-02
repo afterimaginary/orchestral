@@ -82,7 +82,8 @@ fn an_unknown_outcome_fails() {
 fn a_tag_ends_at_the_first_bracket() {
     let text = body("- [dropped: see [docs]] Something\n");
 
-    // So a reason can't hold a `]`: the rest becomes the text.
+    // So a reason can't hold a `]`: the rest becomes the text. A known
+    // limit of the format, which the reviewer and summaries show as written.
     assert_eq!(
         findings::check(&text),
         Ok(vec![Finding {
@@ -100,6 +101,7 @@ fn any_other_line_fails() {
         "- [fixed]",
         "- fixed: A typo",
         "None, really",
+        "None.",
     ] {
         assert_eq!(
             findings::check(&body(&format!("{line}\n"))),

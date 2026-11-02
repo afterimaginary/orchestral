@@ -6,7 +6,7 @@ Problems a worker found and didn't act on would go unnoticed if nothing forced a
 
 Every PR body has a `## Findings` section. It runs from that heading, alone on its line, to the next line starting `## `, or to the end of the body. Blank lines in it are ignored. It holds either:
 
-- `None`, alone, or
+- `None`, alone and exactly, so `None.` fails, or
 - one line per finding, `- [tag] text`, where the tag ends at the first `]` and the text isn't empty.
 
 ```markdown
@@ -40,5 +40,5 @@ The check passes when the section is `None` or every finding has a decided outco
 ## Who does what
 
 - Workers report out-of-scope problems and review findings they declined as `[pending]`, and write `None` when there are none. The worker prompt gives them the section to end every PR body with.
-- The orchestrator decides each finding once the review passes, and rewrites its tag in the PR body. Doubt goes to a `priority:low` backlog issue, and a finding is dropped only when it has no user impact. A bug is a blocker to fix now, a `bug` issue for later, or a recorded drop.
+- The orchestrator decides each finding once the review passes, and rewrites its tag in the PR body. Doubt goes to a backlog issue labelled `untriaged` and `priority:low`, which waits for the owner's approval like any proposed work, and a finding is dropped only when it has no user impact. A bug is a blocker to fix now, an `untriaged` `bug` issue for later, or a recorded drop.
 - Milestone and final summaries list every drop with its reason, so the owner can promote one.

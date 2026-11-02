@@ -72,11 +72,14 @@ impl fmt::Display for Problem {
 
 /// Parses the section, `[pending]` included. `None` gives an empty list.
 pub fn parse(body: &str) -> Result<Vec<Finding>, Problem> {
-    let mut lines = body.lines().map(str::trim_end);
-    if !lines.any(|line| line == HEADING) {
-        return Err(Problem::Missing);
-    }
-    let section: Vec<&str> = lines
+    let lines: Vec<&str> = body.lines().map(str::trim_end).collect();
+    let heading = lines
+        .iter()
+        .position(|line| *line == HEADING)
+        .ok_or(Problem::Missing)?;
+    let section: Vec<&str> = lines[heading + 1..]
+        .iter()
+        .copied()
         .take_while(|line| !line.starts_with("## "))
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -122,10 +125,10 @@ fn outcome(tag: &str) -> Option<Outcome> {
         "fixed" => Some(Outcome::Fixed),
         _ => {
             if let Some(number) = tag.strip_prefix("issue #") {
-                return number
-                    .parse()
-                    .ok()
-                    .filter(|_| number.bytes().all(|byte| byte.is_ascii_digit()))
+                let digits = !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit());
+                return digits
+                    .then(|| number.parse().ok())
+                    .flatten()
                     .map(Outcome::Issue);
             }
             let reason = tag.strip_prefix("dropped:")?.trim();

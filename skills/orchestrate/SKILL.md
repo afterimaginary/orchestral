@@ -70,7 +70,7 @@ A plan turns the owner's brief into milestones and issues. The owner approves it
 
 The approved list is the open issues without `untriaged`. The fleet works only on those, so it never grows its own scope.
 
-- New significant work found during the run, such as a feature, or a change beyond an issue's criteria, becomes an issue with the `untriaged` label: `gh issue create --label untriaged`. If the repository has no such label yet, create it first with `gh label create untriaged`, and likewise for `needs-discussion` and `blocked`. Nobody starts it. A small fix in code a worker is already changing stays in that worker's PR.
+- New significant work found during the run, such as a feature, or a change beyond an issue's criteria, becomes an issue with the `untriaged` label: `gh issue create --label untriaged`. If the repository has no such label yet, create it first with `gh label create untriaged`, and likewise for `needs-discussion`, `blocked`, `priority:low` and `bug`. Nobody starts it. A small fix in code a worker is already changing stays in that worker's PR.
 - Untriaged issues wait for the owner's batch approval. Ask once, in the next milestone summary or the final summary, as in Summaries. Don't ask again while they wait.
 - The owner approves an issue by removing `untriaged`, which adds it to the approved list, and declines one by closing it as not planned. Never remove the label yourself unless the owner tells you to in this session.
 - The run ends when every approved issue is closed and no worker is open. Write the final summary, as in Summaries, and tell the owner the run is done, with its link. Then start nothing more until the owner approves new work.
@@ -95,12 +95,12 @@ Write each summary once. A milestone summary is due when an issue in it closes o
 Each PR body ends with a `## Findings` section: `None`, or one `- [tag] text` line per finding. A PR can't merge until every finding is decided. Workers report theirs as `[pending]`, and you decide each one once the review passes:
 
 - `[fixed]`: the worker fixed it in this PR. Ask it to, when the fix is small and in code it's already changing.
-- `[issue #N]`: filed as an issue. Doubt goes here: a finding you're unsure about becomes a backlog issue labelled `priority:low`, which costs little and isn't worked on until the owner asks.
+- `[issue #N]`: filed as an issue. Doubt goes here: a finding you're unsure about becomes a backlog issue labelled `untriaged` and `priority:low`. It costs little, and `untriaged` keeps it off the approved list until the owner approves it.
 - `[dropped: reason]`: dropped, only when it has no user impact. The reason can't contain `]`.
 
-A bug is either a blocker that stops this milestone or its demo, which the worker fixes now; a real bug that can wait, filed with the `bug` label for a bug sprint the owner calls; or not worth tracking, and dropped with its reason. A feature that fails its acceptance criteria isn't a bug: its worker isn't finished.
+A bug is either a blocker that stops this milestone or its demo, which the worker fixes now; a real bug that can wait, filed with the `untriaged` and `bug` labels for a bug sprint the owner calls; or not worth tracking, and dropped with its reason. A feature that fails its acceptance criteria isn't a bug: its worker isn't finished.
 
-To record your decisions, rewrite each `[pending]` tag in the PR body: read it with `gh pr view <n> --json body --jq .body`, change only the tags, and save it with `gh pr edit <n> --body-file <file>`. Then read it back to check every tag changed. Milestone and final summaries list every drop, as in Summaries.
+To record your decisions, rewrite each `[pending]` tag in the PR body while its worker is idle, so neither of you overwrites the other: read it with `gh pr view <n> --json body --jq .body` just before saving, change only the tags, and save it with `gh pr edit <n> --body-file <file>`. Then read it back to check every tag changed. Milestone and final summaries list every drop, as in Summaries.
 
 ## Keep in touch
 
