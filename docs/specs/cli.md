@@ -82,3 +82,19 @@ Started issue-12 as app-issue-12 (job 558b988a) in /home/dev/app/.claude/worktre
 ```
 
 `orchestral hook worker-guard` is the worker's Bash hook. It allows every command for now.
+
+### `orchestral stop <name> [--json]`
+
+Stops a worker's session and keeps its worktree, branch and conversation. It finds the session in `claude agents` by the worker's job id, and refuses, exiting `2`, unless it's a background session, so an interactive session is never stopped. Then it runs `claude stop <job id>` and waits up to 15 seconds for the process to exit. A worker that isn't running is reported as already stopped.
+
+```text
+Stopped issue-12. Its worktree and conversation are kept.
+```
+
+### `orchestral resume <name> [--json]`
+
+Resumes a stopped worker with a bare `claude --bg --resume <session id>`, run in its worktree. Any other flag would start a copy under a new id, and the bare form keeps every option the worker was started with. It refuses, exiting `2`, while the worker is still running, and, like `stop`, for anything but a background session. If Claude Code starts a copy anyway, `resume` stops the copy and reports an error. A resumed worker is idle until it gets a message.
+
+```text
+Resumed issue-12 (job 558b988a). It's idle until it gets a message.
+```

@@ -394,11 +394,12 @@ fn worker_prompt(name: &str, issue: u64) -> String {
 
 /// The job id from `backgrounded · <id> · <name>`, after removing any ANSI
 /// escape sequences.
-fn parse_job_id(output: &str) -> Option<String> {
+pub(crate) fn parse_job_id(output: &str) -> Option<String> {
     strip_ansi(output).lines().find_map(|line| {
         let mut parts = line.trim().strip_prefix("backgrounded")?.split('·');
         parts.next()?;
-        let id = parts.next()?.trim();
+        // A session without a name has a note after its id instead.
+        let id = parts.next()?.split_whitespace().next().unwrap_or_default();
         (!id.is_empty()).then(|| id.to_owned())
     })
 }
@@ -469,6 +470,10 @@ mod tests {
 
         assert_eq!(parse_job_id(plain).as_deref(), Some("558b988a"));
         assert_eq!(parse_job_id(colored).as_deref(), Some("558b988a"));
+        assert_eq!(
+            parse_job_id("backgrounded · 20c5e5d0 (idle — send a prompt to start)\n").as_deref(),
+            Some("20c5e5d0")
+        );
         assert_eq!(parse_job_id("Error: not trusted\n"), None);
     }
 

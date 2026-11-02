@@ -136,6 +136,8 @@ fn parse_etime(etime: &str) -> Option<i64> {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Agent {
+    /// The short id `claude --bg` printed.
+    pub id: Option<String>,
     pub session_id: String,
     pub pid: Option<u32>,
     pub name: Option<String>,
