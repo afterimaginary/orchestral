@@ -22,6 +22,7 @@ fn worker(name: &str, job: Option<&str>) -> Worker {
         worktree: PathBuf::from("/home/dev/app/.claude/worktrees").join(name),
         branch: name.into(),
         job_id: job.map(String::from),
+        review_of: None,
         created_at: "2026-11-02T00:00:00Z".into(),
     }
 }

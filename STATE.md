@@ -43,15 +43,16 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Work starts in dependency order: ready issues by milestone and priority, skipping ones that wait on an unmerged PR, an undecided design or already have a PR (#34)
 - `orchestral cleanup` removes a finished worker by its PR's state, so a squash merge needs no `--force`, and frees its slot (#42)
 - New work waits for the owner's batch approval as `untriaged`, and the run ends when the approved list is resolved (#36)
+- Review step: `spawn --role reviewer --pr`, one reviewer per PR, `orchestral review` verdicts by commit, and `blocked` after two failed rounds (#37)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next the draft-PR stall (#91) and the review step (#37), then planning from a brief (#33).
+2. Milestone 3 (Autonomous loop), next planning from a brief (#33). #93 needs the owner's decision.
 
 ## Needs Your Decision
 
-- None.
+- #93: auto mode blocks workers from acting on the orchestrator's messages (pushes, `gh pr ready`). Pick how workers get those permissions.
 
 ## Notes
 

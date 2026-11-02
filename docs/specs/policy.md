@@ -33,7 +33,7 @@ Always ask me before changing auth, payments or migrations.
 | `preview.run` | none | Command that serves the preview. |
 | `preview.url` | none | Used instead of `run` when the host gives each PR a URL. `{pr}` and `{branch}` are filled in. |
 | `preview.max_running` | `3` | Most previews running at once. |
-| `review_command` | none | What a reviewer session runs. None uses the built-in reviewer prompt. |
+| `review_command` | none | What a reviewer checks, inserted verbatim into the reviewer prompt, such as `Run /refine on the PR.` None uses the built-in check against the issue's acceptance criteria and non-goals. |
 
 ## Rejected files
 

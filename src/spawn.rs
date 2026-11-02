@@ -31,6 +31,8 @@ pub struct Request {
     pub effort: Option<String>,
     /// What the worker is asked to do first.
     pub prompt: String,
+    /// For a reviewer, the PR it reviews.
+    pub review_of: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -68,6 +70,17 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
         return Err(Failure::Refused {
             reason: format!("a worker named {name} already exists"),
             fix: "choose another name".into(),
+        });
+    }
+    if let Some(pr) = request.review_of
+        && let Some((other, _)) = state
+            .workers
+            .iter()
+            .find(|(_, worker)| worker.review_of == Some(pr))
+    {
+        return Err(Failure::Refused {
+            reason: format!("PR #{pr} already has a reviewer, {other}"),
+            fix: format!("wait for {other}'s verdict, or clean it up first"),
         });
     }
     gate::check_capacity(&state, &policy.settings)?;
@@ -173,7 +186,17 @@ impl Launch<'_> {
             write(&settings, &settings_json(name, self.main, &plugin_ids()?)?)?;
             let exe = std::env::current_exe()
                 .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
-            write(&prompt, &worker_prompt(name, request.issue, &exe))?;
+            let text = match request.review_of {
+                Some(pr) => reviewer_prompt(
+                    name,
+                    request.issue,
+                    pr,
+                    self.settings.review_command.as_deref(),
+                    &exe,
+                ),
+                None => worker_prompt(name, request.issue, &exe),
+            };
+            write(&prompt, &text)?;
             // Recorded before launching, so a crash leaves a visible entry.
             // Pause and the cap are checked again under the lock, so two
             // spawns at once can't both take the last place.
@@ -189,6 +212,7 @@ impl Launch<'_> {
                         worktree: self.worktree.into(),
                         branch: name.clone(),
                         job_id: None,
+                        review_of: request.review_of,
                         created_at: jiff::Timestamp::now().to_string(),
                     },
                 );
@@ -411,6 +435,27 @@ fn worker_prompt(name: &str, issue: u64, orchestral: &Path) -> String {
     include_str!("prompts/worker.md")
         .replace("{{name}}", name)
         .replace("{{issue}}", &issue.to_string())
+        .replace(
+            "{{orchestral}}",
+            &shell_quote(&orchestral.display().to_string()),
+        )
+}
+
+fn reviewer_prompt(
+    name: &str,
+    issue: u64,
+    pr: u64,
+    review_command: Option<&str>,
+    orchestral: &Path,
+) -> String {
+    let review = review_command.unwrap_or(
+        "Check that the PR meets the issue's acceptance criteria and keeps to its non-goals.",
+    );
+    include_str!("prompts/reviewer.md")
+        .replace("{{name}}", name)
+        .replace("{{issue}}", &issue.to_string())
+        .replace("{{pr}}", &pr.to_string())
+        .replace("{{review}}", review)
         .replace(
             "{{orchestral}}",
             &shell_quote(&orchestral.display().to_string()),

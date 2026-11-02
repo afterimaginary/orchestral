@@ -78,6 +78,7 @@ impl Fleet {
             worktree: main.join(".claude/worktrees").join(name),
             branch: name.into(),
             job_id: job.map(String::from),
+            review_of: None,
             created_at: "2026-11-02T00:00:00Z".into(),
         };
         Store::for_repo(&main)

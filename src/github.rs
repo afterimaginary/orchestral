@@ -22,6 +22,10 @@ use crate::state::{State, Store};
 /// Marks an issue waiting on the owner's decision.
 pub const ESCALATION: &str = "needs-discussion";
 
+/// Labels that leave an issue waiting on the owner: an escalation, or work
+/// the fleet gave up on after failed reviews.
+const WAITS_ON_OWNER: [&str; 2] = [ESCALATION, crate::review::BLOCKED];
+
 /// Marks new work that waits for the owner's batch approval.
 pub const UNTRIAGED: &str = "untriaged";
 
@@ -54,7 +58,7 @@ pub struct Snapshot {
     pub failures: u32,
     /// While failing, no poll runs before this.
     pub retry_after: Option<Timestamp>,
-    /// Open issues that gained the escalation label during the run. A label
+    /// Open issues that gained an escalation or `blocked` label during the run. A label
     /// that was there at the first poll isn't the fleet's.
     #[serde(default)]
     pub escalations: BTreeSet<u64>,
@@ -139,8 +143,8 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     Ok(lines)
 }
 
-/// Whether an issue escalated during the run still waits on the owner's
-/// decision. An unreadable snapshot counts as none.
+/// Whether an issue escalated or blocked during the run still waits on the
+/// owner. An unreadable snapshot counts as none.
 pub fn has_escalation(store: &Store) -> bool {
     read_snapshot(&store.dir().join("github.json"))
         .ok()
@@ -148,13 +152,18 @@ pub fn has_escalation(store: &Store) -> bool {
         .is_some_and(|snapshot| !snapshot.escalations.is_empty())
 }
 
-/// The open issues in `new` with the escalation label that either had it
-/// counted already or gained it since `old`.
+/// The open issues in `new` waiting on the owner that either were counted
+/// already or started waiting since `old`.
 fn escalations(old: Option<&Snapshot>, new: &Snapshot) -> BTreeSet<u64> {
     let Some(old) = old.filter(|old| old.polled_at.is_some()) else {
         return BTreeSet::new();
     };
-    let escalated = |issue: &Issue| issue.labels.iter().any(|label| label == ESCALATION);
+    let escalated = |issue: &Issue| {
+        issue
+            .labels
+            .iter()
+            .any(|label| WAITS_ON_OWNER.contains(&label.as_str()))
+    };
     new.issues
         .iter()
         .filter(|(number, issue)| {

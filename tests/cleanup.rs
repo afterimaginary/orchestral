@@ -65,6 +65,7 @@ impl Repo {
                         worktree: worktree.clone(),
                         branch: "issue-12".into(),
                         job_id: Some(JOB.into()),
+                        review_of: None,
                         created_at: "2026-11-02T10:00:00Z".into(),
                     },
                 )

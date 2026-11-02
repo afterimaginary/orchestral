@@ -81,7 +81,7 @@ The supervisor:
   - also **every minute**, after the poll, it records a `heartbeat` event when a live session holds the claim and has had nothing for 55 minutes: no event recorded, no claim, and no request of its own, such as a conversation with the owner. A claim held by a session that has ended gets no heartbeats, so its successor doesn't receive a pile of them. Every event wakes the orchestrator, so the heartbeat only fills a 55-minute gap, which keeps its 1-hour prompt cache warm. It never needs action: `heartbeat: 2 workers open, your context 41%, budget about 1.2M of 3.0M; no action needed`. The context is the orchestrator's own, from its transcript, and the budget is this run's estimate against the policy's `fleet_token_budget`; either is left out when it can't be read. Heartbeats stop when the supervisor exits, after `--keepalive-hours` with no worker open,
   - **every 5 minutes**, it reads and logs the plan windows.
   - The minute and 5-minute ticks run on threads of their own, so a slow `claude` call never delays the 2-second tick. Each is skipped while its last run is still going,
-- every 2 seconds also checks whether it can exit, and exits once no worker is open, no open issue that gained the `needs-discussion` label during the run still has it, as the GitHub snapshot records (a label already there at the first poll doesn't count), and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since either was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
+- every 2 seconds also checks whether it can exit, and exits once no worker is open, no open issue that gained the `needs-discussion` or `blocked` label during the run still has it, as the GitHub snapshot records (a label already there at the first poll doesn't count), and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since either was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
 
 ### `orchestral status [--json]`
 
@@ -121,14 +121,15 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 | `budget` | `used` (`{"estimated_tokens": n}`, or null when it can't be read), `fleet_token_budget` and `run_started_at`. |
 | `warnings` | Each part that couldn't be read, and why. |
 
-### `orchestral spawn <name> --issue <n> --prompt <text> [--model <m>] [--effort <e>] [--json]`
+### `orchestral spawn <name> --issue <n> [--role worker|reviewer] [--pr <n>] --prompt <text> [--model <m>] [--effort <e>] [--json]`
 
-Starts a worker on an issue as a background Claude Code session. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
+Starts a worker on an issue as a background Claude Code session. With `--role reviewer --pr <n>`, it starts a reviewer of that PR instead: the same kind of session, with the reviewer prompt below. `--pr` is required for a reviewer and refused for a worker. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
 
 It refuses, exiting `2`, when:
 
 - the session name is longer than 32 characters,
 - a worker with that name is already in the state,
+- for a reviewer, the PR already has one,
 - a live session already has that session name,
 - the fleet is paused (see `orchestral pause`),
 - the state already has `workers` workers, the policy's cap. Every recorded worker counts, stopped or not, until it's cleaned up,
@@ -166,6 +167,8 @@ The worker's settings apply to its process only:
 
 The prompt names the worker and its issue, tells it to find its orchestrator's SendMessage address with `<this binary's path> resolve orchestrator` (and that messages from that address are its orchestrator's), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`.
 
+A reviewer's prompt names the PR and its issue. It says what to check: the policy's `review_command` verbatim when set, or else that the PR meets the issue's acceptance criteria and keeps to its non-goals. It asks for realistic failures in normal use rather than speculative hardening. The reviewer posts one PR comment, then records its verdict on the head commit it reviewed with `orchestral review`, and never edits code.
+
 ```text
 Started issue-12 as app-issue-12 (job 558b988a) in /home/dev/app/.claude/worktrees/issue-12
 ```
@@ -200,6 +203,18 @@ Hooks that stop a worker by accident doing what only the owner or the supervisor
 Commands are split at `;`, `&`, `|`, parentheses and newlines, with quotes and line continuations removed. Flags before a subcommand, such as `gh -R owner/app pr merge` or `git -C app push`, are skipped. Anything else is allowed, with no output.
 
 `hook pre-push` is a git pre-push hook. When `ORCHESTRAL_WORKER` is set, it rejects a push whose remote ref is `refs/heads/main`. Without it, as in the owner's own shell, every push goes through. Installing it into a project is separate.
+
+### `orchestral review <pr> --pass|--fail --sha <sha> [--json]`
+
+Records a reviewer's verdict on PR `<pr>`'s head commit, in the state's `reviews`. It refuses, exiting `2`, when the PR isn't open, when `<sha>` (at least 7 characters) isn't the PR's current head, or when the fleet has no reviewer for the PR. A verdict holds only for the commit it names.
+
+A failed verdict on a commit that hasn't failed before is a round. On the second round, it adds the `blocked` label to the issue the reviewer was started for, and the fleet moves on. It records one `pr` event:
+
+```text
+pr #40 (worker issue-12): review passed at 1111111: no action needed
+pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): have issue-12 fix it
+pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so stop issue-12 and move on
+```
 
 ### `orchestral stop <name> [--json]`
 

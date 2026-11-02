@@ -483,6 +483,7 @@ fn a_run_over_its_fleet_budget_is_refused() {
                     worktree: worktree.clone(),
                     branch: "issue-11".into(),
                     job_id: Some("job11".into()),
+                    review_of: None,
                     created_at: "2026-11-02T00:00:01Z".into(),
                 },
             );
@@ -504,4 +505,87 @@ fn a_run_over_its_fleet_budget_is_refused() {
         "ask the owner to raise fleet_token_budget in .orchestral/policy.md",
     );
     assert!(repo.bg_calls().is_empty());
+}
+
+#[test]
+fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
+    let repo = Repo::new();
+    fs::write(
+        repo.main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\nreview_command: Run /refine on the PR.\n---\nRules.\n",
+    )
+    .unwrap();
+    git(&repo.main, &["commit", "-q", "-am", "review command"]);
+    git(&repo.main, &["push", "-q", "origin", "main"]);
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&[
+        "review-40",
+        "--issue",
+        "12",
+        "--role",
+        "reviewer",
+        "--pr",
+        "40",
+        "--prompt",
+        "Review PR #40.",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let prompt = repo.worker_file("review-40", "prompt.md");
+    assert!(
+        prompt.contains("reviewing PR #40 against issue #12"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("- Run /refine on the PR.\n"), "{prompt}");
+    assert!(prompt.contains("review 40 --pass --sha <head>"), "{prompt}");
+    let state = repo.store().read().unwrap();
+    assert_eq!(state.workers["review-40"].review_of, Some(40));
+}
+
+#[test]
+fn a_pr_gets_one_reviewer() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+    let review = |name: &str| {
+        repo.spawn(&[
+            name,
+            "--issue",
+            "12",
+            "--role",
+            "reviewer",
+            "--pr",
+            "40",
+            "--prompt",
+            "Review PR #40.",
+        ])
+    };
+    assert_eq!(review("review-40").status.code(), Some(0));
+
+    let second = review("review-40b");
+
+    assert_eq!(second.status.code(), Some(2));
+    assert!(stderr(&second).contains("PR #40 already has a reviewer, review-40"));
+}
+
+#[test]
+fn a_reviewer_needs_a_pr_and_a_worker_takes_none() {
+    let repo = Repo::new();
+
+    let reviewer = repo.spawn(&[
+        "review-40",
+        "--issue",
+        "12",
+        "--role",
+        "reviewer",
+        "--prompt",
+        "Review.",
+    ]);
+    let worker = repo.spawn(&[
+        "issue-12", "--issue", "12", "--pr", "40", "--prompt", "Work.",
+    ]);
+
+    assert_eq!(reviewer.status.code(), Some(1), "{}", stderr(&reviewer));
+    assert_eq!(worker.status.code(), Some(1), "{}", stderr(&worker));
+    assert!(stderr(&worker).contains("--pr is only for `--role reviewer`"));
 }
