@@ -211,6 +211,8 @@ fn doctor_warns_when_the_local_policy_differs() {
 
     assert_eq!(code, Some(0));
     assert_eq!(statuses["policy"], "warn");
+    // init hasn't run.
+    assert_eq!(statuses["hook"], "warn");
 }
 
 #[test]

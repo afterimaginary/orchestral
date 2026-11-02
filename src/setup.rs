@@ -211,7 +211,8 @@ if [ -x '{exe}' ]; then
   printf '%s\\n' \"$orchestral_refs\" | '{exe}' hook pre-push \"$@\" || exit 1
 else
   echo \"orchestral isn't at {exe} any more; run orchestral init again\" >&2
-  # Without the binary, still reject a worker's push to main.
+  # Without the binary, still reject a worker's push to main, as
+  # guard::pre_push does.
   if [ -n \"$ORCHESTRAL_WORKER\" ] && printf '%s\\n' \"$orchestral_refs\" |
     awk '$3 == \"refs/heads/main\" {{ found = 1 }} END {{ exit !found }}'; then
     echo \"workers can't push to main; push your branch and open a PR\" >&2
@@ -356,12 +357,18 @@ fn hook(main: &Path) -> Check {
             "the pre-push hook isn't installed; run `orchestral init`".into(),
         );
     };
-    let exe = text
+    let exe = text[text.find(BLOCK_START).unwrap_or(0)..]
         .split_once("if [ -x '")
         .and_then(|(_, rest)| rest.split_once("' ]; then"))
         .map(|(exe, _)| exe.replace("'\\''", "'"));
     match exe {
-        Some(exe) if Path::new(&exe).exists() => ok("hook", format!("calls {exe}")),
+        // As the hook's `[ -x ]` test.
+        Some(exe)
+            if fs::metadata(&exe)
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0) =>
+        {
+            ok("hook", format!("calls {exe}"))
+        }
         _ => warn(
             "hook",
             "the pre-push hook calls a binary that has moved; run `orchestral init` again".into(),
