@@ -216,6 +216,39 @@ The plugin's `hooks/hooks.json` runs both, so the orchestrator carries on correc
 - `hook pre-compact` is the `PreCompact` hook. It saves the fleet's status, as `orchestral status` prints it, to `orchestrator/before-compact.txt` in the store.
 - `hook session-compact` is the `SessionStart` hook for the `compact` source. Its `additionalContext` tells the orchestrator that it was compacted. It points to the orchestrate skill and the binary under `CLAUDE_PLUGIN_ROOT`, and gives the status saved before compaction and the status now. Then it deletes the saved status, so a later compaction never shows a stale one. A status that can't be read is replaced by a line saying why.
 
+### `orchestral merge-check <pr> [--json]`
+
+Shows whether PR `<pr>` could merge at its head commit, condition by condition, and never merges. It reads the PR with `gh pr view` and the paths it changes with `gh pr diff --name-only`, then checks:
+
+- the fleet isn't paused,
+- the PR is open, isn't a draft, targets `main`, and GitHub reports it `MERGEABLE`; an `UNKNOWN` answer fails until GitHub has worked it out,
+- the owner hasn't put it on hold (the state's `holds`),
+- CI passed: at least one check, and every check on the head commit passed,
+- a review passed at the head commit (the state's `reviews`),
+- every finding is decided (see [Findings](findings.md)).
+
+Then the route, from the state's `routes`, where no record means the owner's:
+
+- **the owner's:** the owner approved the head commit (the state's `approvals`). An approval of an earlier commit doesn't count.
+- **the supervisor's:** the policy's `supervisor_merges` is on, and the PR changes nothing under `.orchestral/` or `.github/`, which are the owner's to review.
+
+```text
+PR #42 at 4f2c9e1, merged by the owner:
+  pass  not paused
+  pass  open
+  pass  not a draft
+  pass  targets main
+  pass  no merge conflict
+  pass  not held
+  FAIL  CI passed: checks are still running
+  pass  review passed
+  pass  findings decided
+  pass  approved by the owner
+It can't merge yet: 1 condition failed.
+```
+
+It exits `0` when every condition passes, and otherwise refuses, exiting `2`. `--json` prints `pr`, `head`, `route` (`human` or `supervisor`) and `conditions`, each with `name`, `passed` and `detail`, the reason it failed.
+
 ### `orchestral review <pr> --pass|--fail --sha <sha> [--json]`
 
 Records a reviewer's verdict on PR `<pr>`'s head commit, in the state's `reviews`. It refuses, exiting `2`, when the PR isn't open, when `<sha>` (at least 7 characters) isn't the PR's current head, or when the fleet has no reviewer for the PR. A verdict holds only for the commit it names.

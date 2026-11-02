@@ -18,7 +18,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 
 ## `state.json`
 
-A JSON object with a `schema` version, currently `8`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
+A JSON object with a `schema` version, currently `9`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
 
 | Field | Meaning |
 | --- | --- |
@@ -33,6 +33,9 @@ A JSON object with a `schema` version, currently `8`. A file with any other vers
 | `wound_down` | The plan window the fleet wound down for, as `window` and its reset time `resets_at` (RFC 3339 UTC, or null), until it resets. Null otherwise. |
 | `usage` | The run's fleet usage as the supervisor last read it: `estimated_tokens` and when, `at`. Null until the first read of a run. |
 | `budget_reached` | Whether this run's usage has reached `fleet_token_budget`. A new run clears it and `usage`. |
+| `routes` | Each PR's merge route, by PR number: `to` (`human` or `supervisor`) and `reason`. A PR without one is the owner's to merge. |
+| `approvals` | The head commit the owner approved on each PR, by PR number. |
+| `holds` | The PRs the owner put on hold. |
 
 Later features add their own fields here. Any change to the fields raises `schema`, so an older binary refuses the file rather than dropping fields it doesn't know.
 

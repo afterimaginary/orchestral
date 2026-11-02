@@ -5,7 +5,7 @@
 //! replaced atomically through a temp file and rename, so a reader never sees
 //! a partial write and doesn't need the lock.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 8;
+pub const SCHEMA: u32 = 9;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -43,6 +43,30 @@ pub struct State {
     pub usage: Option<Usage>,
     /// Whether this run has reached its `fleet_token_budget`.
     pub budget_reached: bool,
+    /// Each PR's merge route, by PR number. A PR without one goes to the
+    /// owner.
+    pub routes: BTreeMap<u64, Route>,
+    /// The head commit the owner approved on each PR.
+    pub approvals: BTreeMap<u64, String>,
+    /// PRs the owner put on hold.
+    pub holds: BTreeSet<u64>,
+}
+
+/// Who merges a PR.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeRoute {
+    /// The owner, after approving its head commit.
+    Human,
+    /// The supervisor, once every check passes.
+    Supervisor,
+}
+
+/// A PR's merge route, and why the orchestrator chose it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Route {
+    pub to: MergeRoute,
+    pub reason: String,
 }
 
 /// A plan window past `plan_limit_percent`.
@@ -93,6 +117,9 @@ impl Default for State {
             wound_down: None,
             usage: None,
             budget_reached: false,
+            routes: BTreeMap::new(),
+            approvals: BTreeMap::new(),
+            holds: BTreeSet::new(),
         }
     }
 }

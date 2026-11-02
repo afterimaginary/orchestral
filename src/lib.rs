@@ -12,6 +12,7 @@ pub mod github;
 pub mod guard;
 pub mod heartbeat;
 pub mod limits;
+pub mod merge;
 pub mod observe;
 pub mod outcome;
 pub mod pace;

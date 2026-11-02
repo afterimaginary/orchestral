@@ -50,12 +50,13 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Compaction: plugin hooks save the fleet's status before the orchestrator compacts, and put its instructions and status back after (#39)
 - Recovery: a restarted supervisor reports workers that can't be resumed as lost, once, and an orchestrator taking over checks every open PR once (#40)
 - Findings: workers end each PR body with a `## Findings` section, the orchestrator decides each finding, and `src/findings.rs` checks every one is decided, for the merge check to use (#46)
+- Merge check: `orchestral merge-check <pr>` shows each merge condition at the head commit, for the owner's route or the supervisor's, and never merges (#47)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
 2. Milestone 3 (Autonomous loop): reminders (#41, PR #104) wait for the owner to confirm a banner arrived, and the long-idle run (#44) is still to do. #93 and #100 need the owner's decision.
-3. Milestone 4 (User decision points): the merge check (#47) builds on the findings check (#46).
+3. Milestone 4 (User decision points): merge routing (#48) and supervisor merges (#49) build on the merge check (#47).
 
 ## Needs Your Decision
 
