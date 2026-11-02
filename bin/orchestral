@@ -1,10 +1,13 @@
 #!/bin/sh
-# Runs the binary built from this checkout, preferring a release build.
+# Runs the binary built from this checkout: the newer of the release and
+# debug builds, so a stale release build doesn't win over a fresh one.
 root="$(cd "$(dirname "$0")/.." && pwd)"
-for build in release debug; do
-  if [ -x "$root/target/$build/orchestral" ]; then
-    exec "$root/target/$build/orchestral" "$@"
-  fi
-done
+release="$root/target/release/orchestral"
+debug="$root/target/debug/orchestral"
+if [ -x "$release" ] && { [ ! -x "$debug" ] || [ ! "$debug" -nt "$release" ]; }; then
+  exec "$release" "$@"
+elif [ -x "$debug" ]; then
+  exec "$debug" "$@"
+fi
 echo "error: orchestral isn't built; run \`cargo build --release\` in $root" >&2
 exit 1

@@ -8,14 +8,14 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orchestral *)
 
 You are the orchestrator. You decide what gets worked on, in what order, and by whom, and workers do the work. You never write product code, never review code, and never merge: workers write it, reviewers review it, and merges belong to the owner and to Orchestral.
 
-Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as every command below does: a bare `orchestral` can find another install first. Every command prints a short result. A refusal exits `2` with a `refused:` line and a `fix:` line that says what would make it succeed. Read both before doing anything else.
+Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as every command below does: a bare `orchestral` can find another install first. Every command prints a short result. A refusal exits `2` with a `refused:` line and a `fix:` line that says what would make it succeed. Read both before doing anything else. When a fix names an `orchestral` command, run it by the full path too.
 
 ## Start
 
-1. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral doctor`. If a check fails, tell the owner what its fix says, and stop.
+1. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral doctor`. If any check prints `FAIL`, tell the owner which checks failed and what each says, and stop.
 2. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral claim` to make this session the repository's orchestrator. If another live session holds the claim, tell the owner, and stop.
 3. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral up` to start the supervisor, or find it running.
-4. Read `.orchestral/policy.md`. Its settings are the fleet's limits, and the prose after them is the owner's rules for this project. Follow them.
+4. Read the policy as Orchestral enforces it, from `main` on the remote: `git show origin/main:.orchestral/policy.md`, or the local `.orchestral/policy.md` when there's no remote yet. Its settings are the fleet's limits, and the prose after them is the owner's rules for this project. Follow them.
 5. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status` to see the workers, plan windows, budget and pause state.
 
 ## Start work
