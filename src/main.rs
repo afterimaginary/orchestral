@@ -3,7 +3,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{claim, gate, guard, limits, setup, spawn, status, stop, supervisor, watch};
+use orchestral::{
+    claim, cleanup, gate, guard, limits, setup, spawn, status, stop, supervisor, watch,
+};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -44,6 +46,17 @@ enum Command {
     /// Stop a worker, keeping its worktree and conversation.
     Stop {
         name: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a worker whose PR merged or closed: its session, worktree and
+    /// local branch.
+    Cleanup {
+        name: String,
+        /// Remove it anyway, discarding unpushed or uncommitted work.
+        #[arg(long)]
+        force: bool,
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -186,6 +199,9 @@ fn run(command: Command) -> Result<(), Failure> {
             outcome::print(&spawn::spawn(&cwd, request)?, json)
         }
         Command::Stop { name, json } => outcome::print(&stop::stop(&current_dir()?, &name)?, json),
+        Command::Cleanup { name, force, json } => {
+            outcome::print(&cleanup::cleanup(&current_dir()?, &name, force)?, json)
+        }
         Command::Resume { name, json } => {
             outcome::print(&stop::resume(&current_dir()?, &name)?, json)
         }

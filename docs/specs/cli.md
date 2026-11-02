@@ -217,6 +217,18 @@ Resumes a stopped worker with a bare `claude --bg --resume <session id>`, run in
 Resumed issue-12 (job 558b988a). It's idle until it gets a message.
 ```
 
+### `orchestral cleanup <name> [--force] [--json]`
+
+Removes a finished worker: its session, worktree and local branch, and its entry in the state. A worker is finished when its PR merged or closed, as `gh pr list --head <branch> --state all` shows. Git isn't asked, since a squash merge leaves the branch's own commits off `main`. A worker with no PR, such as a reviewer, can be removed when it has no commits beyond `origin/main`.
+
+It refuses, exiting `2`, while the worker's PR is open, when its worktree has uncommitted changes, when it has commits its PR's head doesn't contain, or when it has commits and no PR. `--force` skips these checks and discards that work. Like `stop`, it refuses anything but a background session.
+
+In order, it stops the session as `stop` does, runs `git worktree remove`, deletes the local branch, then runs `claude rm <job id>`, retrying for 15 seconds while the stopped session still holds its lock. It never runs `git clean`. A session `claude agents` no longer lists is skipped. It records a `<name> cleaned up` event.
+
+```text
+Removed issue-12: its session, worktree and local branch.
+```
+
 ### `orchestral claim [--json]`
 
 Makes the calling Claude Code session the repository's orchestrator, so two orchestrators never give workers conflicting instructions. The session is identified by `CLAUDE_CODE_SESSION_ID` (ADR-0001), and without it, claim is an error.

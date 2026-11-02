@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `cleanup`, which removes a finished worker by its PR's state, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -41,11 +41,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Worker questions: workers reach their orchestrator through `resolve`, escalations wait on `needs-discussion` and keep the supervisor running (#35)
 - The pre-push hook keeps rejecting a worker's push to `main` after the binary moves, and `doctor` checks the hook (#88)
 - Work starts in dependency order: ready issues by milestone and priority, skipping ones that wait on an unmerged PR, an undecided design or already have a PR (#34)
+- `orchestral cleanup` removes a finished worker by its PR's state, so a squash merge needs no `--force`, and frees its slot (#42)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next worker cleanup after a merge (#42), which frees the slot the next ready issue needs, then planning from a brief (#33).
+2. Milestone 3 (Autonomous loop), next the draft-PR stall (#91) and the review step (#37), then planning from a brief (#33).
 
 ## Needs Your Decision
 
