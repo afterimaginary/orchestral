@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 9;
+pub const SCHEMA: u32 = 10;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -50,6 +50,52 @@ pub struct State {
     pub approvals: BTreeMap<u64, String>,
     /// PRs the owner put on hold.
     pub holds: BTreeSet<u64>,
+    /// PR previews, by PR number.
+    pub previews: BTreeMap<u64, Preview>,
+}
+
+/// A PR's preview: what's wanted, from `try`, and the server the supervisor
+/// runs for it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Preview {
+    pub want: Want,
+    /// When `try` last asked for it, in RFC 3339 UTC. The oldest is stopped
+    /// first to stay within `max_running`.
+    pub requested_at: String,
+    /// The worker worktree it runs in.
+    pub worktree: PathBuf,
+    pub server: Option<Server>,
+    /// The lockfile hash `preview.setup` last ran for.
+    pub set_up_for: Option<String>,
+    /// Restarts since it last started cleanly at its commit.
+    pub restarts: u32,
+    /// The commit it exited twice at. It stays down until a new commit.
+    pub failed_at: Option<String>,
+}
+
+/// Whether a preview should run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Want {
+    Running,
+    /// Stopped for a newer preview past `max_running`.
+    MadeRoom,
+    /// Stopped by `try --stop` or a merge or close, and forgotten once its
+    /// server is gone.
+    Off,
+}
+
+/// A running preview server.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Server {
+    pub pid: u32,
+    /// Its process group, which a stop signals.
+    pub group: u32,
+    /// Its start time from `ps`, telling it apart from a reused pid.
+    pub started: String,
+    pub port: u16,
+    /// The worktree's commit when it started.
+    pub head: String,
 }
 
 /// Who merges a PR.
@@ -120,6 +166,7 @@ impl Default for State {
             routes: BTreeMap::new(),
             approvals: BTreeMap::new(),
             holds: BTreeSet::new(),
+            previews: BTreeMap::new(),
         }
     }
 }
