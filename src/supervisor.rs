@@ -22,6 +22,8 @@ use crate::state::Store;
 /// How often the supervisor checks whether it can exit.
 const TICK: Duration = Duration::from_secs(2);
 
+const MAX_KEEPALIVE_HOURS: f64 = 24.0 * 366.0;
+
 /// How long `up` waits for a new supervisor to record itself.
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -150,8 +152,9 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
     ));
     let _awake = keep_awake(pid);
 
-    let keepalive = Duration::from_secs_f64(keepalive_hours * 3600.0);
-    let mut idle_since = Instant::now();
+    // Wall-clock time, so a machine asleep counts toward the window.
+    let keepalive = jiff::SignedDuration::from_secs_f64(keepalive_hours * 3600.0);
+    let mut idle_since = jiff::Timestamp::now();
     loop {
         thread::sleep(TICK);
         // The supervisor stops if another took over its pid file.
@@ -167,18 +170,29 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
             }
         };
         if open {
-            idle_since = Instant::now();
-        } else if idle_since.elapsed() >= keepalive {
-            break;
+            idle_since = jiff::Timestamp::now();
+            continue;
         }
+        if jiff::Timestamp::now().duration_since(idle_since) < keepalive {
+            continue;
+        }
+        // Checked again under the lock, so a worker spawned just now isn't
+        // left without a supervisor.
+        let exited = store.update(|state| {
+            if !state.workers.is_empty() {
+                return false;
+            }
+            if read_pid(&pid_path).is_some_and(|record| record.pid == pid) {
+                let _ = fs::remove_file(&pid_path);
+            }
+            true
+        })?;
+        if exited {
+            log("no worker is open and the keepalive window has passed; exiting");
+            return Ok(());
+        }
+        idle_since = jiff::Timestamp::now();
     }
-    store.update(|_| {
-        if read_pid(&pid_path).is_some_and(|record| record.pid == pid) {
-            let _ = fs::remove_file(&pid_path);
-        }
-    })?;
-    log("no worker is open and the keepalive window has passed; exiting");
-    Ok(())
 }
 
 /// The running supervisor's pid, if there is one.
@@ -230,6 +244,7 @@ fn log(message: &str) {
 /// or without `caffeinate`, the machine may sleep, which is logged.
 fn keep_awake(pid: u32) -> Option<std::process::Child> {
     if !cfg!(target_os = "macos") {
+        log("not on macOS, so nothing keeps the machine awake");
         return None;
     }
     match Command::new("caffeinate")
@@ -248,11 +263,12 @@ fn keep_awake(pid: u32) -> Option<std::process::Child> {
 }
 
 fn check_keepalive(hours: f64) -> Result<(), Failure> {
-    if hours.is_finite() && hours >= 0.0 {
+    // A year is far past any real window, and keeps the seconds in range.
+    if (0.0..=MAX_KEEPALIVE_HOURS).contains(&hours) {
         Ok(())
     } else {
         Err(Failure::Error(format!(
-            "--keepalive-hours must be 0 or more, not {hours}"
+            "--keepalive-hours must be from 0 to {MAX_KEEPALIVE_HOURS}, not {hours}"
         )))
     }
 }

@@ -119,9 +119,16 @@ fn starts_detached_and_records_a_new_run() {
     assert_eq!(up["started"], true);
     assert!(alive(pid));
     assert!(read(&repo.file("supervisor.pid")).contains(&format!("\"pid\":{pid}")));
-    assert!(repo.store().read().unwrap().run_started_at.is_some());
-    assert!(read(&repo.file("events.jsonl")).contains("a new run started"));
-    assert!(read(&repo.file("logs/supervisor.log")).contains(&format!("started (pid {pid}")));
+    // The pid file comes first, so the rest may follow a moment later.
+    let wait = Duration::from_secs(5);
+    assert!(eventually(wait, || repo
+        .store()
+        .read()
+        .is_ok_and(|state| state.run_started_at.is_some())));
+    assert!(eventually(wait, || read(&repo.file("events.jsonl"))
+        .contains("a new run started")));
+    assert!(eventually(wait, || read(&repo.file("logs/supervisor.log"))
+        .contains(&format!("started (pid {pid}"))));
 }
 
 #[test]
@@ -138,9 +145,11 @@ fn a_second_up_finds_the_running_supervisor() {
 #[test]
 fn exits_once_no_worker_is_open_and_the_keepalive_has_passed() {
     let mut repo = Repo::new();
-    // About 1.8 seconds.
-    let pid = repo.up("0.0005")["pid"].as_u64().unwrap() as u32;
+    // 7.2 seconds, several ticks long.
+    let pid = repo.up("0.002")["pid"].as_u64().unwrap() as u32;
 
+    thread::sleep(Duration::from_secs(4));
+    assert!(alive(pid), "exited inside the keepalive window");
     assert!(eventually(Duration::from_secs(15), || !alive(pid)));
     assert!(!repo.file("supervisor.pid").exists());
     assert!(read(&repo.file("logs/supervisor.log")).contains("keepalive window has passed"));
