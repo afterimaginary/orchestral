@@ -70,7 +70,7 @@ A plan turns the owner's brief into milestones and issues. The owner approves it
 The approved list is the open issues without `untriaged`. The fleet works only on those, so it never grows its own scope.
 
 - New significant work found during the run, such as a feature, or a change beyond an issue's criteria, becomes an issue with the `untriaged` label: `gh issue create --label untriaged`. If the repository has no such label yet, create it first with `gh label create untriaged`, and likewise for `needs-discussion` and `blocked`. Nobody starts it. A small fix in code a worker is already changing stays in that worker's PR.
-- Untriaged issues wait for the owner's batch approval. Ask once, when the approved list is nearly done or a milestone ends, listing each untriaged issue with one line on why it matters. Don't ask again while they wait.
+- Untriaged issues wait for the owner's batch approval. Ask once, in the next milestone summary or the final summary, as in Summaries. Don't ask again while they wait.
 - The owner approves an issue by removing `untriaged`, which adds it to the approved list, and declines one by closing it as not planned. Never remove the label yourself unless the owner tells you to in this session.
 - The run ends when every approved issue is closed and no worker is open. Write the final summary, as in Summaries, and tell the owner the run is done, with its link. Then start nothing more until the owner approves new work.
 - When no worker is open and no approved issue can start, because each waits on a dependency the owner declined or hasn't approved, or on a decision, the run is stalled. Tell the owner once, listing each waiting issue and what it waits on.
@@ -83,11 +83,11 @@ Summaries tell the owner what happened, including what was left out. Publish eac
   - each issue that merged, with its PR;
   - each issue closed without merging, and why;
   - each issue still waiting on the owner, and what it waits on;
-  - every dropped finding, with its reason: each `[dropped: reason]` line in the `## Findings` section of the milestone's PRs, read with `gh pr view <n> --json body`;
-  - the work filed as `untriaged` during the milestone.
-- **The final summary**, when the run ends. It lists each milestone with its summary's link, anything merged outside a milestone, every dropped finding not already in a milestone summary, and the proposed work: each open `untriaged` issue, with one line on why it matters, for the owner to approve or decline.
+  - every dropped finding, with its reason: each `[dropped: reason]` line in the `## Findings` section of the PRs for the milestone's issues, read with `gh pr view <n> --json body`. When none of those PRs has the section, say so, rather than implying nothing was dropped;
+  - the proposed work: each `untriaged` issue filed since the last summary, with one line on why it matters, for the owner to approve or decline.
+- **The final summary**, when the run ends. It lists each milestone with its summary's link, and everything since those summaries: what merged outside a milestone, or after its milestone's summary, every dropped finding not already listed, and the proposed work, each open `untriaged` issue, with one line on why it matters.
 
-Write each summary once. A milestone summary is due when an issue in it closes or starts waiting on the owner, so check then.
+Write each summary once. A milestone summary is due when an issue in it closes or starts waiting on the owner, which the merge, close and blocked events below say to check.
 
 ## Keep in touch
 
@@ -117,7 +117,7 @@ Fleet events arrive as notifications from the `orchestral-events` monitor, one l
   If spawn refuses because the fleet is at its worker cap, start the reviewer as soon as a slot frees, before any new issue. A PR has one reviewer at a time, and the reviewer counts toward the cap.
 - **A review passed:** remove the reviewer with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral cleanup <name>`. The PR waits for the owner.
 - **A review failed, round 1 of 2:** remove the reviewer, and tell the author to fix what the review comment says. Don't say how. When the author says the fix is pushed, start a fresh reviewer for the new commit.
-- **A review failed, round 2 of 2:** Orchestral has labelled the issue `blocked`. Remove the reviewer and the author with `cleanup`, which frees their slots and leaves the PR open, and move on to other work. The owner decides what happens to a blocked issue.
+- **A review failed, round 2 of 2:** Orchestral has labelled the issue `blocked`. Remove the reviewer and the author with `cleanup`, which frees their slots and leaves the PR open, and move on to other work. The owner decides what happens to a blocked issue. If that leaves nothing in its milestone for the fleet, write the milestone summary.
 - **A PR merged:** its worker is finished. Remove it, and its reviewer if it has one, with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral cleanup <name>`, which frees their slots. Then start the next ready issue if there's a free slot. If that was the last of its milestone, write the milestone summary. If no approved issue is left open and no worker is open, the run is done.
 - **A PR closed without merging, or an issue closed:** stop the worker if it's still on it, and remove it with `cleanup` once it has no open PR. Don't restart the work unless the owner asks. If that was the last of its milestone, write the milestone summary. If no approved issue is left open and no worker is open, the run is done.
 - **An issue opened:** decide whether it's ready for a worker, as in Start work. An `untriaged` one waits for the owner, as in Scope and the end of a run.
