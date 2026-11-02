@@ -30,14 +30,26 @@ A usage error exits `1`, not `2`, so `2` always means a rule.
 
 Shows the plan's usage windows, as percent used and reset time. When the limits can't be read, it says they're unavailable, with the reason, and still exits `0`, since unavailable limits are a warning rather than a failure.
 
-Reading the limits isn't built yet, so today the command always reports them unavailable:
+It reads them by running `claude -p /usage --no-session-persistence --settings '{"disableAllHooks":true}'` from a new temporary directory, without the calling session's `CLAUDECODE` or `CLAUDE_CODE_SESSION_ID` (ADR-0008). Each `Current …` line of that output is one window, and the rest is ignored. A window's reset time is read in the time zone its line gives, in the current year unless that puts it more than 180 days in the past, when it's the next year. A line without a reset time gives a window with none.
 
 ```text
-Plan limits are unavailable: reading them isn't implemented yet.
+session: 2% used, resets Nov 2 at 6:49am PST
+week (all models): 26% used, resets Nov 4 at 12:59pm PST
+week (Fable): 0% used, resets Nov 4 at 12:59pm PST
 ```
 
 ```json
-{"available":false,"reason":"reading them isn't implemented yet"}
+{"available":true,"windows":[{"name":"session","percent":2,"resets":"2026-11-02T06:49:00-08:00[America/Los_Angeles]"}]}
+```
+
+The limits are unavailable when `claude` can't run or exits non-zero, when the output has no `Current` lines, or when any `Current` line doesn't parse, so a changed format is never guessed at:
+
+```text
+Plan limits are unavailable: claude -p /usage printed no usage windows.
+```
+
+```json
+{"available":false,"reason":"claude -p /usage printed no usage windows"}
 ```
 
 ### `orchestral spawn <name> --issue <n> --prompt <text> [--model <m>] [--effort <e>] [--json]`
