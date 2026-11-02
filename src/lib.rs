@@ -2,6 +2,7 @@
 
 pub mod budget;
 pub mod claim;
+pub mod guard;
 pub mod limits;
 pub mod outcome;
 pub mod policy;

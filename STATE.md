@@ -30,11 +30,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - `orchestral spawn`: starts a worker in its own worktree, with its own settings and prompt
 - `orchestral stop` and `resume`: pause a worker and pick it up later
 - `orchestral claim` and `resolve`: one orchestrator per repository, and checked messaging addresses
+- Worker guard and pre-push hooks: workers can't merge, approve, push to `main`, or post `/approve` or `/hold`
 
 ## Up Next
 
 1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next refusing at limits (#20, after #16), fleet status (#22, after #16), worker permissions (#23) and the supervisor (#25).
+2. Milestone 2 (Core), in work order, next refusing at limits (#20, after #16), fleet status (#22, after #16), init and doctor (#24) and the supervisor (#25).
 
 ## Needs Your Decision
 

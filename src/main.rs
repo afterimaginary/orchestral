@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{claim, limits, spawn, stop};
+use orchestral::{claim, guard, limits, spawn, stop};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -68,7 +68,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Hooks that Claude Code runs. Not for direct use.
+    /// Hooks that Claude Code and git run. Not for direct use.
     #[command(hide = true)]
     Hook {
         #[command(subcommand)]
@@ -80,6 +80,12 @@ enum Command {
 enum Hook {
     /// Checks a worker's Bash commands before they run.
     WorkerGuard,
+    /// Rejects a worker's push to main, as a git pre-push hook.
+    PrePush {
+        /// The remote's name and URL, which git passes.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _remote: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -127,10 +133,10 @@ fn run(command: Command) -> Result<(), Failure> {
         Command::Resolve { name, json } => {
             outcome::print(&claim::resolve(&current_dir()?, &name)?, json)
         }
-        // Allows everything until the worker's denies exist.
-        Command::Hook {
-            hook: Hook::WorkerGuard,
-        } => Ok(()),
+        Command::Hook { hook } => match hook {
+            Hook::WorkerGuard => guard::worker_guard(),
+            Hook::PrePush { .. } => guard::pre_push(),
+        },
     }
 }
 
