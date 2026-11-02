@@ -11,32 +11,30 @@ A user-visible feature gets a design proposal before any code. Looks go on a Cla
 
 ## Test
 
-Tested on Claude Code 2.1.314 with a Sonnet 5.5 background session in auto mode, at low effort. Its prompt asked it to publish a one-paragraph page, then create a Design canvas with one artboard, and to record each link or error. It got no other help.
+Tested on Claude Code 2.1.314 with a Sonnet 5.5 background session in auto mode, at low effort, with no Orchestral plugin loaded. Workers will also run in auto mode with the plugin turned off (ADR-0001), so these conditions match. Its prompt asked it to publish a one-paragraph page, then create a Design canvas with one artboard, and to record each link or error. It got no other help.
 
 | Format | Result |
 | --- | --- |
 | Artifact page | Published. Reading it back returned the page as written. |
 | Claude Design canvas | Created from the Design type, with `project/canvas.json` and one artboard, `project/Main.dc.html`, both present when its files were listed. |
 
-Things a worker has to know:
+Two findings shaped the decision:
 
-- A background session gets the artifact server's own tools (`mcp__claude-artifacts__*`), such as `publish_files`, `publish_version` and `create_from_type`. These aren't the same as the Artifact tool an interactive session has, so prompts should describe the goal rather than name tools.
-- Publishing refused files outside what the session can read. Files under the scratchpad directory the test gave it were refused with "only files this session is allowed to read can be attached". After the session copied them into its working directory, publishing worked.
-- The session worked around the refusal by itself, but needed two extra attempts to do it.
+- Publishing refused files outside what the session can read. Files under a scratchpad directory outside its working directory were refused with "only files this session is allowed to read can be attached". After the session copied them into its working directory, publishing worked. It found that workaround by itself, after two failed attempts.
+- A background session publishes through the artifact server's own tools, not the Artifact tool an interactive session has. Prompts should describe the goal rather than name tools.
 
 ## Decision
 
 - Workers publish their own proposals, in both formats. The fallback isn't needed.
-- A worker writes proposal files inside its own worktree, in a directory kept out of git, and publishes from there.
+- A worker writes proposal files inside its own working directory before publishing. #45 picks the exact directory and keeps it out of git.
 
 ## Consequences
 
 - The proposal step (#45) tells workers where to write proposal files, so they don't hit the refusal.
-- Proposals are private to the owner's account, as the plan expects, so the issue records the choice in words.
-- Each proposal is a real artifact in the owner's account, and stays there until the owner deletes it.
+- Each proposal is a real artifact in the owner's account, and stays there until the owner deletes it. Both test artifacts were published as private, which matches #45's rule that the issue records the choice in words.
 
 ## Limits
 
-- One run, on one model, with one artboard. Several variants per proposal, as the policy asks for, weren't tried.
+- One run, on one model, with one artboard. Several variants per proposal, which #45 requires, weren't tried.
 - The worker's prompt was explicit about the steps. A worker given only an issue may need the proposal step's guidance to choose the format.
 - The test ran in a normal checkout, not a worktree. Publishing from a worktree is expected to work the same way, since the rule is about what the session can read.
