@@ -49,11 +49,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Pacing: the supervisor winds the fleet down past `plan_limit_percent` and back up after the reset, saves the run's usage every minute, and reports the budget once (#38)
 - Compaction: plugin hooks save the fleet's status before the orchestrator compacts, and put its instructions and status back after (#39)
 - Recovery: a restarted supervisor reports workers that can't be resumed as lost, once, and an orchestrator taking over checks every open PR once (#40)
+- Reminders: a worker waiting on the owner, by escalation or a blocked session, gets one-shot notification sessions at the policy's `nag_minutes` gaps (#41)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next stuck-worker reminders (#41). #93 and #100 need the owner's decision.
+2. Milestone 3 (Autonomous loop): a long-idle run (#44). #93 and #100 need the owner's decision.
 
 ## Needs Your Decision
 

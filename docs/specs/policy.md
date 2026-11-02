@@ -27,7 +27,7 @@ Always ask me before changing auth, payments or migrations.
 | `merge_method` | `squash` | `squash`, `merge` or `rebase`. |
 | `supervisor_merges` | `true`, or `false` when the repository has a `CONTRIBUTING.md` | Whether the supervisor may merge PRs routed to it. An explicit value always wins. |
 | `design_variants` | `4` | How many variants a design proposal shows. |
-| `nag_minutes` | `[15, 30, 60, 120, 240]` | Minutes after a question starts waiting at which the owner is reminded. |
+| `nag_minutes` | `[15, 30, 60, 120, 240]` | Gaps, in minutes, between reminders to the owner about a worker waiting on them: the first after it starts waiting, each later one after the reminder before. The last gap repeats. An empty list sends none. |
 | `preview` | none | How PR previews run. Without it, there are no previews. |
 | `preview.setup` | none | Command run once in a fresh worktree before the preview starts. |
 | `preview.run` | none | Command that serves the preview. |

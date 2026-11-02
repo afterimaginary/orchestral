@@ -18,7 +18,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 
 ## `state.json`
 
-A JSON object with a `schema` version, currently `8`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
+A JSON object with a `schema` version, currently `9`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
 
 | Field | Meaning |
 | --- | --- |
@@ -33,6 +33,9 @@ A JSON object with a `schema` version, currently `8`. A file with any other vers
 | `wound_down` | The plan window the fleet wound down for, as `window` and its reset time `resets_at` (RFC 3339 UTC, or null), until it resets. Null otherwise. |
 | `usage` | The run's fleet usage as the supervisor last read it: `estimated_tokens` and when, `at`. Null until the first read of a run. |
 | `budget_reached` | Whether this run's usage has reached `fleet_token_budget`. A new run clears it and `usage`. |
+| `nags` | Each worker waiting on the owner, by name: `since` (when it started waiting), `sent` (reminders so far) and `last_sent_at`. A worker that stops waiting is removed. |
+| `nag_sessions` | Reminder sessions not yet stopped: `job_id` and `started_at`. |
+| `next_nag` | The number in the next reminder session's name, starting at `1`. |
 
 Later features add their own fields here. Any change to the fields raises `schema`, so an older binary refuses the file rather than dropping fields it doesn't know.
 

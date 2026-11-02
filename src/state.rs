@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 8;
+pub const SCHEMA: u32 = 9;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -43,6 +43,30 @@ pub struct State {
     pub usage: Option<Usage>,
     /// Whether this run has reached its `fleet_token_budget`.
     pub budget_reached: bool,
+    /// Reminders to the owner, by the worker waiting on them.
+    pub nags: BTreeMap<String, Nag>,
+    /// Reminder sessions that haven't been stopped yet.
+    pub nag_sessions: Vec<NagSession>,
+    /// The number in the next reminder session's name.
+    pub next_nag: u64,
+}
+
+/// A worker waiting on the owner, and the reminders sent about it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Nag {
+    /// When the worker started waiting, in RFC 3339 UTC.
+    pub since: String,
+    pub sent: u32,
+    /// RFC 3339, in UTC.
+    pub last_sent_at: Option<String>,
+}
+
+/// A one-shot reminder session, stopped once it has sent its notification.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NagSession {
+    pub job_id: String,
+    /// RFC 3339, in UTC.
+    pub started_at: String,
 }
 
 /// A plan window past `plan_limit_percent`.
@@ -93,6 +117,9 @@ impl Default for State {
             wound_down: None,
             usage: None,
             budget_reached: false,
+            nags: BTreeMap::new(),
+            nag_sessions: Vec::new(),
+            next_nag: 1,
         }
     }
 }

@@ -94,7 +94,7 @@ A record may be half-written when read, so one that doesn't parse is skipped.
 
 ## `claude agents --json`
 
-`claude agents --json --all` prints a JSON array of sessions, including finished and stopped ones. The list comes from `~/.claude/jobs/<id>/state.json`, so it survives a reboot: on 2.1.316, sessions from weeks before the machine's last boot were still listed, as `failed` or `blocked`. Each entry has `id`, the short job id `claude --bg` printed, and `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
+`claude agents --json --all` prints a JSON array of sessions, including finished and stopped ones. The list comes from `~/.claude/jobs/<id>/state.json`, so it survives a reboot: on 2.1.316, sessions from weeks before the machine's last boot were still listed, as `failed` or `blocked`. The same `state.json` has `detail`, the session's own one-line account of what it's doing or waiting for, such as `#94 commit/push/PR blocked by classifier; awaiting your call`, and, while it's blocked, `needs`, such as `rate limited — wait and retry · You've hit your session limit · resets 11:30pm (America/Los_Angeles)`. Each entry has `id`, the short job id `claude --bg` printed, and `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
 
 | Field | Meaning |
 | --- | --- |

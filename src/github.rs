@@ -155,6 +155,25 @@ pub fn waits_on_owner(store: &Store) -> bool {
         .is_some_and(|snapshot| !snapshot.escalations.is_empty())
 }
 
+/// The issues escalated during the run with `needs-discussion` that still
+/// have it. An unreadable snapshot counts as none.
+pub fn escalated(store: &Store) -> BTreeSet<u64> {
+    let Ok(Some(snapshot)) = read_snapshot(&store.dir().join("github.json")) else {
+        return BTreeSet::new();
+    };
+    snapshot
+        .escalations
+        .iter()
+        .filter(|number| {
+            snapshot
+                .issues
+                .get(number)
+                .is_some_and(|issue| issue.labels.iter().any(|label| label == ESCALATION))
+        })
+        .copied()
+        .collect()
+}
+
 /// The open issues in `new` waiting on the owner that either were counted
 /// already or started waiting since `old`.
 fn escalations(old: Option<&Snapshot>, new: &Snapshot) -> BTreeSet<u64> {
