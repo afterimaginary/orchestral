@@ -135,3 +135,41 @@ uds:/tmp/cc-socks/41001.sock
 ```json
 {"name":"issue-12","session_id":"00000000-0000-4000-8000-00000000a001","address":"uds:/tmp/cc-socks/41001.sock"}
 ```
+
+### `orchestral init [--json]`
+
+Sets a repository up. First it checks that `claude` and `gh` are installed and logged in, that `git` works, and that Claude Code trusts the main checkout, and refuses, exiting `2`, naming the first problem. Then it:
+
+1. Creates `.orchestral/policy.md` in the main checkout from a template, unless one exists. The template's `fleet_token_budget` is an example to replace. The file takes effect once it's on `origin/main`.
+2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. If the binary later moves, the block warns on each push and lets it through, until init runs again. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
+
+```text
+Created /home/dev/app/.orchestral/policy.md. Set fleet_token_budget, then commit it and push it to main.
+Installed the pre-push hook in /home/dev/app/.git/hooks/pre-push.
+```
+
+### `orchestral doctor [--json]`
+
+Checks what a run needs and prints one line per check, as `ok`, `warn` or `FAIL`. It exits `1` when a check fails.
+
+| Check | Fails or warns when |
+| --- | --- |
+| `repo` | Fails outside a git repository, in place of `trust` and `policy`. |
+| `claude` | Fails when it's missing. Warns when its version isn't the one Orchestral was tested on, 2.1.314. |
+| `auth` | Fails when `claude auth status` doesn't report `loggedIn`. |
+| `gh` | Fails when it's missing or `gh auth status` fails. |
+| `git` | Fails when it's missing. |
+| `trust` | Fails when Claude Code doesn't trust the main checkout. |
+| `policy` | Fails when the policy can't be read. Warns when the main checkout's copy differs from `origin/main`'s, since that one is used. |
+| `portless` | Warns when it's missing, since previews can run without it. |
+| `tailscale` | Warns when it's missing or not running, since previews can run without it. |
+
+```text
+ok   claude     2.1.314
+ok   trust      Claude Code trusts /home/dev/app
+warn tailscale  not found; preview links won't reach other devices
+```
+
+```json
+{"checks":[{"name":"claude","status":"ok","detail":"2.1.314"}]}
+```

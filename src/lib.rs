@@ -7,6 +7,7 @@ pub mod limits;
 pub mod outcome;
 pub mod policy;
 pub mod sessions;
+pub mod setup;
 pub mod spawn;
 pub mod state;
 pub mod stop;
