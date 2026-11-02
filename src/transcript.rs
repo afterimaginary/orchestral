@@ -283,12 +283,17 @@ fn window(
 }
 
 /// Splits `claude-opus-4-6` or `claude-opus-4-6-20260101` into its family,
-/// major and minor version.
+/// major and minor version. In `claude-opus-4-20250514` the 8 digits are a
+/// date, so the minor version is 0.
 fn parse_model(model: &str) -> Option<(&str, u32, u32)> {
     let mut parts = model.strip_prefix("claude-")?.split('-');
     let family = parts.next()?;
     let major = parts.next()?.parse().ok()?;
-    let minor = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    let minor = parts
+        .next()
+        .filter(|part| part.len() < 8)
+        .and_then(|part| part.parse().ok())
+        .unwrap_or(0);
     Some((family, major, minor))
 }
 
@@ -339,6 +344,14 @@ mod tests {
             Some(MILLION)
         );
         assert_eq!(window("claude-opus-4-5", None, Some("claude_max"), 0), None);
+        assert_eq!(
+            window("claude-opus-4-20250514", None, Some("claude_max"), 0),
+            None
+        );
+        assert_eq!(
+            window("claude-opus-4-6-20260101", None, Some("claude_max"), 0),
+            Some(MILLION)
+        );
         assert_eq!(window("claude-opus-5-5", None, Some("claude_pro"), 0), None);
         assert_eq!(
             window("claude-opus-5-5", None, None, 250_000),
