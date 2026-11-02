@@ -48,8 +48,8 @@ pub fn print<T: Serialize + Display>(data: &T, json: bool) -> Result<(), Failure
     } else {
         data.to_string()
     };
-    println!("{text}");
-    Ok(())
+    // println! would panic if the reader went away, such as `| head`.
+    writeln!(std::io::stdout(), "{text}").map_err(|err| Failure::Error(err.to_string()))
 }
 
 /// Turns a command's result into its exit code, writing any failure to stderr.

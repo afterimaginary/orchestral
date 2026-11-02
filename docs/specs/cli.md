@@ -16,7 +16,7 @@ A usage error exits `1`, not `2`, so `2` always means a rule.
 
 - Data goes to stdout. Errors and refusals go to stderr, and print nothing on stdout.
 - A command that prints data takes `--json`, which prints the same data as a single line of JSON. Without it, the command prints text for people.
-- An error prints one line: `error: <message>`.
+- An error prints `error: <message>`. An invalid command line prints the argument parser's own message and usage instead.
 - A refusal prints two lines. The first gives the reason, and the second says what would make the command succeed:
 
   ```text
