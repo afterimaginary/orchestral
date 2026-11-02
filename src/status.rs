@@ -205,7 +205,7 @@ fn open_prs() -> Result<Vec<(String, u64)>, String> {
 
 /// The account's `oauthAccount.organizationType`, which decides some context
 /// windows.
-fn organization() -> Option<String> {
+pub(crate) fn organization() -> Option<String> {
     let path = match std::env::var_os("CLAUDE_CONFIG_DIR") {
         Some(dir) => PathBuf::from(dir).join(".claude.json"),
         None => PathBuf::from(std::env::var_os("HOME")?).join(".claude.json"),

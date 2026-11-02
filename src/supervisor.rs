@@ -2,8 +2,10 @@
 //! runs until no worker is open and the keepalive window has passed.
 //!
 //! Every 2 seconds it checks the workers and records an event when one needs
-//! someone; every minute it logs the fleet's usage, and every 5 minutes the
-//! plan windows. It keeps the machine awake while the fleet has work.
+//! someone; every minute it polls GitHub, logs the fleet's usage and writes
+//! a heartbeat when one is due, and every 5 minutes it logs the plan
+//! windows. It keeps
+//! the machine awake while the fleet has work.
 
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -17,8 +19,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::outcome::Failure;
+use crate::policy::Policy;
 use crate::state::Store;
-use crate::{gate, github, limits, observe, sessions};
+use crate::{gate, github, heartbeat, limits, observe, sessions, transcript};
 
 /// How often the supervisor checks the workers and whether it can exit.
 const TICK: Duration = Duration::from_secs(2);
@@ -227,16 +230,29 @@ impl Ticks {
         let now = jiff::Timestamp::now();
         if due(self.last_minute, now, MINUTE) && finished(&self.minute) {
             self.last_minute = Some(now);
-            // Every minute: GitHub, and the fleet's usage this run.
+            // Every minute: GitHub, the fleet's usage this run, and a
+            // heartbeat when one is due. The heartbeat comes last, so an
+            // event from this poll puts it off.
             let store = store.clone();
             self.minute = Some(thread::spawn(move || {
                 match github::poll(&store, Path::new("gh")) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!("can't poll GitHub: {}", failure_text(&err))),
                 }
-                match fleet_usage(&store) {
-                    Ok(used) => log(&format!("fleet usage: {used}")),
-                    Err(err) => log(&format!("can't read fleet usage: {}", failure_text(&err))),
+                let used = match fleet_usage(&store) {
+                    Ok(used) => {
+                        log(&format!("fleet usage: {used}"));
+                        Some(used)
+                    }
+                    Err(err) => {
+                        log(&format!("can't read fleet usage: {}", failure_text(&err)));
+                        None
+                    }
+                };
+                match beat(&store, used.as_ref()) {
+                    Ok(Some(line)) => log(&line),
+                    Ok(None) => {}
+                    Err(err) => log(&format!("can't write a heartbeat: {}", failure_text(&err))),
                 }
             }));
         }
@@ -268,6 +284,29 @@ fn fleet_usage(store: &Store) -> Result<crate::budget::Estimate, Failure> {
         None => Vec::new(),
     };
     gate::fleet_usage(&state, &crate::spawn::main_checkout(store.dir())?, &agents)
+}
+
+/// Records a heartbeat when one is due, with the fleet's state. A part
+/// that can't be read is left out rather than holding up the heartbeat.
+fn beat(store: &Store, used: Option<&crate::budget::Estimate>) -> Result<Option<String>, Failure> {
+    let state = store.read()?;
+    let now = jiff::Timestamp::now();
+    if !heartbeat::due(store, &state, now)? {
+        return Ok(None);
+    }
+    let main = crate::spawn::main_checkout(store.dir())?;
+    let context = state.orchestrator.as_ref().and_then(|holder| {
+        let path = transcript::find(&transcript::projects_dir()?, &main, &holder.session_id)?;
+        transcript::read(&path, now, crate::status::organization().as_deref())
+            .ok()?
+            .percent
+    });
+    let budget = used
+        .zip(Policy::load(&main).ok())
+        .map(|(used, policy)| (used.estimated_tokens, policy.settings.fleet_token_budget));
+    let line = heartbeat::line(state.workers.len(), context, budget);
+    store.record("heartbeat", &line)?;
+    Ok(Some(line))
 }
 
 /// The running supervisor's pid, if there is one.
