@@ -22,6 +22,9 @@ pub enum Observed {
     Waiting,
     /// No live session has the worker's name.
     Exited,
+    /// Can't be resumed: its worktree or session is gone. Set by a
+    /// restarted supervisor, and kept until the worker is cleaned up.
+    Lost,
 }
 
 impl Observed {
@@ -60,6 +63,7 @@ impl Change {
                 "{name}'s session exited: resume it with `orchestral resume {name}`, or clean it up"
             ),
             Observed::Busy => format!("{name} is working"),
+            Observed::Lost => format!("{name} is lost"),
         }
     }
 }
@@ -77,6 +81,10 @@ pub fn changes(
     for (name, worker) in &state.workers {
         // A worker isn't watched until its session has launched.
         if worker.job_id.is_none() {
+            continue;
+        }
+        // A lost worker stays lost until it's cleaned up.
+        if state.observed.get(name) == Some(&Observed::Lost) {
             continue;
         }
         let record = records

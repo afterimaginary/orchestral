@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::state::Store;
-use crate::{gate, github, heartbeat, limits, observe, pace, sessions, transcript};
+use crate::{gate, github, heartbeat, limits, observe, pace, recover, sessions, transcript};
 
 /// How often the supervisor checks the workers and whether it can exit.
 const TICK: Duration = Duration::from_secs(2);
@@ -160,6 +160,15 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         }
     ));
     let _awake = keep_awake(pid);
+    // Before the first tick, so a worker that can't come back after a crash
+    // or a reboot is reported as lost, not as an exited session to resume.
+    match recover::reconcile(&store) {
+        Ok(lines) => lines.iter().for_each(|line| log(line)),
+        Err(err) => log(&format!(
+            "can't check for lost workers: {}",
+            failure_text(&err)
+        )),
+    }
 
     // Wall-clock time, so a machine asleep counts toward the window.
     let keepalive = jiff::SignedDuration::from_secs_f64(keepalive_hours * 3600.0);
