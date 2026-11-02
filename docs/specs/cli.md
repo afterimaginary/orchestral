@@ -111,10 +111,12 @@ Workers: 2 of 3
   issue-13 · issue #13 · unknown
 Reviews:
   PR #38 passed at 4f2c9e1
+Previews:
+  PR #40 (issue-12) at https://host.example.ts.net:8443
 warning: PRs are unknown: gh pr list failed: …
 ```
 
-Before a run has started, the budget line reads `Budget: no run has started; <n> tokens per run`. Reviews lists the latest verdict recorded with `orchestral review` on each open PR, at the head commit it was for, and is left out when there's none.
+Before a run has started, the budget line reads `Budget: no run has started; <n> tokens per run`. Reviews lists the latest verdict recorded with `orchestral review` on each open PR, at the head commit it was for, and is left out when there's none. Previews lists each preview that's wanted, running and hasn't failed, with its branch and link, and is left out when there's none.
 
 `--json` carries the same data, and is the shape later interfaces read. Fields are only ever added:
 
@@ -127,6 +129,7 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 | `limits` | The output of `orchestral limits --json`. |
 | `budget` | `used` (`{"estimated_tokens": n}`, or null when it can't be read), `fleet_token_budget`, `run_started_at` and `proposals` (`{"estimated_tokens": n}`, or null when an open proposal's usage can't be read). |
 | `reviews[]` | `pr`, `sha` (the head commit the verdict is for) and `passed`, for each open PR with a recorded verdict. |
+| `previews[]` | `pr`, `branch` and `url`, for each preview that's wanted, running and hasn't failed. |
 | `warnings` | Each part that couldn't be read, and why. |
 
 ### `orchestral spawn <name> --issue <n> [--role worker|reviewer] [--pr <n>] [--proposal] --prompt <text> [--model <m>] [--effort <e>] [--json]`
@@ -287,9 +290,12 @@ When no supervisor is running, it adds that nothing starts the preview until `or
 On every 2-second tick, the supervisor:
 
 - runs `preview.setup` in the worktree before a preview first starts, and again when a lockfile there changes (such as `package-lock.json`, `pnpm-lock.yaml` or `Cargo.lock`), stopping a running server first. A lockfile setup writes itself doesn't count as a change. Setup has 15 minutes, and its output goes straight to the log. If it fails, the preview isn't started and the supervisor records a `preview` event,
-- starts `preview.run` with `sh -c` in the worktree, with `PORT` set to a free local port, detached in its own process group, so the server outlives the supervisor. A restarted supervisor finds a running server by its pid and start time and leaves it alone,
+- starts `preview.run` with `sh -c` in the worktree, detached in its own process group, so the server outlives the supervisor. A restarted supervisor finds a running server by its pid and start time and leaves it alone,
+- where `portless --version` runs, starts it as `portless <repo slug>-pr-<n> --force sh -c <run>`, which sets `PORT` itself (ADR-0006). The slug is the main checkout's directory name, lowercased, with anything but letters and digits as `-`. `PORTLESS_TAILSCALE=1` is set when `tailscale status` succeeds, and removed otherwise. After each start, it waits up to 15 seconds for the route in `portless list` (and its `tailscale:` or `funnel:` link, when Tailscale is on), and keeps the route's pid, port and link: the tailnet link when there is one, or else the route's `https://<name>.localhost` link. When the route doesn't show up, or portless exits first, it stops what it started, logs that, and falls back as if portless weren't installed. Without portless, `PORT` is set to a free local port and the link is `http://localhost:<port>`,
+- before a start with Tailscale on, removes stale `tailscale serve` entries: an HTTPS entry whose only handler is a `/` proxy to `127.0.0.1` or `localhost` on a port from 4000 to 4999, where nothing listens (on `127.0.0.1` or `::1`) and no portless route uses that port. When `portless list` can't be read, it removes nothing. It removes each with `tailscale serve --https=<port> off`, never `tailscale serve reset`, and leaves every other entry alone,
+- after a start with a tailnet link, posts the link on the PR as one comment starting `<!-- orchestral -->`, and edits that comment on later starts, so the link stays right after a restart. A later start without a tailnet link edits it to say there's no link for now, since the old one could reach another preview. A failure to post is logged, and the preview keeps running,
 - restarts a server that exited once. If it exits again at the same commit, it records `PR #42's preview exited twice; see <log>` as a `preview` event, and waits for a new commit in the worktree to start it again. A crash before a reboot counts as one exit, so the server comes back after it,
-- stops a preview that's no longer wanted with SIGTERM to its process group, then SIGKILL if it's still running 5 seconds later,
+- stops a preview that's no longer wanted with SIGTERM to its process group, then SIGKILL if it's still running 5 seconds later. Under portless, it first sends SIGINT to the pid `portless list` showed for the route, not to any wrapper above it, and gives portless 12 seconds, longer than its own 10 before it kills the app, to remove its route and `tailscale serve` entry,
 - stops trying a preview whose worktree can't be read, recording a `preview` event, or that the policy no longer runs, until a new commit or `try`. A problem with one preview is logged, and the others carry on.
 
 Setup and server output go to `.git/orchestral/logs/preview-<pr>.log`.
@@ -298,7 +304,7 @@ Setup and server output go to `.git/orchestral/logs/preview-<pr>.log`.
 
 ```text
 PR #40 stopped: stopped to make room; `orchestral try 40` restarts it (log .git/orchestral/logs/preview-40.log)
-PR #42 running at http://localhost:52114 (log .git/orchestral/logs/preview-42.log)
+PR #42 running at https://host.example.ts.net:8443 (log .git/orchestral/logs/preview-42.log)
 ```
 
 `--json` prints `previews`, each with `pr`, `status`, `url`, `detail` and `log`.

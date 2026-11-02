@@ -19,7 +19,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 
 ## `state.json`
 
-A JSON object with a `schema` version, currently `11`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
+A JSON object with a `schema` version, currently `12`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
 
 | Field | Meaning |
 | --- | --- |
@@ -39,7 +39,7 @@ A JSON object with a `schema` version, currently `11`. A file with any other ver
 | `holds` | The PRs the owner put on hold. |
 | `proposals` | Workers on their issue's design proposal, by name, with when it started in RFC 3339 UTC. `orchestral proposal-done` and `cleanup` remove one. |
 | `proposal_tokens` | Weighted tokens this run's finished design proposals used. A new run resets it. |
-| `previews` | Each PR's preview, by PR number: `want` (`running`, `made_room`, `off` after `try --stop`, or `closed` once its PR merged or closed), when `try` last asked for it as `requested_at`, its `worktree`, its `server` (`pid`, process `group`, `started` from `ps`, `port`, and the worktree's `head` when it started, or null), the lockfile hash setup last ran for as `set_up_for`, `restarts` since it last started at its commit, and `failure`, why it stopped trying (`at`, the commit then, and `why`), or null. A `closed` preview is removed once its server has stopped. |
+| `previews` | Each PR's preview, by PR number: `want` (`running`, `made_room`, `off` after `try --stop`, or `closed` once its PR merged or closed), when `try` last asked for it as `requested_at`, its `worktree`, the PR's `branch`, its `server` (`pid`, process `group`, `started` from `ps`, `port`, the worktree's `head` when it started, whether `portless` runs it, and its link as `url`, or null; under portless, `pid` is the route's), the lockfile hash setup last ran for as `set_up_for`, `restarts` since it last started at its commit, and `failure`, why it stopped trying (`at`, the commit then, and `why`), or null, and `comment`, the id of the PR comment holding its tailnet link, or null. A `closed` preview is removed once its server has stopped. |
 
 Later features add their own fields here. Any change to the fields raises `schema`, so an older binary refuses the file rather than dropping fields it doesn't know.
 

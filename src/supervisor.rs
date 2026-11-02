@@ -254,9 +254,11 @@ impl Ticks {
         // previews.
         if finished(&self.previews) {
             let store = store.clone();
-            self.previews = Some(thread::spawn(move || match preview::reconcile(&store) {
-                Ok(lines) => lines.iter().for_each(|line| log(line)),
-                Err(err) => log(&format!("can't check the previews: {}", failure_text(&err))),
+            self.previews = Some(thread::spawn(move || {
+                match preview::reconcile(&store, &preview::Tools::default()) {
+                    Ok(lines) => lines.iter().for_each(|line| log(line)),
+                    Err(err) => log(&format!("can't check the previews: {}", failure_text(&err))),
+                }
             }));
         }
         let now = jiff::Timestamp::now();
