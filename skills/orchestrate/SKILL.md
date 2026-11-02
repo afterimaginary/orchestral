@@ -20,11 +20,11 @@ Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as ever
 
 ## Start work
 
-- Fill every free slot, and keep doing so as slots free. List the open issues with `gh issue list --state open --json number,title,labels,milestone,body,closedByPullRequestsReferences`. An issue is ready when:
-  - every issue its body lists after "Depends on" is closed by a merged PR. An unmerged PR doesn't count, so never start work on top of one.
+- Fill every free slot, and keep doing so as slots free. List the open issues with `gh issue list --state open --limit 1000 --json number,title,labels,milestone,body,closedByPullRequestsReferences`. An issue is ready when:
+  - every issue its body lists after "Depends on" is closed as completed: `gh issue view <n> --json state,stateReason` gives `CLOSED` and `COMPLETED`. An open dependency with an unmerged PR doesn't count, so never start work on top of one.
   - its design is decided: it has no `needs-discussion` label, and any design proposal it needs has the owner's choice recorded on it.
   - it has no `untriaged` or `blocked` label, no worker, and no PR: `closedByPullRequestsReferences` is empty. An issue with a PR already has its work, even when that PR is waiting.
-- Start ready issues in this order: the earliest open milestone first, then `priority:urgent`, `priority:high`, no priority label, and `priority:low`, then the lowest issue number. The earliest milestone is the next one the owner sees, so the fleet finishes it before starting the one after.
+- Start ready issues in this order: the open milestone with the lowest number first and issues with no milestone last, then `priority:urgent`, `priority:high`, no priority label, and `priority:low`, then the lowest issue number. This way the fleet finishes one milestone before it starts the next.
 - A PR waiting on review or on the owner holds only its own issue and the issues that depend on it. Keep starting other ready issues around it.
 - One worker per issue, up to the policy's `workers`. Name the worker after the issue:
 
