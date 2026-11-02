@@ -87,7 +87,7 @@ Summaries tell the owner what happened, including what was left out. Publish eac
   - the proposed work: each `untriaged` issue filed since the last summary, with one line on why it matters, for the owner to approve or decline.
 - **The final summary**, when the run ends. It lists each milestone with its summary's link, and everything since those summaries: what merged outside a milestone, or after its milestone's summary, every dropped finding not already listed, and the proposed work, each open `untriaged` issue, with one line on why it matters.
 
-Write each summary once. A milestone summary is due when an issue in it closes or starts waiting on the owner, which the merge, close and blocked events below say to check.
+Write each summary once. A milestone summary is due when an issue in it closes or starts waiting on the owner, which the merge, close and blocked events below say to check. Whenever you write one, also check whether the run has ended: if it was the last milestone with work, write the final summary too.
 
 ## Keep in touch
 
