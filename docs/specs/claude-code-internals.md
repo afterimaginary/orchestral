@@ -82,7 +82,8 @@ Each running session writes `<config>/sessions/<pid>.json`. The fields read here
 | `cwd` | Its working directory. |
 | `name` | Its name, when it has one. |
 | `kind` | `interactive` or `background`. |
-| `status` | `idle`, `busy` or `waiting`, or `shell` while a Monitor runs. |
+| `status` | `idle`, `busy` or `waiting`, or `shell` while a Monitor runs. A session `claude agents` calls `blocked` has `waiting` here. |
+| `waitingFor` | What a waiting session waits for, such as `input needed`. Only while it waits. |
 | `procStart` | The process start time, as `ps -o lstart=` prints it with `TZ=UTC` and `LC_ALL=C`, such as `Mon Nov  2 08:35:48 2026`. |
 | `startedAt` | The session start time, in Unix milliseconds. |
 | `messagingSocketPath` | The socket other sessions message it through. |

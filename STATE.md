@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, still running. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor (its lifecycle only so far), `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, still running. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -37,8 +37,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 ## Up Next
 
 1. Finish milestone 1: #2 (a long idle) needs at least 48 idle hours.
-2. Close milestone 2 (Core) once the orchestrate skill (#27) merges, after a `make sandbox` run.
-3. Milestone 3 (Autonomous loop), starting with the supervisor loop and worker events (#28).
+2. Milestone 3 (Autonomous loop), next the event stream (#29).
 
 ## Needs Your Decision
 

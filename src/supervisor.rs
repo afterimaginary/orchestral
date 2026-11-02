@@ -1,8 +1,9 @@
 //! The supervisor's lifecycle: `orchestral up` starts it detached, and it
 //! runs until no worker is open and the keepalive window has passed.
 //!
-//! Its tick work comes later; for now it records the run and keeps the
-//! machine awake while the fleet has work.
+//! Every 2 seconds it checks the workers and records an event when one needs
+//! someone; every minute it logs the fleet's usage, and every 5 minutes the
+//! plan windows. It keeps the machine awake while the fleet has work.
 
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -16,11 +17,14 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::outcome::Failure;
-use crate::sessions;
 use crate::state::Store;
+use crate::{gate, limits, observe, sessions};
 
-/// How often the supervisor checks whether it can exit.
+/// How often the supervisor checks the workers and whether it can exit.
 const TICK: Duration = Duration::from_secs(2);
+
+const MINUTE: jiff::SignedDuration = jiff::SignedDuration::from_secs(60);
+const FIVE_MINUTES: jiff::SignedDuration = jiff::SignedDuration::from_secs(300);
 
 const MAX_KEEPALIVE_HOURS: f64 = 24.0 * 366.0;
 
@@ -155,6 +159,7 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
     // Wall-clock time, so a machine asleep counts toward the window.
     let keepalive = jiff::SignedDuration::from_secs_f64(keepalive_hours * 3600.0);
     let mut idle_since = jiff::Timestamp::now();
+    let mut ticks = Ticks::default();
     loop {
         thread::sleep(TICK);
         // The supervisor stops if another took over its pid file.
@@ -162,6 +167,7 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
             log("the pid file no longer names this supervisor; exiting");
             return Ok(());
         }
+        ticks.run(&store);
         let open = match store.read() {
             Ok(state) => !state.workers.is_empty(),
             Err(err) => {
@@ -193,6 +199,69 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         }
         idle_since = jiff::Timestamp::now();
     }
+}
+
+/// The work done on each tick. The 2-second tick runs every time; the
+/// longer ones run when their interval has passed, by the wall clock, on a
+/// thread of their own, so a slow `claude` call never holds up the workers'
+/// check. A longer tick that is still running is skipped rather than doubled.
+#[derive(Default)]
+struct Ticks {
+    last_minute: Option<jiff::Timestamp>,
+    last_five_minutes: Option<jiff::Timestamp>,
+    minute: Option<thread::JoinHandle<()>>,
+    five_minutes: Option<thread::JoinHandle<()>>,
+}
+
+impl Ticks {
+    fn run(&mut self, store: &Store) {
+        // Every 2 seconds: worker sessions, from the state on disk.
+        match observe::check(store) {
+            Ok(changes) => {
+                for change in changes {
+                    log(&change.text());
+                }
+            }
+            Err(err) => log(&format!("can't check the workers: {}", failure_text(&err))),
+        }
+        let now = jiff::Timestamp::now();
+        if due(self.last_minute, now, MINUTE) && finished(&self.minute) {
+            self.last_minute = Some(now);
+            // Every minute: the fleet's usage this run.
+            let store = store.clone();
+            self.minute = Some(thread::spawn(move || match fleet_usage(&store) {
+                Ok(used) => log(&format!("fleet usage: {used}")),
+                Err(err) => log(&format!("can't read fleet usage: {}", failure_text(&err))),
+            }));
+        }
+        if due(self.last_five_minutes, now, FIVE_MINUTES) && finished(&self.five_minutes) {
+            self.last_five_minutes = Some(now);
+            // Every 5 minutes: the plan windows.
+            self.five_minutes = Some(thread::spawn(|| {
+                log(&format!(
+                    "plan limits: {}",
+                    limits::read().to_string().replace('\n', "; ")
+                ))
+            }));
+        }
+    }
+}
+
+fn finished(handle: &Option<thread::JoinHandle<()>>) -> bool {
+    handle.as_ref().is_none_or(|handle| handle.is_finished())
+}
+
+fn due(last: Option<jiff::Timestamp>, now: jiff::Timestamp, every: jiff::SignedDuration) -> bool {
+    last.is_none_or(|last| now.duration_since(last) >= every)
+}
+
+fn fleet_usage(store: &Store) -> Result<crate::budget::Estimate, Failure> {
+    let state = store.read()?;
+    let agents = match state.run_started_at {
+        Some(_) => sessions::agents(Path::new("claude"))?,
+        None => Vec::new(),
+    };
+    gate::fleet_usage(&state, &crate::spawn::main_checkout(store.dir())?, &agents)
 }
 
 /// The running supervisor's pid, if there is one.

@@ -32,6 +32,9 @@ pub struct Record {
     /// The session start time in Unix milliseconds.
     pub started_at: Option<i64>,
     pub messaging_socket_path: Option<PathBuf>,
+    /// What the session waits for, such as `input needed`. Only while it
+    /// waits.
+    pub waiting_for: Option<String>,
 }
 
 /// A running process, as `ps` reports it.
