@@ -113,3 +113,11 @@ Once it has exited, a bare `claude --bg --resume <session id>` wakes the same se
 ## Messaging addresses
 
 SendMessage delivers to a session on the same machine given either its name or `uds:<messagingSocketPath>`, from its session record. A message arrives wrapped as `<cross-session-message from="uds:<sender's socket>">`, so the socket form is the one that names a sender exactly. Names can be shared by more than one session.
+
+## Trust and login
+
+Claude Code records the directories whose trust prompt was accepted in `.claude.json`, which is in `$CLAUDE_CONFIG_DIR` when that's set and in the home directory otherwise. A trusted directory is a key of `projects` with `hasTrustDialogAccepted` of `true`. `claude --bg` refuses an untrusted directory, and a git worktree counts as trusted when its main checkout is.
+
+`claude auth status` prints JSON whose `loggedIn` says whether Claude Code is logged in.
+
+`claude --version` prints `<version> (Claude Code)`.

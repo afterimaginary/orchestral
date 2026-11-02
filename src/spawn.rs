@@ -293,7 +293,7 @@ fn refuse_live_duplicate(session_name: &str) -> Result<(), Failure> {
 
 /// The main checkout: the parent of the git common directory that holds the
 /// store.
-fn main_checkout(store: &Path) -> Result<PathBuf, Failure> {
+pub(crate) fn main_checkout(store: &Path) -> Result<PathBuf, Failure> {
     let common = store.parent().unwrap_or(store);
     let main = common.parent().unwrap_or(common);
     main.canonicalize().map_err(|err| io_error(main, err))

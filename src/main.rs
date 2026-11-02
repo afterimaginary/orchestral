@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{claim, guard, limits, spawn, stop};
+use orchestral::{claim, guard, limits, setup, spawn, stop};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -64,6 +64,18 @@ enum Command {
     /// Print the SendMessage address of a worker, or of `orchestrator`.
     Resolve {
         name: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set up this repository: policy template, pre-push hook, checks.
+    Init {
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check tools, auth, trust and the policy before a run.
+    Doctor {
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -132,6 +144,16 @@ fn run(command: Command) -> Result<(), Failure> {
         Command::Claim { json } => outcome::print(&claim::claim(&current_dir()?)?, json),
         Command::Resolve { name, json } => {
             outcome::print(&claim::resolve(&current_dir()?, &name)?, json)
+        }
+        Command::Init { json } => outcome::print(&setup::init(&current_dir()?)?, json),
+        Command::Doctor { json } => {
+            let report = setup::doctor(&current_dir()?);
+            outcome::print(&report, json)?;
+            match report.failed() {
+                0 => Ok(()),
+                1 => Err(Failure::Error("1 check failed".into())),
+                n => Err(Failure::Error(format!("{n} checks failed"))),
+            }
         }
         Command::Hook { hook } => match hook {
             Hook::WorkerGuard => guard::worker_guard(),
