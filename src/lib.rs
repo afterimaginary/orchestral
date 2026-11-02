@@ -3,6 +3,7 @@
 pub mod budget;
 pub mod claim;
 pub mod cleanup;
+pub mod compact;
 pub mod deadline;
 pub mod gate;
 mod git;

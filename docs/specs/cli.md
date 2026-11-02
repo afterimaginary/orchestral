@@ -205,6 +205,13 @@ Commands are split at `;`, `&`, `|`, parentheses and newlines, with quotes and l
 
 `hook pre-push` is a git pre-push hook. When `ORCHESTRAL_WORKER` is set, it rejects a push whose remote ref is `refs/heads/main`. Without it, as in the owner's own shell, every push goes through. Installing it into a project is separate.
 
+### `orchestral hook pre-compact` and `orchestral hook session-compact`
+
+The plugin's `hooks/hooks.json` runs both, so the orchestrator carries on correctly after its conversation is compacted. Each reads the hook event on stdin, and acts only when its `session_id` holds the claim on the repository at its `cwd`. Any other session, or input that can't be read, gets nothing. Both exit `0` on any problem they expect, such as an unreadable status, and never exit `2`, so they never block a compaction. Each has a 30-second timeout, so a slow `gh` or `claude` call can't hold up the compaction for long. The context puts the current status first and the one from before compaction after it, so the current one survives if Claude Code shortens a long context.
+
+- `hook pre-compact` is the `PreCompact` hook. It saves the fleet's status, as `orchestral status` prints it, to `orchestrator/before-compact.txt` in the store.
+- `hook session-compact` is the `SessionStart` hook for the `compact` source. Its `additionalContext` tells the orchestrator that it was compacted. It points to the orchestrate skill and the binary under `CLAUDE_PLUGIN_ROOT`, and gives the status saved before compaction and the status now. Then it deletes the saved status, so a later compaction never shows a stale one. A status that can't be read is replaced by a line saying why.
+
 ### `orchestral review <pr> --pass|--fail --sha <sha> [--json]`
 
 Records a reviewer's verdict on PR `<pr>`'s head commit, in the state's `reviews`. It refuses, exiting `2`, when the PR isn't open, when `<sha>` (at least 7 characters) isn't the PR's current head, or when the fleet has no reviewer for the PR. A verdict holds only for the commit it names.

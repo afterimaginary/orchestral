@@ -4,7 +4,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use orchestral::outcome::{self, Failure};
 use orchestral::{
-    claim, cleanup, gate, guard, limits, review, setup, spawn, status, stop, supervisor, watch,
+    claim, cleanup, compact, gate, guard, limits, review, setup, spawn, status, stop, supervisor,
+    watch,
 };
 
 /// A small workflow layer for Claude Code.
@@ -169,6 +170,10 @@ enum Command {
 enum Hook {
     /// Checks a worker's Bash commands before they run.
     WorkerGuard,
+    /// Saves the fleet's status before the orchestrator compacts.
+    PreCompact,
+    /// Puts the instructions and status back after the orchestrator compacts.
+    SessionCompact,
     /// Rejects a worker's push to main, as a git pre-push hook.
     PrePush {
         /// The remote's name and URL, which git passes.
@@ -270,6 +275,14 @@ fn run(command: Command) -> Result<(), Failure> {
         }
         Command::Hook { hook } => match hook {
             Hook::WorkerGuard => guard::worker_guard(),
+            Hook::PreCompact => {
+                compact::pre_compact();
+                Ok(())
+            }
+            Hook::SessionCompact => {
+                compact::session_compact();
+                Ok(())
+            }
             Hook::PrePush { .. } => guard::pre_push(),
         },
     }
