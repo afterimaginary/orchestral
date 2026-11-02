@@ -26,11 +26,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Policy file: settings and rules in `.orchestral/policy.md`, read from `origin/main` (`docs/specs/policy.md`)
 - Context and cache state read from transcripts (`docs/specs/claude-code-internals.md`)
 - Session reader: session records, pid liveness and `claude agents --json`
+- Fleet token accounting, shown as an estimate (`docs/specs/budget.md`)
 
 ## Up Next
 
 1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next fleet token accounting (#14), then worker spawn (#18) and the supervisor (#25).
+2. Milestone 2 (Core), in work order, next worker spawn (#18) and the supervisor (#25).
 
 ## Needs Your Decision
 
