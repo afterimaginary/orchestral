@@ -29,6 +29,9 @@ const OVERLAP: SignedDuration = SignedDuration::from_secs(300);
 /// Failed polls in a row before one event says so.
 const REPORT_AFTER: u32 = 5;
 
+/// How long one `gh` call may take before the poll fails.
+const GH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The longest wait between polls while they keep failing.
 const MAX_BACKOFF: SignedDuration = SignedDuration::from_secs(16 * 60);
 
@@ -86,17 +89,19 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     {
         return Ok(Vec::new());
     }
-    let main = crate::spawn::main_checkout(store.dir())?;
-    let state = store.read()?;
-    let (snapshot, lines) = match fetch(gh, &main, old.as_ref(), now) {
+    let attempt = || -> Result<(Snapshot, Vec<String>), Failure> {
+        let main = crate::spawn::main_checkout(store.dir())?;
+        let state = store.read()?;
+        let fetched = fetch(gh, &main, old.as_ref(), now)?;
+        let lines = match old.as_ref().filter(|old| old.polled_at.is_some()) {
+            Some(old) => changes(old, &fetched, &state, gh, &main)?,
+            None => Vec::new(),
+        };
+        Ok((fetched.snapshot, lines))
+    };
+    let (snapshot, lines) = match attempt() {
         // A successful poll starts the snapshot afresh, failures included.
-        Ok(fetched) => match old.as_ref().filter(|old| old.polled_at.is_some()) {
-            Some(old) => {
-                let lines = changes(old, &fetched, &state, gh, &main);
-                (fetched.snapshot, lines)
-            }
-            None => (fetched.snapshot, Vec::new()),
-        },
+        Ok(result) => result,
         Err(err) => {
             let mut snapshot = old.unwrap_or_default();
             snapshot.failures += 1;
@@ -106,7 +111,7 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
             if snapshot.failures == REPORT_AFTER {
                 lines.push(format!(
                     "watcher: {REPORT_AFTER} polls failed: {}",
-                    first_line(&failure_text(&err))
+                    first_line(&crate::supervisor::failure_text(&err))
                 ));
             }
             (snapshot, lines)
@@ -131,6 +136,8 @@ struct Fetched {
 /// A new comment or review.
 struct Comment {
     number: u64,
+    /// Whether `number` is a PR rather than an issue.
+    on_pr: bool,
     author: String,
     body: String,
     kind: CommentKind,
@@ -199,6 +206,11 @@ fn fetch(
         for review in pr.reviews {
             // A review that only holds inline comments has no body of its
             // own; its comments are reported one by one.
+            // A pending review isn't submitted yet, so it's read again until
+            // it is.
+            if review.state == "PENDING" {
+                continue;
+            }
             let empty = review.body.trim().is_empty() && review.state == "COMMENTED";
             if !empty
                 && !known.is_some_and(|known| known.reviews.contains(&review.id))
@@ -206,6 +218,7 @@ fn fetch(
             {
                 comments.push(Comment {
                     number: pr.number,
+                    on_pr: true,
                     author: review.author.map(|author| author.login).unwrap_or_default(),
                     body: review.body,
                     kind: CommentKind::Review {
@@ -236,15 +249,16 @@ fn fetch(
             "since={}",
             Timestamp::from_second(since.as_second()).unwrap_or(since)
         );
-        // One page of 100 is plenty for a minute's comments.
+        // After downtime or backoff the window can hold more than a page.
         let comments_at = |endpoint: &str| -> Result<Vec<GhComment>, Failure> {
-            gh_json(
+            gh_pages(
                 gh,
                 main,
                 &[
                     "api",
                     "--method",
                     "GET",
+                    "--paginate",
                     &format!("repos/{{owner}}/{{repo}}/{endpoint}"),
                     "-f",
                     &since_param,
@@ -276,8 +290,16 @@ fn fetch(
             if !new || is_ours(&comment.body) {
                 return;
             }
+            // A PR's conversation comments come from the issues endpoint
+            // too, and only their page link tells them apart.
+            let on_pr = inline
+                || comment
+                    .html_url
+                    .as_deref()
+                    .is_some_and(|url| url.contains("/pull/"));
             comments.push(Comment {
                 number,
+                on_pr,
                 author: comment.user.map(|user| user.login).unwrap_or_default(),
                 body: comment.body,
                 kind: if inline {
@@ -301,7 +323,13 @@ fn fetch(
 }
 
 /// The event lines between the last snapshot and this poll.
-fn changes(old: &Snapshot, new: &Fetched, state: &State, gh: &Path, main: &Path) -> Vec<String> {
+fn changes(
+    old: &Snapshot,
+    new: &Fetched,
+    state: &State,
+    gh: &Path,
+    main: &Path,
+) -> Result<Vec<String>, Failure> {
     let mut lines = Vec::new();
     let worker_for_issue = |number: u64| {
         state
@@ -355,8 +383,9 @@ fn changes(old: &Snapshot, new: &Fetched, state: &State, gh: &Path, main: &Path)
         } else if before.is_some_and(|before| before.draft) && !pr.draft {
             lines.push(format!("{subject}: ready for review: route it for review"));
         }
+        // A result is new when it changed, or came from a new push.
         let ci_before = before.map_or(Ci::None, |before| before.ci);
-        if pr.ci != ci_before {
+        if pr.ci != ci_before || before.is_some_and(|before| before.head != pr.head) {
             match (pr.ci, worker) {
                 (Ci::Failed, Some(worker)) => {
                     lines.push(format!("{subject}: CI failed: have {worker} fix it"))
@@ -375,19 +404,22 @@ fn changes(old: &Snapshot, new: &Fetched, state: &State, gh: &Path, main: &Path)
         }
         let worker = worker_for_branch(&pr.branch);
         let subject = pr_subject(*number, pr, worker);
+        // Failing here fails the poll, so the outcome is read again rather
+        // than guessed.
         let merged = gh_json::<GhPrState>(
             gh,
             main,
             &["pr", "view", &number.to_string(), "--json", "state"],
-        )
-        .map(|view| view.state == "MERGED");
+        )?
+        .state
+            == "MERGED";
         lines.push(match (merged, worker) {
-            (Ok(true), Some(worker)) => format!("{subject}: merged: clean up {worker}"),
-            (Ok(true), None) => format!("{subject}: merged: no action needed"),
-            (_, Some(worker)) => {
+            (true, Some(worker)) => format!("{subject}: merged: clean up {worker}"),
+            (true, None) => format!("{subject}: merged: no action needed"),
+            (false, Some(worker)) => {
                 format!("{subject}: closed without merging: stop {worker} if it's still on it")
             }
-            (_, None) => format!("{subject}: closed without merging: no action needed"),
+            (false, None) => format!("{subject}: closed without merging: no action needed"),
         });
     }
 
@@ -404,6 +436,9 @@ fn changes(old: &Snapshot, new: &Fetched, state: &State, gh: &Path, main: &Path)
                 let worker = worker_for_branch(&pr.branch);
                 (pr_subject(comment.number, pr, worker), worker)
             }
+            // A PR closed before the last poll is no longer in either
+            // snapshot.
+            None if comment.on_pr => (format!("pr #{}", comment.number), None),
             None => {
                 let worker = worker_for_issue(comment.number);
                 let title = new
@@ -444,7 +479,7 @@ fn changes(old: &Snapshot, new: &Fetched, state: &State, gh: &Path, main: &Path)
         };
         lines.push(format!("{subject}: {what}: {action}"));
     }
-    lines
+    Ok(lines)
 }
 
 fn pr_subject(number: u64, pr: &Pr, worker: Option<&str>) -> String {
@@ -513,11 +548,28 @@ fn number_from_url(url: &str) -> Option<u64> {
 }
 
 fn gh_json<T: DeserializeOwned>(gh: &Path, main: &Path, args: &[&str]) -> Result<T, Failure> {
-    let output = Command::new(gh)
-        .args(args)
-        .current_dir(main)
-        .output()
-        .map_err(|err| Failure::Error(format!("can't run gh: {err}")))?;
+    let stdout = gh_output(gh, main, args)?;
+    serde_json::from_slice(&stdout).map_err(|err| unexpected(args, err))
+}
+
+/// Every page of a `gh api --paginate` list. gh prints each page as its own
+/// JSON array.
+fn gh_pages<T: DeserializeOwned>(gh: &Path, main: &Path, args: &[&str]) -> Result<Vec<T>, Failure> {
+    let stdout = gh_output(gh, main, args)?;
+    let mut items = Vec::new();
+    for page in serde_json::Deserializer::from_slice(&stdout).into_iter::<Vec<T>>() {
+        items.extend(page.map_err(|err| unexpected(args, err))?);
+    }
+    Ok(items)
+}
+
+fn gh_output(gh: &Path, main: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
+    let output = crate::deadline::output(
+        Command::new(gh).args(args).current_dir(main),
+        GH_DEADLINE,
+        "gh",
+    )
+    .map_err(Failure::Error)?;
     if !output.status.success() {
         return Err(Failure::Error(format!(
             "gh {} failed: {}",
@@ -525,19 +577,14 @@ fn gh_json<T: DeserializeOwned>(gh: &Path, main: &Path, args: &[&str]) -> Result
             first_line(&String::from_utf8_lossy(&output.stderr))
         )));
     }
-    serde_json::from_slice(&output.stdout).map_err(|err| {
-        Failure::Error(format!(
-            "gh {} gave unexpected output: {err}",
-            args[..2.min(args.len())].join(" ")
-        ))
-    })
+    Ok(output.stdout)
 }
 
-fn failure_text(failure: &Failure) -> String {
-    match failure {
-        Failure::Error(message) => message.clone(),
-        Failure::Refused { reason, .. } => reason.clone(),
-    }
+fn unexpected(args: &[&str], err: serde_json::Error) -> Failure {
+    Failure::Error(format!(
+        "gh {} gave unexpected output: {err}",
+        args[..2.min(args.len())].join(" ")
+    ))
 }
 
 fn read_snapshot(path: &Path) -> Result<Option<Snapshot>, Failure> {
@@ -618,6 +665,7 @@ struct GhComment {
     body: String,
     created_at: Timestamp,
     issue_url: Option<String>,
+    html_url: Option<String>,
     pull_request_url: Option<String>,
     path: Option<String>,
     line: Option<u64>,

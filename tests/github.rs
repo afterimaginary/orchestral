@@ -122,13 +122,30 @@ impl GitHub {
         let api = |endpoint: &str| format!("repos/{{owner}}/{{repo}}/{endpoint}");
         stubs.respond(
             "gh",
-            &["api", "--method", "GET", &api("issues/comments")],
-            &json!(self.comments).to_string(),
+            &[
+                "api",
+                "--method",
+                "GET",
+                "--paginate",
+                &api("issues/comments"),
+            ],
+            // gh prints each page as its own array.
+            &self
+                .comments
+                .chunks(2)
+                .map(|page| json!(page).to_string())
+                .collect::<String>(),
             0,
         );
         stubs.respond(
             "gh",
-            &["api", "--method", "GET", &api("pulls/comments")],
+            &[
+                "api",
+                "--method",
+                "GET",
+                "--paginate",
+                &api("pulls/comments"),
+            ],
             &json!(self.inline).to_string(),
             0,
         );
@@ -373,4 +390,88 @@ fn failures_before_the_first_snapshot_do_not_make_everything_new() {
     repo.edit_snapshot(|snapshot| snapshot.retry_after = None);
     let (lines, _) = repo.poll(&baseline());
     assert_eq!(lines, Vec::<String>::new());
+}
+
+#[test]
+fn a_pr_whose_outcome_can_t_be_read_fails_the_poll_and_is_read_again() {
+    let repo = Repo::new();
+    repo.poll(&baseline());
+    let gone = GitHub {
+        prs: vec![pr(41, "Bump deps", "deps", false, json!([]))],
+        ..baseline()
+    };
+    // No canned reply for `gh pr view 40`, so it fails.
+    let (lines, _) = repo.poll(&gone);
+    assert_eq!(lines, Vec::<String>::new());
+    assert_eq!(repo.snapshot().failures, 1);
+    assert!(repo.snapshot().prs.contains_key(&40));
+    repo.edit_snapshot(|snapshot| snapshot.retry_after = None);
+    let (lines, _) = repo.poll(&GitHub {
+        views: vec![(40, "MERGED")],
+        ..gone
+    });
+    assert_eq!(
+        lines,
+        ["pr #40 \"Add login\" (worker issue-12): merged: clean up issue-12"]
+    );
+}
+
+#[test]
+fn ci_failing_again_after_a_new_push_is_reported() {
+    let repo = Repo::new();
+    let failing = GitHub {
+        prs: vec![pr(
+            40,
+            "Add login",
+            "issue-12",
+            false,
+            check("COMPLETED", "FAILURE"),
+        )],
+        ..baseline()
+    };
+    repo.poll(&failing);
+    let mut pushed = failing.clone();
+    pushed.prs[0]["headRefOid"] = json!("def5678");
+    let (lines, _) = repo.poll(&pushed);
+    assert_eq!(
+        lines,
+        ["pr #40 \"Add login\" (worker issue-12): CI failed: have issue-12 fix it"]
+    );
+}
+
+#[test]
+fn a_pending_review_is_reported_once_submitted() {
+    let repo = Repo::new();
+    repo.poll(&baseline());
+    let mut pending = baseline();
+    pending.prs[0]["reviews"] = json!([
+        { "id": "PRR_3", "author": { "login": "owner" }, "body": "Draft thoughts", "state": "PENDING" },
+    ]);
+    assert_eq!(repo.poll(&pending).0, Vec::<String>::new());
+    let mut submitted = baseline();
+    submitted.prs[0]["reviews"] = json!([
+        { "id": "PRR_3", "author": { "login": "owner" }, "body": "Needs a test", "state": "CHANGES_REQUESTED" },
+    ]);
+    assert_eq!(
+        repo.poll(&submitted).0,
+        [
+            "pr #40 \"Add login\" (worker issue-12): review from owner, changes requested: \"Needs a test\": pass it to issue-12"
+        ]
+    );
+}
+
+#[test]
+fn a_comment_on_a_pr_closed_earlier_is_still_called_a_pr() {
+    let repo = Repo::new();
+    repo.poll(&baseline());
+    let mut late = comment(7, 99, "owner", "Thanks for this");
+    late["html_url"] = json!("https://github.com/o/app/pull/99#issuecomment-7");
+    let (lines, _) = repo.poll(&GitHub {
+        comments: vec![late],
+        ..baseline()
+    });
+    assert_eq!(
+        lines,
+        ["pr #99: comment from owner: \"Thanks for this\": answer it if it needs you"]
+    );
 }

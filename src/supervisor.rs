@@ -348,7 +348,7 @@ fn check_keepalive(hours: f64) -> Result<(), Failure> {
     }
 }
 
-fn failure_text(failure: &Failure) -> String {
+pub(crate) fn failure_text(failure: &Failure) -> String {
     match failure {
         Failure::Error(message) => message.clone(),
         Failure::Refused { reason, .. } => reason.clone(),
