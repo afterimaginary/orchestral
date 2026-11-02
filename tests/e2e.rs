@@ -175,18 +175,22 @@ fn local_runner() {
     let repo = root.join("repo");
     let origin = root.join("origin.git");
 
-    step("refuse while an earlier run's sessions are live");
+    step("refuse while an earlier run's workers are live");
     let agents = sessions::agents(Path::new("claude")).unwrap();
     let live: Vec<_> = agents
         .iter()
         .filter(|agent| {
-            agent.pid.is_some() && agent.cwd.as_ref().is_some_and(|cwd| cwd.starts_with(&root))
+            // Only workers: an interactive session there, such as the one
+            // that accepted the trust prompt, doesn't block a run.
+            agent.kind.as_deref() == Some("background")
+                && agent.pid.is_some()
+                && agent.cwd.as_ref().is_some_and(|cwd| cwd.starts_with(&root))
         })
         .map(|agent| agent.id.clone().unwrap_or_else(|| agent.session_id.clone()))
         .collect();
     assert!(
         live.is_empty(),
-        "sessions from an earlier run are live; stop them: claude stop {}",
+        "workers from an earlier run are live; stop them: claude stop {}",
         live.join(" ")
     );
 
