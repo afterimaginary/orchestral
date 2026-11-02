@@ -359,3 +359,54 @@ fn an_unreadable_transcript_is_a_warning() {
         "{text}"
     );
 }
+
+#[test]
+fn shows_running_previews_with_branch_and_link() {
+    let fleet = Fleet::new();
+    fleet.reads_everything();
+    let preview = |want, url: &str| orchestral::state::Preview {
+        want,
+        requested_at: "2026-11-02T00:00:00Z".into(),
+        worktree: fleet.main.join(".claude/worktrees/issue-12"),
+        branch: "issue-12".into(),
+        server: Some(orchestral::state::Server {
+            pid: 1,
+            group: 1,
+            started: String::new(),
+            port: 4321,
+            head: "abc".into(),
+            portless: true,
+            url: Some(url.into()),
+        }),
+        set_up_for: None,
+        restarts: 0,
+        failure: None,
+        comment: None,
+    };
+    Store::for_repo(&fleet.main)
+        .unwrap()
+        .update(|state| {
+            let running = preview(
+                orchestral::state::Want::Running,
+                "https://host.example.ts.net:8443",
+            );
+            state.previews.insert(40, running);
+            // Being stopped, so not listed.
+            state
+                .previews
+                .insert(41, preview(orchestral::state::Want::Off, "https://other"));
+        })
+        .unwrap();
+
+    let text = stdout(&fleet.status(&[]));
+    let json: Value = serde_json::from_str(stdout(&fleet.status(&["--json"])).trim_end()).unwrap();
+
+    assert!(
+        text.contains("\nPreviews:\n  PR #40 (issue-12) at https://host.example.ts.net:8443"),
+        "{text}"
+    );
+    assert_eq!(
+        json["previews"],
+        json!([{"pr": 40, "branch": "issue-12", "url": "https://host.example.ts.net:8443"}])
+    );
+}

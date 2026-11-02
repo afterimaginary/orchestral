@@ -52,12 +52,13 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Findings: workers end each PR body with a `## Findings` section, the orchestrator decides each finding, and `src/findings.rs` checks every one is decided, for the merge check to use (#46)
 - Merge check: `orchestral merge-check <pr>` shows each merge condition at the head commit, for the owner's route or the supervisor's, and never merges (#47)
 - Previews: `orchestral try <pr>` asks for a PR's preview, which the supervisor runs in its worker's worktree on `$PORT`, restarting it once, rerunning setup on a lockfile change, keeping within `max_running` and stopping it on merge or close (#51)
+- Tailnet links: where portless is installed, previews run under `portless <repo>-pr-<n>`, registered with Tailscale while it runs; the link goes in a PR comment that's edited on each restart, `status` lists running previews, and stale `tailscale serve` entries from crashed previews are removed (#52)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
 2. Milestone 3 (Autonomous loop): reminders (#41, PR #104) wait for the owner to confirm a banner arrived, and the long-idle run (#44) is still to do. #93 and #100 need the owner's decision.
-3. Milestone 4 (User decision points): merge routing (#48) needs reminders (#41) and supervisor merges (#49) need #48. Tailnet links (#52) build on previews (#51), and design proposals (#45) are ready.
+3. Milestone 4 (User decision points): merge routing (#48) needs reminders (#41) and supervisor merges (#49) need #48. Design proposals (#45, PR #109) wait on #93.
 
 ## Needs Your Decision
 
