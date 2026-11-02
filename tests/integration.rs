@@ -95,8 +95,10 @@ fn the_binary_runs_offline_with_the_stubs() {
 
     let output = stubs.orchestral().arg("limits").output().unwrap();
 
+    // `limits` runs `claude`, which reaches the stub, and nothing else.
     assert_eq!(output.status.code(), Some(0));
     for tool in common::TOOLS {
-        assert!(stubs.calls(tool).is_empty(), "{tool} was called");
+        let expected = usize::from(tool == "claude");
+        assert_eq!(stubs.calls(tool).len(), expected, "{tool} calls");
     }
 }
