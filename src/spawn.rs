@@ -22,6 +22,10 @@ const MAX_SESSION_NAME: usize = 32;
 /// Where worker worktrees live, relative to the main checkout.
 const WORKTREES: &str = ".claude/worktrees";
 
+/// Where a worker writes its design proposal's files, inside its worktree so
+/// it can publish them (ADR-0002), and kept out of git.
+const PROPOSALS: &str = ".proposals";
+
 const PLUGIN: &str = "orchestral";
 
 pub struct Request {
@@ -33,6 +37,8 @@ pub struct Request {
     pub prompt: String,
     /// For a reviewer, the PR it reviews.
     pub review_of: Option<u64>,
+    /// The worker starts on its issue's design proposal.
+    pub proposal: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,7 +131,10 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
             // Nothing ran, so undo the worker and its empty worktree to let
             // the same name be retried. The launch failure is what matters,
             // so a failed undo doesn't replace it.
-            let _ = store.update(|state| state.workers.remove(name));
+            let _ = store.update(|state| {
+                state.workers.remove(name);
+                state.proposals.remove(name);
+            });
             let _ = git(
                 &main,
                 &["worktree", "remove", "--force", path_str(&worktree)?],
@@ -201,12 +210,13 @@ impl Launch<'_> {
                     self.settings.review_command.as_deref(),
                     &exe,
                 ),
-                None => worker_prompt(name, request.issue, &exe),
+                None => worker_prompt(name, request.issue, self.settings.design_variants, &exe),
             };
             write(&prompt, &text)?;
             // Recorded before launching, so a crash leaves a visible entry.
             // Pause, the cap and the PR's reviewer are checked again under
             // the lock, so two spawns at once can't both take the last place.
+            let now = jiff::Timestamp::now().to_string();
             self.store.update(|state| {
                 gate::check_capacity(state, self.settings)?;
                 check_one_reviewer(state, request.review_of)?;
@@ -221,9 +231,12 @@ impl Launch<'_> {
                         branch: name.clone(),
                         job_id: None,
                         review_of: request.review_of,
-                        created_at: jiff::Timestamp::now().to_string(),
+                        created_at: now.clone(),
                     },
                 );
+                if request.proposal {
+                    state.proposals.insert(name.clone(), now);
+                }
                 Ok(())
             })??;
             Ok((settings, prompt))
@@ -360,7 +373,8 @@ fn repo_slug(main: &Path) -> String {
         .unwrap_or_else(|| "repo".into())
 }
 
-/// Adds `.claude/worktrees/` to `.git/info/exclude` once.
+/// Adds `.claude/worktrees/`, and the proposal files workers write in their
+/// worktrees, to `.git/info/exclude` once each.
 fn exclude_worktrees(store: &Path) -> Result<(), Failure> {
     let info = store.parent().unwrap_or(store).join("info");
     fs::create_dir_all(&info).map_err(|err| io_error(&info, err))?;
@@ -370,15 +384,20 @@ fn exclude_worktrees(store: &Path) -> Result<(), Failure> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(io_error(&exclude, err)),
     };
-    let line = format!("/{WORKTREES}/");
-    if text.lines().any(|existing| existing == line) {
+    let missing: Vec<String> = [format!("/{WORKTREES}/"), format!("/{PROPOSALS}/")]
+        .into_iter()
+        .filter(|line| !text.lines().any(|existing| existing == line))
+        .collect();
+    if missing.is_empty() {
         return Ok(());
     }
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(&line);
-    text.push('\n');
+    for line in missing {
+        text.push_str(&line);
+        text.push('\n');
+    }
     write(&exclude, &text)
 }
 
@@ -437,12 +456,14 @@ fn plugin_ids() -> Result<Vec<String>, Failure> {
         .collect())
 }
 
-fn worker_prompt(name: &str, issue: u64, orchestral: &Path) -> String {
+fn worker_prompt(name: &str, issue: u64, design_variants: u32, orchestral: &Path) -> String {
     // A worker runs with the plugin turned off, so it calls this binary by
     // its path (ADR-0001).
     include_str!("prompts/worker.md")
         .replace("{{name}}", name)
         .replace("{{issue}}", &issue.to_string())
+        .replace("{{design_variants}}", &design_variants.to_string())
+        .replace("{{proposals}}", PROPOSALS)
         .replace(
             "{{orchestral}}",
             &shell_quote(&orchestral.display().to_string()),
@@ -568,7 +589,7 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_worker_and_its_issue() {
-        let prompt = worker_prompt("issue-12", 12, Path::new("/opt/orchestral"));
+        let prompt = worker_prompt("issue-12", 12, 4, Path::new("/opt/orchestral"));
 
         assert!(prompt.starts_with("You are worker issue-12 on issue #12."));
         assert!(prompt.contains("`'/opt/orchestral' resolve orchestrator`"));

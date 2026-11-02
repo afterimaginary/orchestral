@@ -142,6 +142,7 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         if new_run {
             state.run_started_at = Some(jiff::Timestamp::now().to_string());
             state.usage = None;
+            state.proposal_tokens = 0;
             state.budget_reached = false;
         }
         Ok(Some(new_run))

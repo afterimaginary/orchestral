@@ -359,3 +359,71 @@ fn an_unreadable_transcript_is_a_warning() {
         "{text}"
     );
 }
+
+#[test]
+fn proposals_show_their_spend_until_done() {
+    let fleet = Fleet::new();
+    fleet.start_run();
+    fleet.reads_everything();
+    Store::for_repo(&fleet.main)
+        .unwrap()
+        .update(|state| {
+            state
+                .proposals
+                .insert("issue-12".into(), "2026-01-01T00:00:00Z".into());
+            state.proposal_tokens = 1000;
+        })
+        .unwrap();
+
+    let json: Value = serde_json::from_str(stdout(&fleet.status(&["--json"])).trim_end()).unwrap();
+    let text = stdout(&fleet.status(&[]));
+
+    let open = json["workers"][0]["proposal_used"]["estimated_tokens"]
+        .as_u64()
+        .unwrap();
+    assert!(open > 0);
+    assert_eq!(json["workers"][0]["proposing"], true);
+    assert_eq!(json["workers"][1]["proposing"], false);
+    assert_eq!(json["budget"]["proposals"]["estimated_tokens"], 1000 + open);
+    assert!(
+        text.contains(&format!(
+            "\nDesign proposals: about {} tokens (estimate) this run\n",
+            1000 + open
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "  issue-12 · issue #12 · PR #40 (draft) · proposal, about {open} tokens (estimate) · "
+        )),
+        "{text}"
+    );
+
+    let done = fleet
+        .stubs
+        .orchestral()
+        .args(["proposal", "issue-12", "--done"])
+        .current_dir(&fleet.main)
+        .env("CLAUDE_CONFIG_DIR", &fleet.config)
+        .output()
+        .unwrap();
+    assert_eq!(
+        stdout(&done),
+        format!("issue-12's proposal is done. It used about {open} tokens (estimate).\n")
+    );
+    let state = Store::for_repo(&fleet.main).unwrap().read().unwrap();
+    assert!(state.proposals.is_empty());
+    assert_eq!(state.proposal_tokens, 1000 + open);
+    let text = stdout(&fleet.status(&[]));
+    assert!(!text.contains("· proposal"), "{text}");
+
+    let again = fleet
+        .stubs
+        .orchestral()
+        .args(["proposal", "issue-12", "--done"])
+        .current_dir(&fleet.main)
+        .env("CLAUDE_CONFIG_DIR", &fleet.config)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(2));
+}

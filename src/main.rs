@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use orchestral::outcome::{self, Failure};
 use orchestral::{
-    claim, cleanup, compact, gate, guard, limits, merge, preview, review, setup, spawn, status,
-    stop, supervisor, watch,
+    claim, cleanup, compact, gate, guard, limits, merge, preview, proposal, review, setup, spawn,
+    status, stop, supervisor, watch,
 };
 
 /// A small workflow layer for Claude Code.
@@ -43,6 +43,10 @@ enum Command {
         /// The PR a reviewer reviews.
         #[arg(long, required_if_eq("role", "reviewer"))]
         pr: Option<u64>,
+        /// The worker starts on its issue's design proposal, whose token
+        /// spend `status` shows until `orchestral proposal <name> --done`.
+        #[arg(long)]
+        proposal: bool,
         /// Overrides the policy's default model.
         #[arg(long)]
         model: Option<String>,
@@ -52,6 +56,17 @@ enum Command {
         /// The worker's first message.
         #[arg(long)]
         prompt: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record that a worker's design proposal is decided or rejected, keeping
+    /// what it spent for `status`.
+    Proposal {
+        name: String,
+        /// The owner chose a design or rejected the proposal.
+        #[arg(long, required = true)]
+        done: bool,
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -245,9 +260,16 @@ fn run(command: Command) -> Result<(), Failure> {
             prompt,
             role,
             pr,
+            proposal,
             json,
         } => {
             let cwd = current_dir()?;
+            if proposal && matches!(role, Role::Reviewer) {
+                return Err(Failure::Refused {
+                    reason: "--proposal is only for a worker".into(),
+                    fix: "drop --proposal".into(),
+                });
+            }
             let review_of = match role {
                 Role::Worker if pr.is_some() => {
                     return Err(Failure::Refused {
@@ -265,6 +287,7 @@ fn run(command: Command) -> Result<(), Failure> {
                 effort,
                 prompt,
                 review_of,
+                proposal,
             };
             outcome::print(&spawn::spawn(&cwd, request)?, json)
         }
@@ -273,6 +296,11 @@ fn run(command: Command) -> Result<(), Failure> {
             false => outcome::print(&preview::try_pr(&current_dir()?, pr)?, json),
         },
         Command::Previews { json } => outcome::print(&preview::list(&current_dir()?)?, json),
+        Command::Proposal {
+            name,
+            done: _,
+            json,
+        } => outcome::print(&proposal::done(&current_dir()?, &name)?, json),
         Command::MergeCheck { pr, json } => {
             let check = merge::check(&current_dir()?, pr)?;
             outcome::print(&check, json)?;
