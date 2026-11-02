@@ -62,6 +62,9 @@ pub struct Initialized {
     /// The policy file, when init created it.
     pub created_policy: Option<PathBuf>,
     pub hook: PathBuf,
+    /// Whether git tracks the hook, as with a `core.hooksPath` in the
+    /// repository.
+    pub hook_tracked: bool,
 }
 
 impl fmt::Display for Initialized {
@@ -74,7 +77,14 @@ impl fmt::Display for Initialized {
             )?,
             None => writeln!(f, "Kept the existing {POLICY}.")?,
         }
-        write!(f, "Installed the pre-push hook in {}.", self.hook.display())
+        write!(f, "Installed the pre-push hook in {}.", self.hook.display())?;
+        if self.hook_tracked {
+            write!(
+                f,
+                "\nThat file is tracked, and the block names this machine's orchestral, so don't commit the block."
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -87,11 +97,12 @@ pub fn doctor(cwd: &Path) -> Report {
             checks.push(trust(&main));
             checks.push(policy(cwd, &main));
         }
-        Err(_) => checks.push(Check {
-            name: "repo",
-            status: Status::Fail,
-            detail: "not in a git repository".into(),
-        }),
+        Err(
+            Failure::Error(message)
+            | Failure::Refused {
+                reason: message, ..
+            },
+        ) => checks.push(fail("repo", &message)),
     }
     checks.push(portless());
     checks.push(tailscale());
@@ -111,7 +122,13 @@ impl Report {
 /// there's none, and installs the pre-push hook.
 pub fn init(cwd: &Path) -> Result<Initialized, Failure> {
     let main = main_checkout(Store::for_repo(cwd)?.dir())?;
-    let prerequisites = [claude_version(), gh_auth(), git_version(), trust(&main)];
+    let prerequisites = [
+        claude_version(),
+        claude_auth(),
+        gh_auth(),
+        git_version(),
+        trust(&main),
+    ];
     if let Some(failed) = prerequisites.iter().find(|c| c.status == Status::Fail) {
         return Err(Failure::Refused {
             reason: format!("{}: {}", failed.name, failed.detail),
@@ -131,9 +148,16 @@ pub fn init(cwd: &Path) -> Result<Initialized, Failure> {
         Some(policy)
     };
     let hook = install_pre_push(&main)?;
+    let hook_tracked = Command::new("git")
+        .args(["ls-files", "--error-unmatch"])
+        .arg(&hook)
+        .current_dir(&main)
+        .output()
+        .is_ok_and(|output| output.status.success());
     Ok(Initialized {
         created_policy,
         hook,
+        hook_tracked,
     })
 }
 
@@ -153,6 +177,17 @@ fn install_pre_push(main: &Path) -> Result<PathBuf, Failure> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => return Err(io_error(&path, err)),
     };
+    if let Some(first) = existing.as_deref().and_then(|text| text.lines().next())
+        && first.starts_with("#!")
+        && !["sh", "bash", "dash", "zsh"].iter().any(|shell| {
+            first.ends_with(&format!("/{shell}")) || first.ends_with(&format!(" {shell}"))
+        })
+    {
+        return Err(Failure::Refused {
+            reason: format!("{} isn't a shell script ({first})", path.display()),
+            fix: "call `orchestral hook pre-push \"$@\"` from it yourself, passing stdin through, and exit if it fails".into(),
+        });
+    }
     let text = with_block(existing.as_deref(), &block()?);
     fs::write(&path, text).map_err(|err| io_error(&path, err))?;
     let mut permissions = fs::metadata(&path)
@@ -171,7 +206,11 @@ fn block() -> Result<String, Failure> {
         "{BLOCK_START}
 # Rejects a worker's push to main. Managed by `orchestral init`.
 orchestral_refs=$(cat)
-printf '%s\\n' \"$orchestral_refs\" | '{exe}' hook pre-push \"$@\" || exit 1
+if [ -x '{exe}' ]; then
+  printf '%s\\n' \"$orchestral_refs\" | '{exe}' hook pre-push \"$@\" || exit 1
+else
+  echo \"orchestral isn't at {exe} any more; run orchestral init again\" >&2
+fi
 exec 0<<ORCHESTRAL_REFS
 $orchestral_refs
 ORCHESTRAL_REFS

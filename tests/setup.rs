@@ -41,19 +41,7 @@ impl Repo {
     /// Claude Code at `version`, both tools logged in or not, and portless
     /// and Tailscale present or missing.
     fn with(version: &str, logged_in: bool, preview_tools: bool) -> Self {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        git(&root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
-        git(&root, &["clone", "-q", "origin.git", "app"]);
-        let main = root.join("app");
-        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
-        fs::create_dir(root.join("config")).unwrap();
-        let repo = Repo {
-            dir,
-            main,
-            stubs: Stubs::new(),
-        };
-        repo.trust(true);
+        let repo = Repo::bare();
         let stubs = &repo.stubs;
         stubs.respond("claude", &["--version"], version, 0);
         if logged_in {
@@ -72,6 +60,25 @@ impl Repo {
                 0,
             );
         }
+        repo
+    }
+
+    /// A trusted repository whose stub tools have no replies, so each one
+    /// fails as if it were missing.
+    fn bare() -> Self {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        git(&root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+        git(&root, &["clone", "-q", "origin.git", "app"]);
+        let main = root.join("app");
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        fs::create_dir(root.join("config")).unwrap();
+        let repo = Repo {
+            dir,
+            main,
+            stubs: Stubs::new(),
+        };
+        repo.trust(true);
         repo
     }
 
@@ -274,4 +281,96 @@ fn init_refuses_an_untrusted_repository() {
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("doesn't trust"));
     assert!(!repo.main.join(".orchestral/policy.md").exists());
+}
+
+#[test]
+fn doctor_fails_missing_tools_and_reports_each_failure() {
+    let repo = Repo::bare();
+    repo.push_policy();
+    repo.stubs.respond(
+        "tailscale",
+        &["status", "--json"],
+        r#"{"BackendState": "Stopped"}"#,
+        0,
+    );
+
+    let output = repo.run(&["doctor"]);
+    let (code, statuses) = repo.doctor();
+
+    assert_eq!(code, Some(1));
+    assert_eq!(statuses["claude"], "fail");
+    assert_eq!(statuses["auth"], "fail");
+    assert_eq!(statuses["gh"], "fail");
+    assert_eq!(statuses["tailscale"], "warn");
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert!(printed.contains("FAIL claude     not found; install Claude Code"));
+    assert!(printed.contains("warn tailscale  Stopped;"));
+    assert!(stderr(&output).contains("error: 3 checks failed"));
+}
+
+#[test]
+fn doctor_fails_a_missing_policy() {
+    let repo = Repo::new();
+
+    let (code, statuses) = repo.doctor();
+
+    assert_eq!(code, Some(1));
+    assert_eq!(statuses["policy"], "fail");
+}
+
+#[test]
+fn doctor_fails_outside_a_repository() {
+    let repo = Repo::new();
+    let outside = TempDir::new().unwrap();
+
+    let output = repo
+        .stubs
+        .orchestral()
+        .args(["doctor", "--json"])
+        .current_dir(outside.path())
+        .env("CLAUDE_CONFIG_DIR", repo.config())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["name"] == "repo" && c["status"] == "fail")
+    );
+}
+
+#[test]
+fn init_keeps_an_existing_hook_in_the_default_directory() {
+    let repo = Repo::new();
+    let hook = repo.main.join(".git/hooks/pre-push");
+    fs::write(
+        &hook,
+        "#!/bin/bash
+echo checked
+",
+    )
+    .unwrap();
+
+    let output = repo.run(&["init"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = fs::read_to_string(&hook).unwrap();
+    assert!(text.starts_with("#!/bin/bash\n# >>> orchestral >>>\n"));
+    assert!(text.ends_with("# <<< orchestral <<<\necho checked\n"));
+}
+
+#[test]
+fn init_refuses_a_hook_that_isnt_a_shell_script() {
+    let repo = Repo::new();
+    let hook = repo.main.join(".git/hooks/pre-push");
+    fs::write(&hook, "#!/usr/bin/env python3\nprint('checked')\n").unwrap();
+
+    let output = repo.run(&["init"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("isn't a shell script"));
 }
