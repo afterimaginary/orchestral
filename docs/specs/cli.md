@@ -81,7 +81,20 @@ Started issue-12 as app-issue-12 (job 558b988a) in /home/dev/app/.claude/worktre
 {"name":"issue-12","session_name":"app-issue-12","job_id":"558b988a","worktree":"/home/dev/app/.claude/worktrees/issue-12"}
 ```
 
-`orchestral hook worker-guard` is the worker's Bash hook. It allows every command for now.
+### `orchestral hook worker-guard` and `orchestral hook pre-push`
+
+Hooks that stop a worker by accident doing what only the owner or the supervisor should (ADR-0004). They read command text, so they aren't a security boundary: a session that deliberately works around them can.
+
+`hook worker-guard` is the `PreToolUse` hook on `Bash` in every worker's settings. It reads the hook event on stdin and prints a deny decision, with a reason the worker sees, for:
+
+- `gh pr merge`, and `gh api` on `…/pulls/<n>/merge`
+- `gh pr review` with `--approve` or `-a`
+- `git push` with a refspec whose destination is `main`
+- `/approve` or `/hold` as a word in any command that runs `gh`, or in a body file it names with `--body-file`, `-F`, or `-F body=@<file>` (ADR-0005)
+
+Commands are split at `;`, `&`, `|`, parentheses and newlines, with quotes removed. Anything else is allowed, with no output.
+
+`hook pre-push` is a git pre-push hook. When `ORCHESTRAL_WORKER` is set, it rejects a push whose remote ref is `refs/heads/main`. Without it, as in the owner's own shell, every push goes through. Installing it into a project is separate.
 
 ### `orchestral stop <name> [--json]`
 

@@ -320,16 +320,3 @@ fn an_untrusted_repository_is_refused_with_how_to_trust_it() {
         "fix: run `claude` in {main} once and accept the trust prompt"
     )));
 }
-
-#[test]
-fn the_worker_guard_allows_commands_for_now() {
-    let stubs = Stubs::new();
-
-    let output = stubs
-        .orchestral()
-        .args(["hook", "worker-guard"])
-        .output()
-        .unwrap();
-
-    assert_eq!(output.status.code(), Some(0));
-}
