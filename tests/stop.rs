@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use common::Stubs;
+use orchestral::observe;
 use orchestral::state::{Store, Worker};
 use serde_json::json;
 use tempfile::TempDir;
@@ -108,6 +109,10 @@ fn stop_stops_a_running_background_worker() {
         vec![args(&["agents", "--json", "--all"]), args(&["stop", JOB])]
     );
     assert!(repo.main.exists());
+    // The supervisor doesn't report a stop as a session that exited.
+    let state = Store::for_repo(&repo.main).unwrap().read().unwrap();
+    let (changes, _) = observe::changes(&state, &[], |_| false);
+    assert_eq!(changes, vec![]);
 }
 
 #[test]

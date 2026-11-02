@@ -41,7 +41,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next the heartbeat (#32) and dependency order (#34).
+2. Milestone 3 (Autonomous loop), next dependency order (#34).
 
 ## Needs Your Decision
 
