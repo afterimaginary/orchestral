@@ -109,7 +109,11 @@ impl Repo {
     fn wait_for_cursor(&self, cursor: &str) {
         let start = Instant::now();
         while self.cursor() != cursor {
-            assert!(start.elapsed() < QUIET, "the cursor stayed at {:?}", self.cursor());
+            assert!(
+                start.elapsed() < QUIET,
+                "the cursor stayed at {:?}",
+                self.cursor()
+            );
             thread::sleep(Duration::from_millis(50));
         }
     }
@@ -186,8 +190,11 @@ fn a_torn_line_waits_for_its_newline() {
     let repo = Repo::new();
     repo.claim(ME);
     let events = repo.store().dir().join("events.jsonl");
-    fs::write(&events, r#"{"seq":1,"ts":"2026-11-02T10:00:00Z","kind":"worker","text":"one"}"#)
-        .unwrap();
+    fs::write(
+        &events,
+        r#"{"seq":1,"ts":"2026-11-02T10:00:00Z","kind":"worker","text":"one"}"#,
+    )
+    .unwrap();
     let watch = Watch::start(&repo.main, ME);
     assert_eq!(watch.line(QUIET), None);
     let mut text = fs::read_to_string(&events).unwrap();
