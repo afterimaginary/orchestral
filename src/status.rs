@@ -170,7 +170,6 @@ pub fn wake_cost(context: &Context) -> Estimate {
     }
 }
 
-/// Open PRs as `(head branch, number)`.
 /// Each open PR's branch, number, and whether it's a draft.
 fn open_prs() -> Result<Vec<(String, u64, bool)>, String> {
     let output = Command::new("gh")
