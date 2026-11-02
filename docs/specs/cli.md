@@ -52,13 +52,13 @@ It refuses, exiting `2`, when:
 
 Then it:
 
-1. Fetches `origin main` and adds a worktree at `.claude/worktrees/<name>` on a new branch `<name>`, from `origin/main`, and adds `/.claude/worktrees/` to `.git/info/exclude`.
+1. Fetches `origin main` and adds a worktree at `.claude/worktrees/<name>` on a new branch `<name>` from `origin/main`, not tracking it, and adds `/.claude/worktrees/` to `.git/info/exclude`.
 2. Writes the worker's `settings.json` and `prompt.md` to `.git/orchestral/workers/<name>/`.
 3. Records the worker in the state, so a crash during launch leaves a visible entry.
 4. Runs `claude --bg` in the worktree with Remote Control, those settings and that prompt, auto permission mode, and the model and effort. `--model` and `--effort` override the policy's `default_model` and `default_effort`.
 5. Reads the job id from the `backgrounded · <id> · <session name>` line and saves it with the worker.
 
-A launch that fails removes the worker, its worktree and its branch, so the same name can be tried again. When Claude Code doesn't trust the repository, spawn refuses and says to run `claude` once in the main checkout and accept the trust prompt. Claude Code trusts a worktree when it trusts its main checkout. Any other failure is an error.
+A failure after the worktree is added removes the worker, its worktree and its branch, so the same name can be tried again. The exception is `claude --bg` exiting `0` without printing a job id: a session may be running, so everything is kept and it's an error. When Claude Code doesn't trust the repository, spawn refuses and says to run `claude` once in the main checkout and accept the trust prompt. Claude Code trusts a worktree when it trusts its main checkout. Any other failure is an error.
 
 The worker's settings apply to its process only:
 
@@ -68,7 +68,7 @@ The worker's settings apply to its process only:
 | `isolatePeerMachines` | `true` |
 | `worktree.bgIsolation` | `none`, since it already has a worktree |
 | `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), and the caller's `PATH` |
-| `hooks` | A `PreToolUse` hook on `Bash` running `<absolute path to orchestral> hook worker-guard` |
+| `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
 
 The prompt names the worker, its issue and its orchestrator (the caller's `CLAUDE_CODE_SESSION_ID`), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`.

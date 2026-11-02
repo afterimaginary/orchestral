@@ -77,85 +77,45 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
             "worktree",
             "add",
             "--quiet",
+            "--no-track",
             "-b",
             name,
             path_str(&worktree)?,
             "origin/main",
         ],
     )?;
-    exclude_worktrees(store.dir())?;
-
-    let dir = store.dir().join("workers").join(name);
-    fs::create_dir_all(&dir).map_err(|err| io_error(&dir, err))?;
-    let settings = dir.join("settings.json");
-    let prompt = dir.join("prompt.md");
-    write(&settings, &settings_json(name, &main, &plugin_ids()?)?)?;
-    write(&prompt, &worker_prompt(name, request.issue))?;
-
-    let model = request.model.unwrap_or(policy.settings.default_model);
-    let effort = request.effort.unwrap_or(policy.settings.default_effort);
-    // Recorded before launching, so a crash leaves a visible entry.
-    store.update(|state| {
-        state.workers.insert(
-            name.clone(),
-            Worker {
-                session_name: session_name.clone(),
-                issue: request.issue,
-                model: model.clone(),
-                effort: effort.clone(),
-                worktree: worktree.clone(),
-                branch: name.clone(),
-                job_id: None,
-                created_at: jiff::Timestamp::now().to_string(),
-            },
-        )
-    })?;
-
-    let launched = Command::new("claude")
-        .args([
-            "--bg",
-            "--name",
-            &session_name,
-            "--remote-control",
-            &session_name,
-        ])
-        .arg("--settings")
-        .arg(&settings)
-        .arg("--append-system-prompt-file")
-        .arg(&prompt)
-        .args([
-            "--permission-mode",
-            "auto",
-            "--model",
-            &model,
-            "--effort",
-            &effort,
-        ])
-        .arg("--")
-        .arg(&request.prompt)
-        .current_dir(&worktree)
-        .output()
-        .map_err(|err| Failure::Error(format!("can't run claude: {err}")))
-        .and_then(|output| launched_job_id(&output, &session_name, &main));
-    let job_id = match launched {
+    let model = request
+        .model
+        .clone()
+        .unwrap_or(policy.settings.default_model);
+    let effort = request
+        .effort
+        .clone()
+        .unwrap_or(policy.settings.default_effort);
+    let launch = Launch {
+        store: &store,
+        main: &main,
+        worktree: &worktree,
+        session_name: &session_name,
+        model: &model,
+        effort: &effort,
+    };
+    let job_id = match launch.run(&request) {
         Ok(id) => id,
-        Err(failure) => {
+        Err(Launched::No(failure)) => {
             // Nothing ran, so undo the worker and its empty worktree to let
-            // the same name be retried.
-            store.update(|state| state.workers.remove(name))?;
-            git(
+            // the same name be retried. The launch failure is what matters,
+            // so a failed undo doesn't replace it.
+            let _ = store.update(|state| state.workers.remove(name));
+            let _ = git(
                 &main,
                 &["worktree", "remove", "--force", path_str(&worktree)?],
-            )?;
-            git(&main, &["branch", "-D", name])?;
+            );
+            let _ = git(&main, &["branch", "-D", name]);
             return Err(failure);
         }
+        Err(Launched::Maybe(failure)) => return Err(failure),
     };
-    store.update(|state| {
-        if let Some(worker) = state.workers.get_mut(name) {
-            worker.job_id = Some(job_id.clone());
-        }
-    })?;
     store.record(
         "worker",
         &format!("{name} started on issue #{}", request.issue),
@@ -169,28 +129,118 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
     })
 }
 
+/// Whether a failed launch may have left a session running.
+enum Launched {
+    No(Failure),
+    Maybe(Failure),
+}
+
+/// Everything from the new worktree to a running session.
+struct Launch<'a> {
+    store: &'a Store,
+    main: &'a Path,
+    worktree: &'a Path,
+    session_name: &'a str,
+    model: &'a str,
+    effort: &'a str,
+}
+
+impl Launch<'_> {
+    fn run(&self, request: &Request) -> Result<String, Launched> {
+        let name = &request.name;
+        let prepare = || -> Result<(PathBuf, PathBuf), Failure> {
+            exclude_worktrees(self.store.dir())?;
+            let dir = self.store.dir().join("workers").join(name);
+            fs::create_dir_all(&dir).map_err(|err| io_error(&dir, err))?;
+            let settings = dir.join("settings.json");
+            let prompt = dir.join("prompt.md");
+            write(&settings, &settings_json(name, self.main, &plugin_ids()?)?)?;
+            write(&prompt, &worker_prompt(name, request.issue))?;
+            // Recorded before launching, so a crash leaves a visible entry.
+            self.store.update(|state| {
+                state.workers.insert(
+                    name.clone(),
+                    Worker {
+                        session_name: self.session_name.into(),
+                        issue: request.issue,
+                        model: self.model.into(),
+                        effort: self.effort.into(),
+                        worktree: self.worktree.into(),
+                        branch: name.clone(),
+                        job_id: None,
+                        created_at: jiff::Timestamp::now().to_string(),
+                    },
+                )
+            })?;
+            Ok((settings, prompt))
+        };
+        let (settings, prompt) = prepare().map_err(Launched::No)?;
+
+        let output = Command::new("claude")
+            .args([
+                "--bg",
+                "--name",
+                self.session_name,
+                "--remote-control",
+                self.session_name,
+            ])
+            .arg("--settings")
+            .arg(&settings)
+            .arg("--append-system-prompt-file")
+            .arg(&prompt)
+            .args([
+                "--permission-mode",
+                "auto",
+                "--model",
+                self.model,
+                "--effort",
+                self.effort,
+            ])
+            .arg("--")
+            .arg(&request.prompt)
+            .current_dir(self.worktree)
+            .output()
+            .map_err(|err| Launched::No(Failure::Error(format!("can't run claude: {err}"))))?;
+        let job_id = launched_job_id(&output, self.session_name, self.main)?;
+        self.store
+            .update(|state| {
+                if let Some(worker) = state.workers.get_mut(name) {
+                    worker.job_id = Some(job_id.clone());
+                }
+            })
+            .map_err(Launched::Maybe)?;
+        Ok(job_id)
+    }
+}
+
 /// The job id `claude --bg` printed. Claude Code trusts a worktree when it
 /// trusts the main checkout, so an untrusted workspace is fixed there.
-fn launched_job_id(output: &Output, session_name: &str, main: &Path) -> Result<String, Failure> {
+fn launched_job_id(output: &Output, session_name: &str, main: &Path) -> Result<String, Launched> {
     let printed = String::from_utf8_lossy(&output.stdout);
     let errors = String::from_utf8_lossy(&output.stderr);
     if let (true, Some(id)) = (output.status.success(), parse_job_id(&printed)) {
         return Ok(id);
     }
     if printed.contains("Workspace not trusted") || errors.contains("Workspace not trusted") {
-        return Err(Failure::Refused {
+        return Err(Launched::No(Failure::Refused {
             reason: format!("Claude Code doesn't trust {}", main.display()),
             fix: format!(
                 "run `claude` in {} once and accept the trust prompt",
                 main.display()
             ),
-        });
+        }));
     }
-    Err(Failure::Error(format!(
+    let failure = Failure::Error(format!(
         "claude --bg didn't start {session_name}: {}{}",
         printed.trim_end(),
         errors.trim_end()
-    )))
+    ));
+    // Exiting 0 means a session may be running, so nothing is undone.
+    if output.status.success() {
+        Err(Launched::Maybe(failure))
+    } else {
+        Err(Launched::No(failure))
+    }
 }
 
 /// Names become a branch, a directory and part of the session name, so they
@@ -206,14 +256,14 @@ fn check_name(name: &str, session_name: &str) -> Result<(), Failure> {
             "{name} isn't a valid worker name: use lowercase letters, digits and dashes"
         )));
     }
-    if session_name.len() > MAX_SESSION_NAME {
+    if session_name.chars().count() > MAX_SESSION_NAME {
         return Err(Failure::Refused {
             reason: format!(
                 "the session name {session_name} is longer than {MAX_SESSION_NAME} characters"
             ),
             fix: format!(
                 "use a name of at most {} characters",
-                MAX_SESSION_NAME - (session_name.len() - name.len())
+                MAX_SESSION_NAME.saturating_sub(session_name.chars().count() - name.len())
             ),
         });
     }
@@ -260,7 +310,11 @@ fn exclude_worktrees(store: &Path) -> Result<(), Failure> {
     let info = store.parent().unwrap_or(store).join("info");
     fs::create_dir_all(&info).map_err(|err| io_error(&info, err))?;
     let exclude = info.join("exclude");
-    let mut text = fs::read_to_string(&exclude).unwrap_or_default();
+    let mut text = match fs::read_to_string(&exclude) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(io_error(&exclude, err)),
+    };
     let line = format!("/{WORKTREES}/");
     if text.lines().any(|existing| existing == line) {
         return Ok(());
@@ -288,12 +342,12 @@ fn settings_json(name: &str, main: &Path, plugin_ids: &[String]) -> Result<Strin
         "worktree": {"bgIsolation": "none"},
         "env": {
             "ORCHESTRAL_WORKER": name,
-            "ORCHESTRAL_REPO": main,
+            "ORCHESTRAL_REPO": main.display().to_string(),
             "PATH": std::env::var("PATH").unwrap_or_default(),
         },
         "hooks": {"PreToolUse": [{
             "matcher": "Bash",
-            "hooks": [{"type": "command", "command": format!("{} hook worker-guard", exe.display())}],
+            "hooks": [{"type": "command", "command": format!("{} hook worker-guard", shell_quote(&exe.display().to_string()))}],
         }]},
         // The plugin's monitor would make a worker look busy (ADR-0001).
         "enabledPlugins": enabled_plugins,
@@ -369,6 +423,11 @@ fn strip_ansi(text: &str) -> String {
     out
 }
 
+/// Single-quotes `text` for a shell command line.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
 fn git(dir: &Path, args: &[&str]) -> Result<(), Failure> {
     let output = Command::new("git")
         .args(args)
@@ -433,6 +492,11 @@ mod tests {
             panic!("expected a refusal");
         };
         assert_eq!(fix, "use a name of at most 21 characters");
+    }
+
+    #[test]
+    fn quotes_paths_for_the_shell() {
+        assert_eq!(shell_quote("/a b/it's"), r"'/a b/it'\''s'");
     }
 
     #[test]

@@ -185,7 +185,7 @@ fn the_worker_gets_its_own_settings_and_prompt() {
         .as_str()
         .unwrap();
     assert!(
-        hook.starts_with('/') && hook.ends_with(" hook worker-guard"),
+        hook.starts_with("'/") && hook.ends_with("' hook worker-guard"),
         "{hook}"
     );
 
@@ -284,6 +284,23 @@ fn a_failed_launch_is_undone_so_the_name_can_be_retried() {
         .status()
         .unwrap();
     assert!(!branch.success());
+}
+
+#[test]
+fn a_launch_that_exits_0_without_a_job_id_keeps_the_worker() {
+    let repo = Repo::new();
+    repo.launches("something unexpected\n", 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("didn't start app-issue-12"));
+    // A session may be running there, so nothing is removed.
+    assert_eq!(
+        repo.store().read().unwrap().workers["issue-12"].job_id,
+        None
+    );
+    assert!(repo.main.join(".claude/worktrees/issue-12").exists());
 }
 
 #[test]
