@@ -1,0 +1,312 @@
+//! `orchestral status`: one view of the fleet, as text for people and as
+//! JSON for any later interface.
+//!
+//! A part that can't be read, such as GitHub or `claude agents`, is left
+//! empty with a warning, so the rest still shows.
+
+use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use jiff::Timestamp;
+use serde::Serialize;
+use serde_json::Value;
+
+use crate::budget::Estimate;
+use crate::gate;
+use crate::limits::{self, Limits};
+use crate::outcome::Failure;
+use crate::policy::Policy;
+use crate::sessions::{self, Activity, Agent};
+use crate::spawn::main_checkout;
+use crate::state::{State, Store};
+use crate::transcript::{self, Context};
+
+#[derive(Debug, Serialize)]
+pub struct Status {
+    pub paused: bool,
+    pub workers: Vec<WorkerStatus>,
+    /// The policy's `workers`.
+    pub worker_cap: u32,
+    pub limits: Limits,
+    pub budget: Budget,
+    /// Parts that couldn't be read, and why.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkerStatus {
+    pub name: String,
+    pub issue: u64,
+    /// The open PR from the worker's branch.
+    pub pr: Option<u64>,
+    pub session_name: String,
+    /// `running`, `stopped`, or `unknown` when `claude agents` doesn't list
+    /// the session.
+    pub session: &'static str,
+    /// `working`, `waiting`, `done`, `failed` or `unknown`.
+    pub activity: &'static str,
+    /// What the session waits for, such as `input needed`.
+    pub waiting_for: Option<String>,
+    pub context: Option<Context>,
+    /// What the next message will cost: the context re-read from the cache
+    /// when it's warm, or written to it again when it's cold.
+    pub wake_cost: Option<Estimate>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Budget {
+    /// Null when the usage couldn't be read.
+    pub used: Option<Estimate>,
+    pub fleet_token_budget: u64,
+    pub run_started_at: Option<String>,
+}
+
+pub fn status(cwd: &Path) -> Result<Status, Failure> {
+    let store = Store::for_repo(cwd)?;
+    let main = main_checkout(store.dir())?;
+    let policy = Policy::load(cwd)?;
+    let state = store.read()?;
+    let mut warnings = Vec::new();
+
+    let agents = sessions::agents(Path::new("claude"))
+        .map_err(|err| warnings.push(format!("sessions are unknown: {}", message(&err))))
+        .unwrap_or_default();
+    let prs = open_prs()
+        .map_err(|err| warnings.push(format!("PRs are unknown: {err}")))
+        .unwrap_or_default();
+    let used = gate::fleet_usage(&state, &main)
+        .map_err(|err| warnings.push(format!("budget usage is unknown: {}", message(&err))))
+        .ok();
+    let limits = limits::read();
+
+    Ok(Status {
+        paused: state.paused,
+        workers: workers(&state, &agents, &prs, Timestamp::now()),
+        worker_cap: policy.settings.workers,
+        limits,
+        budget: Budget {
+            used,
+            fleet_token_budget: policy.settings.fleet_token_budget,
+            run_started_at: state.run_started_at.clone(),
+        },
+        warnings,
+    })
+}
+
+fn workers(
+    state: &State,
+    agents: &[Agent],
+    prs: &[(String, u64)],
+    now: Timestamp,
+) -> Vec<WorkerStatus> {
+    let projects = transcript::projects_dir();
+    let organization = organization();
+    state
+        .workers
+        .iter()
+        .map(|(name, worker)| {
+            let agent = agents
+                .iter()
+                .find(|agent| agent.id.is_some() && agent.id == worker.job_id);
+            let context = agent.and_then(|agent| {
+                let path =
+                    transcript::find(projects.as_deref()?, &worker.worktree, &agent.session_id)?;
+                transcript::read(&path, now, organization.as_deref()).ok()
+            });
+            let (activity, waiting_for) = match agent.map(Agent::activity) {
+                Some(Activity::Working) => ("working", None),
+                Some(Activity::Waiting(reason)) => ("waiting", Some(reason)),
+                Some(Activity::Done) => ("done", None),
+                Some(Activity::Failed) => ("failed", None),
+                Some(Activity::Unknown) | None => ("unknown", None),
+            };
+            WorkerStatus {
+                name: name.clone(),
+                issue: worker.issue,
+                pr: prs
+                    .iter()
+                    .find(|(branch, _)| *branch == worker.branch)
+                    .map(|(_, number)| *number),
+                session_name: worker.session_name.clone(),
+                session: match agent {
+                    Some(agent) if agent.pid.is_some() => "running",
+                    Some(_) => "stopped",
+                    None => "unknown",
+                },
+                activity,
+                waiting_for,
+                wake_cost: context.as_ref().map(wake_cost),
+                context,
+            }
+        })
+        .collect()
+}
+
+/// The next request sends the whole context. Warm, it's read from the cache
+/// at 0.1; cold, it's written again at the rate of the cache lifetime the
+/// session last used, the weights of [the budget](crate::budget).
+pub fn wake_cost(context: &Context) -> Estimate {
+    let weight = match (context.warm, context.cache_ttl) {
+        (true, _) => 0.1,
+        (false, Some(3600)) => 2.0,
+        (false, _) => 1.25,
+    };
+    Estimate {
+        estimated_tokens: (context.tokens as f64 * weight).round() as u64,
+    }
+}
+
+/// Open PRs as `(head branch, number)`.
+fn open_prs() -> Result<Vec<(String, u64)>, String> {
+    let output = Command::new("gh")
+        .args([
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "200",
+            "--json",
+            "number,headRefName",
+        ])
+        .output()
+        .map_err(|err| format!("can't run gh: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "gh pr list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        ));
+    }
+    let prs: Vec<Value> = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("unexpected `gh pr list` output: {err}"))?;
+    Ok(prs
+        .iter()
+        .filter_map(|pr| {
+            Some((
+                pr["headRefName"].as_str()?.to_string(),
+                pr["number"].as_u64()?,
+            ))
+        })
+        .collect())
+}
+
+/// The account's `oauthAccount.organizationType`, which decides some context
+/// windows.
+fn organization() -> Option<String> {
+    let path = match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(dir) => PathBuf::from(dir).join(".claude.json"),
+        None => PathBuf::from(std::env::var_os("HOME")?).join(".claude.json"),
+    };
+    let config: Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    Some(
+        config["oauthAccount"]["organizationType"]
+            .as_str()?
+            .to_string(),
+    )
+}
+
+fn message(failure: &Failure) -> String {
+    match failure {
+        Failure::Error(message) => message.clone(),
+        Failure::Refused { reason, .. } => reason.clone(),
+    }
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(
+            f,
+            "Fleet: {}",
+            if self.paused { "paused" } else { "not paused" }
+        )?;
+        match (&self.budget.used, &self.budget.run_started_at) {
+            (_, None) => writeln!(
+                f,
+                "Budget: no run has started; {} tokens per run",
+                self.budget.fleet_token_budget
+            )?,
+            (Some(used), Some(_)) => writeln!(
+                f,
+                "Budget: {used} of {} used this run",
+                self.budget.fleet_token_budget
+            )?,
+            (None, Some(_)) => writeln!(
+                f,
+                "Budget: usage unknown, of {}",
+                self.budget.fleet_token_budget
+            )?,
+        }
+        if self.limits.available {
+            writeln!(f, "Plan limits:")?;
+            for line in self.limits.to_string().lines() {
+                writeln!(f, "  {line}")?;
+            }
+        } else {
+            writeln!(f, "{}", self.limits)?;
+        }
+        write!(f, "Workers: {} of {}", self.workers.len(), self.worker_cap)?;
+        for worker in &self.workers {
+            write!(f, "\n  {}", worker)?;
+        }
+        for warning in &self.warnings {
+            write!(f, "\nwarning: {warning}")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for WorkerStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} · issue #{}", self.name, self.issue)?;
+        if let Some(pr) = self.pr {
+            write!(f, " · PR #{pr}")?;
+        }
+        write!(f, " · {}", self.session)?;
+        match &self.waiting_for {
+            Some(reason) => write!(f, ", waiting: {reason}")?,
+            None if self.activity != "unknown" => write!(f, ", {}", self.activity)?,
+            None => {}
+        }
+        if let Some(context) = &self.context {
+            write!(f, " · context {} tokens", context.tokens)?;
+            if let Some(percent) = context.percent {
+                write!(f, " ({percent:.0}%)")?;
+            }
+            write!(f, " · cache {}", if context.warm { "warm" } else { "cold" })?;
+        }
+        if let Some(cost) = &self.wake_cost {
+            write!(f, " · wake {cost}")?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(tokens: u64, warm: bool, cache_ttl: Option<u64>) -> Context {
+        Context {
+            tokens,
+            model: None,
+            identity: None,
+            window: None,
+            percent: None,
+            last_request_at: None,
+            compactions: Vec::new(),
+            cache_ttl,
+            warm,
+        }
+    }
+
+    #[test]
+    fn waking_reads_a_warm_cache_and_rewrites_a_cold_one() {
+        let cost = |c: &Context| wake_cost(c).estimated_tokens;
+        assert_eq!(cost(&context(100_000, true, Some(3600))), 10_000);
+        assert_eq!(cost(&context(100_000, false, Some(3600))), 200_000);
+        assert_eq!(cost(&context(100_000, false, Some(300))), 125_000);
+        assert_eq!(cost(&context(100_000, false, None)), 125_000);
+    }
+}

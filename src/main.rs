@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{claim, gate, guard, limits, setup, spawn, stop};
+use orchestral::{claim, gate, guard, limits, setup, spawn, status, stop};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -64,6 +64,12 @@ enum Command {
     /// Print the SendMessage address of a worker, or of `orchestrator`.
     Resolve {
         name: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the fleet: workers, plan limits, budget and pause.
+    Status {
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -131,6 +137,7 @@ fn main() -> ExitCode {
 fn run(command: Command) -> Result<(), Failure> {
     match command {
         Command::Limits { json } => outcome::print(&limits::read(), json),
+        Command::Status { json } => outcome::print(&status::status(&current_dir()?)?, json),
         Command::Pause { json } => outcome::print(&gate::set_paused(&current_dir()?, true)?, json),
         Command::Unpause { json } => {
             outcome::print(&gate::set_paused(&current_dir()?, false)?, json)
