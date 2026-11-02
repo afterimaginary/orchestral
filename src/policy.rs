@@ -93,7 +93,7 @@ impl Policy {
         let source = Source::find(cwd)?;
         let text = source.read(PATH)?.ok_or_else(|| {
             Failure::Error(format!(
-                "there's no {PATH} in {}; run `orchestral init`",
+                "there's no {PATH} in {}; add one",
                 source.describe()
             ))
         })?;
@@ -105,7 +105,12 @@ impl Policy {
     /// `supervisor_merges`.
     pub fn parse(text: &str, has_contributing: bool) -> Result<Policy, Failure> {
         let invalid = |message: String| Failure::Error(format!("{PATH} is invalid: {message}"));
-        let (yaml, rules) = split_frontmatter(text).ok_or_else(|| {
+        // Editors may add a byte order mark or Windows line endings.
+        let text = text
+            .strip_prefix('\u{feff}')
+            .unwrap_or(text)
+            .replace("\r\n", "\n");
+        let (yaml, rules) = split_frontmatter(&text).ok_or_else(|| {
             invalid("it has to start with frontmatter between `---` lines".into())
         })?;
         let front: Frontmatter =
@@ -185,19 +190,17 @@ impl Source {
         let common = git(
             cwd,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )?
-        .ok_or_else(|| Failure::Error(format!("{} isn't in a git repository", cwd.display())))?;
-        let repo = cwd.to_owned();
-        let has_main = git(
-            &repo,
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{MAIN}^{{commit}}"),
-            ],
         )?;
-        if has_main.is_some() {
+        let repo = cwd.to_owned();
+        let has_main = Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("{MAIN}^{{commit}}"))
+            .current_dir(&repo)
+            .output()
+            .map_err(|err| Failure::Error(format!("can't run git: {err}")))?
+            .status
+            .success();
+        if has_main {
             return Ok(Source::Branch { repo });
         }
         let dir = Path::new(common.trim_end())
@@ -210,7 +213,14 @@ impl Source {
     /// The file's contents, or `None` when it doesn't exist there.
     fn read(&self, path: &str) -> Result<Option<String>, Failure> {
         match self {
-            Source::Branch { repo } => git(repo, &["show", &format!("{MAIN}:{path}")]),
+            Source::Branch { repo } => {
+                // An empty listing means the file isn't there. Any other
+                // failure is an error, not a missing file.
+                if git(repo, &["ls-tree", "--name-only", MAIN, "--", path])?.is_empty() {
+                    return Ok(None);
+                }
+                git(repo, &["show", &format!("{MAIN}:{path}")]).map(Some)
+            }
             Source::Checkout { dir } => match std::fs::read_to_string(dir.join(path)) {
                 Ok(text) => Ok(Some(text)),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -230,17 +240,22 @@ impl Source {
     }
 }
 
-/// Runs git in `dir`, returning its stdout, or `None` if git exited non-zero.
-fn git(dir: &Path, args: &[&str]) -> Result<Option<String>, Failure> {
+/// Runs git in `dir` and returns its stdout. A non-zero exit is an error
+/// carrying git's message.
+fn git(dir: &Path, args: &[&str]) -> Result<String, Failure> {
     let output = Command::new("git")
         .args(args)
         .current_dir(dir)
         .output()
         .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
-    Ok(output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
+    if !output.status.success() {
+        return Err(Failure::Error(format!(
+            "git {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(test)]
@@ -362,6 +377,20 @@ review_command: /refine
             settings.preview.unwrap().start,
             PreviewStart::Url("https://pr-{pr}.example.com/{branch}".into())
         );
+    }
+
+    #[test]
+    fn a_preview_defaults_to_three_running() {
+        let settings = parse("fleet_token_budget: 1\npreview:\n  run: pnpm dev\n").unwrap();
+
+        assert_eq!(settings.preview.unwrap().max_running, 3);
+    }
+
+    #[test]
+    fn accepts_a_byte_order_mark_and_windows_line_endings() {
+        let text = "\u{feff}---\r\nfleet_token_budget: 1\r\n---\r\nRules.\r\n";
+
+        assert_eq!(Policy::parse(text, false).unwrap().rules, "Rules.");
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use orchestral::outcome::Failure;
 use orchestral::policy::Policy;
 use tempfile::TempDir;
 
@@ -49,10 +50,14 @@ fn repo() -> (TempDir, PathBuf) {
 fn before_the_first_push_the_main_checkout_is_read() {
     let (_dir, main) = repo();
     write_policy(&main, 1);
+    fs::write(main.join("CONTRIBUTING.md"), "How to contribute.\n").unwrap();
     git(&main, &["worktree", "add", "-q", "../feature"]);
+    let feature = main.join("../feature");
+    write_policy(&feature, 5);
 
     assert_eq!(workers(&main), 1);
-    assert_eq!(workers(&main.join("../feature")), 1);
+    assert_eq!(workers(&feature), 1);
+    assert!(!Policy::load(&feature).unwrap().settings.supervisor_merges);
 }
 
 #[test]
@@ -88,10 +93,28 @@ fn a_pushed_contributing_file_turns_supervisor_merges_off() {
 }
 
 #[test]
+fn a_contributing_file_only_in_a_checkout_is_ignored_after_a_push() {
+    let (_dir, main) = repo();
+    write_policy(&main, 1);
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-q", "-m", "policy"]);
+    git(&main, &["push", "-q", "origin", "main"]);
+    fs::write(main.join("CONTRIBUTING.md"), "How to contribute.\n").unwrap();
+
+    assert!(Policy::load(&main).unwrap().settings.supervisor_merges);
+}
+
+#[test]
 fn origin_main_without_a_policy_is_an_error() {
     let (_dir, main) = repo();
     git(&main, &["push", "-q", "origin", "main"]);
     write_policy(&main, 1);
 
-    assert!(Policy::load(&main).is_err());
+    let Err(Failure::Error(message)) = Policy::load(&main) else {
+        panic!("expected an error");
+    };
+    assert_eq!(
+        message,
+        "there's no .orchestral/policy.md in origin/main; add one"
+    );
 }

@@ -50,3 +50,7 @@ Every command that reads the policy fails with exit `1` when the file:
 The policy is read from `origin/main` with `git show`, so a worker can't change its own limits from a branch or a local edit. Until `origin/main` exists, before the first push, the main checkout's copy is read instead. Once `origin/main` exists, a policy missing from it is an error.
 
 Whether the repository has a `CONTRIBUTING.md` is checked in the same place.
+
+`origin/main` here is the local remote-tracking ref, so the policy is as current as the last fetch. The ref is shared by every worktree, so this stops a worker changing its limits by accident, not a worker set on it: one could still move or delete the ref.
+
+A file may start with a byte order mark and use Windows line endings.
