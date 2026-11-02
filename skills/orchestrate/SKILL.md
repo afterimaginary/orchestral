@@ -17,7 +17,8 @@ Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as ever
 3. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral up` to start the supervisor, or find it running.
 4. Read the policy as Orchestral enforces it, from `main` on the remote: `git show origin/main:.orchestral/policy.md`, or the local `.orchestral/policy.md` when there's no remote yet. Its settings are the fleet's limits, and the prose after them is the owner's rules for this project. Follow them.
 5. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status` to see the workers, plan windows, budget and pause state. Treat each worker that's already idle (`done`) with a `(draft)` PR as if it had just gone idle, since no event will say so.
-6. If the owner gave you a brief, or asked you to plan, plan first, as in Plan. Otherwise go on to Start work.
+6. If the fleet already has workers or open PRs, you're taking over a run, perhaps after a crash or a reboot, and events from before may never have reached you. Check every open PR once (`gh pr list --state open --json number,headRefName,headRefOid,isDraft,statusCheckRollup`), and act on each as its event says: one that's ready, with no reviewer and no verdict at its head commit under Reviews in status, gets a reviewer; one whose CI failed goes back to its worker. A PR that passed review at its head is waiting on CI or the owner, so leave it. Resume each worker whose session exited and whose issue isn't done, with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resume <name>`. Treat each worker whose session shows as `lost` as in its event, under Events.
+7. If the owner gave you a brief, or asked you to plan, plan first, as in Plan. Otherwise go on to Start work.
 
 ## Plan
 
@@ -107,6 +108,7 @@ Fleet events arrive as notifications from the `orchestral-events` monitor, one l
 - **A worker is waiting:** see what it needs, as in Keep in touch.
 - **A worker is idle:** run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status` every time, even if you checked a moment ago, since its PR may have changed since. If its PR is still a draft, ask once whether the work is done: a finished worker marks its PR ready for review. When it has told you why the PR stays a draft, don't ask again until something changes. If its issue still has work the worker can do, send it its next step. If its PR is ready and waiting on review, CI or the owner, send nothing. An idle reviewer that hasn't recorded a verdict yet needs reminding to run `orchestral review`.
 - **A worker's session exited:** it ended without being stopped. Resume it with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resume <name>` if its issue isn't done.
+- **A worker is lost:** its worktree or session is gone, so it can't be resumed. Remove it with `cleanup`, then start its issue again with a fresh worker. If `cleanup` refuses because the worker's PR is still open, its work is on the PR. Check its worktree, if it still exists, for anything not on the PR: `git -C <worktree> status --porcelain` and `git -C <worktree> log --oneline origin/<branch>..HEAD` both print nothing when all of it is. If they print nothing, `cleanup --force` removes only the local worktree and branch, and the PR stays. Then start the fresh worker under a new name, and tell it to carry on that PR with `gh pr checkout <n>` rather than open another. If anything isn't on the PR, or `cleanup` refuses because work isn't saved, ask the owner before using `--force`.
 - **A PR opened as a draft:** nothing to do yet.
 - **A PR is ready for review:** start a fresh reviewer, so the author never reviews its own work:
 

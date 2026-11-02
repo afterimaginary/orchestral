@@ -48,11 +48,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Summaries: a milestone summary once none of its issues is left for the fleet, and a final summary with the proposed work at the end of a run, each published as an artifact (#43)
 - Pacing: the supervisor winds the fleet down past `plan_limit_percent` and back up after the reset, saves the run's usage every minute, and reports the budget once (#38)
 - Compaction: plugin hooks save the fleet's status before the orchestrator compacts, and put its instructions and status back after (#39)
+- Recovery: a restarted supervisor reports workers that can't be resumed as lost, once, and an orchestrator taking over checks every open PR once (#40)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next crash recovery (#40) and stuck-worker reminders (#41). #93 and #100 need the owner's decision.
+2. Milestone 3 (Autonomous loop), next stuck-worker reminders (#41). #93 and #100 need the owner's decision.
 
 ## Needs Your Decision
 

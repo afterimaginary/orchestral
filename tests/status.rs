@@ -228,6 +228,56 @@ fn a_waiting_worker_shows_what_it_waits_for() {
 }
 
 #[test]
+fn a_lost_worker_shows_as_lost_even_while_its_session_runs() {
+    let fleet = Fleet::new();
+    fleet.reads_everything();
+    Store::for_repo(&fleet.main)
+        .unwrap()
+        .update(|state| {
+            state
+                .observed
+                .insert("issue-12".into(), orchestral::observe::Observed::Lost)
+        })
+        .unwrap();
+
+    let output = fleet.status(&["--json"]);
+
+    let status: Value = serde_json::from_str(stdout(&output).trim_end()).unwrap();
+    assert_eq!(status["workers"][0]["session"], "lost");
+}
+
+#[test]
+fn shows_the_verdict_on_each_open_pr() {
+    let fleet = Fleet::new();
+    fleet.reads_everything();
+    let review = |sha: &str| orchestral::state::Review {
+        sha: sha.into(),
+        passed: true,
+        failed: Vec::new(),
+    };
+    Store::for_repo(&fleet.main)
+        .unwrap()
+        .update(|state| {
+            state.reviews.insert(41, review("4f2c9e1a0b"));
+            // Merged since, so no longer open.
+            state.reviews.insert(39, review("1111111"));
+        })
+        .unwrap();
+
+    let text = stdout(&fleet.status(&[]));
+    let json: Value = serde_json::from_str(stdout(&fleet.status(&["--json"])).trim_end()).unwrap();
+
+    assert!(
+        text.contains("\nReviews:\n  PR #41 passed at 4f2c9e1"),
+        "{text}"
+    );
+    assert_eq!(
+        json["reviews"],
+        json!([{"pr": 41, "sha": "4f2c9e1a0b", "passed": true}])
+    );
+}
+
+#[test]
 fn parts_that_cant_be_read_are_warnings() {
     let fleet = Fleet::new();
     // No stub replies: `claude` and `gh` both fail.

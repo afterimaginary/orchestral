@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 7;
+pub const SCHEMA: u32 = 8;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {

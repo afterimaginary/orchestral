@@ -18,7 +18,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 
 ## `state.json`
 
-A JSON object with a `schema` version, currently `7`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
+A JSON object with a `schema` version, currently `8`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
 
 | Field | Meaning |
 | --- | --- |
@@ -28,7 +28,7 @@ A JSON object with a `schema` version, currently `7`. A file with any other vers
 | `orchestrator` | The session that claimed the repository, as its session id and when it claimed, or null. |
 | `paused` | Whether the fleet is paused. While it is, spawns are refused. |
 | `run_started_at` | When the current run started, in RFC 3339 UTC, or null before the first run. The supervisor sets it when it starts with no worker open, and the fleet budget counts from here. |
-| `observed` | What the supervisor last saw each launched worker's session doing, by worker name: `busy`, `idle`, `waiting` or `exited`. |
+| `observed` | What the supervisor last saw each launched worker's session doing, by worker name: `busy`, `idle`, `waiting` or `exited`, or `lost` once a restarted supervisor finds it can't be resumed. |
 | `reviews` | The latest review verdict on each PR, by PR number: the head commit it's for as `sha`, whether it `passed`, and the commits that `failed` review, oldest first. |
 | `wound_down` | The plan window the fleet wound down for, as `window` and its reset time `resets_at` (RFC 3339 UTC, or null), until it resets. Null otherwise. |
 | `usage` | The run's fleet usage as the supervisor last read it: `estimated_tokens` and when, `at`. Null until the first read of a run. |
