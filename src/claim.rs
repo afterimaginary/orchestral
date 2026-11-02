@@ -45,16 +45,21 @@ impl fmt::Display for Address {
 }
 
 pub fn claim(cwd: &Path) -> Result<Claimed, Failure> {
-    let Ok(session_id) = std::env::var("CLAUDE_CODE_SESSION_ID") else {
+    let session_id = std::env::var("CLAUDE_CODE_SESSION_ID").unwrap_or_default();
+    if session_id.is_empty() {
         return Err(Failure::Error(
             "CLAUDE_CODE_SESSION_ID isn't set; run claim from the Claude Code session that will orchestrate".into(),
         ));
-    };
+    }
     let store = Store::for_repo(cwd)?;
     let records = live_records()?;
+    let mut already_held = false;
     let claimed = store.update(|state| {
         let replaced = match &state.orchestrator {
-            Some(holder) if holder.session_id == session_id => None,
+            Some(holder) if holder.session_id == session_id => {
+                already_held = true;
+                None
+            }
             Some(holder) if records.iter().any(|r| r.session_id == holder.session_id) => {
                 return Err(Failure::Refused {
                     reason: format!("live session {} holds the claim", holder.session_id),
@@ -73,10 +78,12 @@ pub fn claim(cwd: &Path) -> Result<Claimed, Failure> {
             replaced,
         })
     })??;
-    store.record(
-        "orchestrator",
-        &format!("session {session_id} claimed the repository"),
-    )?;
+    if !already_held {
+        store.record(
+            "orchestrator",
+            &format!("session {session_id} claimed the repository"),
+        )?;
+    }
     Ok(claimed)
 }
 
