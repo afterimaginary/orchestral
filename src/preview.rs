@@ -11,12 +11,12 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::hash::{DefaultHasher, Hasher};
-use std::io::Write;
 use std::net::TcpListener;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,10 +25,15 @@ use crate::outcome::Failure;
 use crate::policy::{Policy, PreviewStart};
 use crate::sessions;
 use crate::spawn::main_checkout;
-use crate::state::{Preview, Server, State, Store, Want};
+use crate::state::{Preview, PreviewFailure, Server, State, Store, Want};
 
 /// The longest `preview.setup` may run.
 const SETUP_DEADLINE: Duration = Duration::from_secs(15 * 60);
+
+/// How long a stopped server has to exit before it's killed.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+
+const POLL: Duration = Duration::from_millis(100);
 
 /// Files whose change means the dependencies changed, so setup runs again.
 const LOCKFILES: [&str; 12] = [
@@ -151,7 +156,8 @@ struct PrView {
 pub fn try_pr(cwd: &Path, pr: u64) -> Result<Tried, Failure> {
     let store = Store::for_repo(cwd)?;
     let main = main_checkout(store.dir())?;
-    let settings = Policy::load(cwd)?.settings;
+    // From the main checkout, as the supervisor reads it.
+    let settings = Policy::load(&main)?.settings;
     let preview = settings.preview.ok_or_else(|| Failure::Refused {
         reason: "the policy has no `preview`".into(),
         fix: "add `preview` to .orchestral/policy.md".into(),
@@ -176,7 +182,7 @@ pub fn try_pr(cwd: &Path, pr: u64) -> Result<Tried, Failure> {
                     .replace("{branch}", &view.head_ref_name),
             ),
             made_room: Vec::new(),
-            supervisor_running: true,
+            supervisor_running: crate::supervisor::running(&store)?.is_some(),
         });
     }
     let made_room = store.update(|state| -> Result<Vec<u64>, Failure> {
@@ -200,13 +206,13 @@ pub fn try_pr(cwd: &Path, pr: u64) -> Result<Tried, Failure> {
             server: None,
             set_up_for: None,
             restarts: 0,
-            failed_at: None,
+            failure: None,
         });
         entry.want = Want::Running;
         entry.requested_at = now;
         entry.worktree = worktree;
         entry.restarts = 0;
-        entry.failed_at = None;
+        entry.failure = None;
         Ok(make_room(&mut state.previews, preview.max_running))
     })??;
     Ok(Tried {
@@ -257,23 +263,24 @@ pub fn list(cwd: &Path) -> Result<Previews, Failure> {
         .previews
         .iter()
         .map(|(pr, preview)| {
-            let (status, detail) = match (&preview.want, &preview.server, &preview.failed_at) {
-                (Want::Running, _, Some(_)) => (
+            let (status, detail) = match (&preview.want, &preview.server, &preview.failure) {
+                (Want::Running, _, Some(failure)) => (
                     "failed",
-                    Some(
-                        "it exited twice; a new commit or `orchestral try` starts it again".into(),
-                    ),
+                    Some(format!(
+                        "{}; a new commit or `orchestral try {pr}` starts it again",
+                        failure.why
+                    )),
                 ),
                 (Want::Running, Some(_), None) => ("running", None),
                 (Want::Running, None, None) => ("starting", None),
-                (Want::MadeRoom, Some(_), _) | (Want::Off, Some(_), _) => ("stopping", None),
+                (_, Some(_), _) => ("stopping", None),
                 (Want::MadeRoom, None, _) => (
                     "stopped",
                     Some(format!(
                         "stopped to make room; `orchestral try {pr}` restarts it"
                     )),
                 ),
-                (Want::Off, None, _) => ("stopped", None),
+                (Want::Off | Want::Closed, None, _) => ("stopped", None),
             };
             Listed {
                 pr: *pr,
@@ -295,12 +302,13 @@ pub fn list(cwd: &Path) -> Result<Previews, Failure> {
 /// which keeps the supervisor going.
 pub fn wanted(state: &State) -> bool {
     state.previews.values().any(|preview| {
-        (preview.want == Want::Running && preview.failed_at.is_none()) || preview.server.is_some()
+        (preview.want == Want::Running && preview.failure.is_none()) || preview.server.is_some()
     })
 }
 
 /// Brings the servers in line with the desired state. Run by the supervisor
-/// on every tick; returns lines for its log.
+/// on every tick; returns lines for its log. A preview that can't be
+/// handled is logged, and the others carry on.
 pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
     let state = store.read()?;
     if state.previews.is_empty() {
@@ -315,13 +323,13 @@ pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
     let setup = preview.and_then(|preview| preview.setup);
     let mut lines = Vec::new();
     for (pr, preview) in state.previews {
-        lines.extend(reconcile_one(
-            store,
-            pr,
-            preview,
-            run.as_deref(),
-            setup.as_deref(),
-        )?);
+        match reconcile_one(store, pr, preview, run.as_deref(), setup.as_deref()) {
+            Ok(more) => lines.extend(more),
+            Err(err) => lines.push(format!(
+                "can't check PR #{pr}'s preview: {}",
+                crate::supervisor::failure_text(&err)
+            )),
+        }
     }
     Ok(lines)
 }
@@ -335,139 +343,166 @@ fn reconcile_one(
 ) -> Result<Vec<String>, Failure> {
     let mut lines = Vec::new();
     let alive = preview.server.as_ref().is_some_and(is_alive);
-    let run = match (&preview.want, run) {
-        (Want::Running, Some(run)) => run,
-        // Not wanted, or the policy no longer runs previews.
-        _ => {
-            if let Some(server) = preview.server.take().filter(|_| alive) {
-                kill(&server);
-                lines.push(format!("stopped PR #{pr}'s preview"));
-            }
-            save(
+    if preview.want != Want::Running {
+        if let Some(server) = preview.server.as_ref().filter(|_| alive) {
+            stop_server(server);
+            lines.push(format!("stopped PR #{pr}'s preview"));
+        }
+        update(store, pr, &preview, |entry| entry.server = None)?;
+        return Ok(lines);
+    }
+    if preview.failure.is_some() && alive {
+        // Can't happen after a clean failure, but a stray server mustn't stay.
+        stop_server(preview.server.as_ref().expect("alive"));
+    }
+    let head = head(&preview.worktree);
+    let Some(run) = run else {
+        // The policy no longer runs previews here.
+        if alive {
+            stop_server(preview.server.as_ref().expect("alive"));
+        }
+        if preview.failure.is_none() {
+            fail(
                 store,
                 pr,
-                |entry| {
-                    entry.server = None;
-                },
-                preview.want == Want::Off,
+                &preview,
+                head,
+                "the policy no longer runs previews",
             )?;
-            return Ok(lines);
+            lines.push(format!(
+                "stopped PR #{pr}'s preview: the policy no longer runs previews"
+            ));
         }
+        return Ok(lines);
     };
-    let head = head(&preview.worktree);
+    let Some(head) = head else {
+        if alive {
+            stop_server(preview.server.as_ref().expect("alive"));
+        }
+        if preview.failure.is_none() {
+            let why = format!("its worktree {} can't be read", preview.worktree.display());
+            fail(store, pr, &preview, None, &why)?;
+            let text = format!("PR #{pr}'s preview stopped: {why}");
+            store.record("preview", &text)?;
+            lines.push(text);
+        }
+        return Ok(lines);
+    };
     let lockfiles = lockfile_hash(&preview.worktree);
     if alive {
         if preview.set_up_for.as_ref() == Some(&lockfiles) {
             return Ok(lines);
         }
         // The dependencies changed: set up again and restart.
-        kill(preview.server.as_ref().expect("alive"));
+        stop_server(preview.server.as_ref().expect("alive"));
         lines.push(format!(
             "PR #{pr}'s lockfiles changed; setting its preview up again"
         ));
-    } else if let Some(failed_at) = &preview.failed_at {
+    } else if let Some(failure) = &preview.failure {
         // A failed preview waits for a new commit.
-        if Some(failed_at) == head.as_ref() {
+        if failure.at == head {
             return Ok(lines);
         }
-        preview.failed_at = None;
+        preview.failure = None;
         preview.restarts = 0;
         lines.push(format!(
             "PR #{pr} has a new commit; starting its preview again"
         ));
     } else if let Some(server) = &preview.server {
         // It exited: restart it once, then give up until a new commit.
-        if preview.restarts >= 1 && Some(&server.head) == head.as_ref() {
+        let same_commit = server.head == head;
+        if preview.restarts >= 1 && same_commit {
             let log = log_path(store, pr);
-            save(
-                store,
-                pr,
-                |entry| {
-                    entry.server = None;
-                    entry.failed_at = head.clone();
-                },
-                false,
-            )?;
+            fail(store, pr, &preview, Some(head), "it exited twice")?;
             let text = format!("PR #{pr}'s preview exited twice; see {}", log.display());
             store.record("preview", &text)?;
             lines.push(text);
             return Ok(lines);
         }
-        if Some(&server.head) == head.as_ref() {
-            preview.restarts += 1;
-        } else {
-            preview.restarts = 0;
-        }
+        preview.restarts = if same_commit { preview.restarts + 1 } else { 0 };
         lines.push(format!("PR #{pr}'s preview exited; starting it again"));
     }
 
     let log = log_path(store, pr);
-    if preview.set_up_for.as_ref() != Some(&lockfiles)
-        && let Some(setup) = setup
-        && let Err(err) = run_setup(setup, &preview.worktree, &log)
-    {
-        save(
-            store,
-            pr,
-            |entry| {
-                entry.server = None;
-                entry.failed_at = head.clone();
-            },
-            false,
-        )?;
-        let text = format!(
-            "PR #{pr}'s preview setup failed: {err}; see {}",
-            log.display()
-        );
-        store.record("preview", &text)?;
-        lines.push(text);
-        return Ok(lines);
+    let mut set_up_for = preview.set_up_for.clone();
+    if set_up_for.as_ref() != Some(&lockfiles) {
+        if let Some(setup) = setup
+            && let Err(err) = run_setup(setup, &preview.worktree, &log)
+        {
+            fail(store, pr, &preview, Some(head), "its setup failed")?;
+            let text = format!(
+                "PR #{pr}'s preview setup failed: {err}; see {}",
+                log.display()
+            );
+            store.record("preview", &text)?;
+            lines.push(text);
+            return Ok(lines);
+        }
+        // After setup, which may write a lockfile itself.
+        set_up_for = Some(lockfile_hash(&preview.worktree));
     }
-    let server = start(
-        run,
-        &preview.worktree,
-        &log,
-        head.clone().unwrap_or_default(),
-    )?;
+    let server = start(run, &preview.worktree, &log, head)?;
     lines.push(format!(
         "started PR #{pr}'s preview on port {} (pid {})",
         server.port, server.pid
     ));
     let restarts = preview.restarts;
-    save(
-        store,
-        pr,
-        |entry| {
-            entry.server = Some(server);
-            entry.set_up_for = Some(lockfiles);
-            entry.restarts = restarts;
-            entry.failed_at = None;
-        },
-        false,
-    )?;
+    update(store, pr, &preview, |entry| {
+        entry.server = Some(server);
+        entry.set_up_for = set_up_for;
+        entry.restarts = restarts;
+        entry.failure = None;
+    })?;
     Ok(lines)
 }
 
-/// Writes a change to one preview, unless `try` or `try --stop` changed what's
-/// wanted meanwhile. `remove` drops it once its server is gone.
-fn save(
+/// Records why a preview stopped trying.
+fn fail(
     store: &Store,
     pr: u64,
+    seen: &Preview,
+    head: Option<String>,
+    why: &str,
+) -> Result<(), Failure> {
+    update(store, pr, seen, |entry| {
+        entry.server = None;
+        entry.failure = Some(PreviewFailure {
+            at: head.unwrap_or_default(),
+            why: why.to_owned(),
+        });
+    })
+}
+
+/// Writes the supervisor's change to one preview. When `try` asked for it
+/// again since `seen` was read, only the server and setup are kept, since
+/// `try` reset the rest. A closed PR's preview is forgotten once its server
+/// is gone.
+fn update(
+    store: &Store,
+    pr: u64,
+    seen: &Preview,
     change: impl FnOnce(&mut Preview),
-    remove: bool,
 ) -> Result<(), Failure> {
     store.update(|state| {
-        if let Some(entry) = state.previews.get_mut(&pr) {
+        let Some(entry) = state.previews.get_mut(&pr) else {
+            return;
+        };
+        if entry.requested_at == seen.requested_at {
             change(entry);
-            if remove && entry.want == Want::Off && entry.server.is_none() {
-                state.previews.remove(&pr);
-            }
+        } else {
+            let mut changed = entry.clone();
+            change(&mut changed);
+            entry.server = changed.server;
+            entry.set_up_for = changed.set_up_for;
+        }
+        if entry.want == Want::Closed && entry.server.is_none() {
+            state.previews.remove(&pr);
         }
     })
 }
 
-/// Stops and forgets the previews of PRs that merged or closed, from the
-/// supervisor's last GitHub poll.
+/// Stops the previews of PRs that merged or closed, from the supervisor's
+/// last GitHub poll, and forgets them once their servers are gone.
 pub fn stop_closed(store: &Store) -> Result<Vec<String>, Failure> {
     let Some(open) = github::open_prs(store)? else {
         return Ok(Vec::new());
@@ -475,13 +510,13 @@ pub fn stop_closed(store: &Store) -> Result<Vec<String>, Failure> {
     let closed: Vec<u64> = store.update(|state| {
         let closed: Vec<u64> = state
             .previews
-            .keys()
-            .filter(|pr| !open.contains(pr))
-            .copied()
+            .iter()
+            .filter(|(pr, preview)| !open.contains(pr) && preview.want != Want::Closed)
+            .map(|(pr, _)| *pr)
             .collect();
         for pr in &closed {
             if let Some(preview) = state.previews.get_mut(pr) {
-                preview.want = Want::Off;
+                preview.want = Want::Closed;
             }
         }
         closed
@@ -492,18 +527,35 @@ pub fn stop_closed(store: &Store) -> Result<Vec<String>, Failure> {
         .collect())
 }
 
+/// Runs `preview.setup` in the worktree, its output going straight to the
+/// log so a hung setup still leaves a trace.
 fn run_setup(setup: &str, worktree: &Path, log: &Path) -> Result<(), String> {
-    let output = crate::deadline::output(
-        Command::new("sh").args(["-c", setup]).current_dir(worktree),
-        SETUP_DEADLINE,
-        "preview.setup",
-    )?;
-    let mut file = open_log(log).map_err(|err| err.to_string())?;
-    let _ = file.write_all(&output.stdout);
-    let _ = file.write_all(&output.stderr);
-    match output.status.success() {
-        true => Ok(()),
-        false => Err(format!("it exited with {}", output.status)),
+    let file = open_log(log).map_err(|err| format!("{}: {err}", log.display()))?;
+    let mut child = Command::new("sh")
+        .args(["-c", setup])
+        .current_dir(worktree)
+        .stdin(Stdio::null())
+        .stdout(file.try_clone().map_err(|err| err.to_string())?)
+        .stderr(file)
+        .process_group(0)
+        .spawn()
+        .map_err(|err| format!("can't run it: {err}"))?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("it exited with {status}")),
+            Ok(None) if started.elapsed() < SETUP_DEADLINE => thread::sleep(POLL),
+            Ok(None) => {
+                signal("KILL", &format!("-{}", child.id()));
+                let _ = child.wait();
+                return Err(format!(
+                    "it didn't finish within {} minutes",
+                    SETUP_DEADLINE.as_secs() / 60
+                ));
+            }
+            Err(err) => return Err(format!("can't wait for it: {err}")),
+        }
     }
 }
 
@@ -558,14 +610,26 @@ fn is_alive(server: &Server) -> bool {
     matches!(sessions::process(server.pid), Ok(Some(process)) if process.started == server.started)
 }
 
-/// Stops a server and its process group.
-fn kill(server: &Server) {
+/// Stops a server and its process group: SIGTERM, then SIGKILL if it's
+/// still running after a grace period, so it never keeps its port.
+fn stop_server(server: &Server) {
+    let group = format!("-{}", server.group);
+    signal("TERM", &group);
+    signal("TERM", &server.pid.to_string());
+    let deadline = Instant::now() + STOP_GRACE;
+    while is_alive(server) && Instant::now() < deadline {
+        thread::sleep(POLL);
+    }
+    if is_alive(server) {
+        signal("KILL", &group);
+        signal("KILL", &server.pid.to_string());
+    }
+}
+
+/// Sends `signal` to a pid, or to a process group as `-<group>`.
+fn signal(signal: &str, target: &str) {
     let _ = Command::new("kill")
-        .args(["-TERM", "--", &format!("-{}", server.group)])
-        .stderr(Stdio::null())
-        .status();
-    let _ = Command::new("kill")
-        .args(["-TERM", &server.pid.to_string()])
+        .args([&format!("-{signal}"), "--", target])
         .stderr(Stdio::null())
         .status();
 }

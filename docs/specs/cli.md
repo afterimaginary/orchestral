@@ -269,18 +269,19 @@ Stopped PR #40's preview to make room; `orchestral try 40` restarts it.
 
 When no supervisor is running, it adds that nothing starts the preview until `orchestral up`. `--json` prints `pr`, `url` (the hosted link, or null), `made_room` and `supervisor_running`.
 
-`try --stop <pr>` asks the supervisor to stop the PR's preview, which is then forgotten. `--json` prints `pr` and `had_preview`.
+`try --stop <pr>` asks the supervisor to stop the PR's preview. It stays listed as stopped, so a later `try` doesn't run setup again. `--json` prints `pr` and `had_preview`.
 
 On every 2-second tick, the supervisor:
 
-- runs `preview.setup` in the worktree before a preview first starts, and again when a lockfile there changes (such as `package-lock.json`, `pnpm-lock.yaml` or `Cargo.lock`), stopping a running server first. Setup has 15 minutes. If it fails, the preview isn't started and the supervisor records a `preview` event,
+- runs `preview.setup` in the worktree before a preview first starts, and again when a lockfile there changes (such as `package-lock.json`, `pnpm-lock.yaml` or `Cargo.lock`), stopping a running server first. A lockfile setup writes itself doesn't count as a change. Setup has 15 minutes, and its output goes straight to the log. If it fails, the preview isn't started and the supervisor records a `preview` event,
 - starts `preview.run` with `sh -c` in the worktree, with `PORT` set to a free local port, detached in its own process group, so the server outlives the supervisor. A restarted supervisor finds a running server by its pid and start time and leaves it alone,
 - restarts a server that exited once. If it exits again at the same commit, it records `PR #42's preview exited twice; see <log>` as a `preview` event, and waits for a new commit in the worktree to start it again. A crash before a reboot counts as one exit, so the server comes back after it,
-- stops a preview that's no longer wanted with SIGTERM to its process group.
+- stops a preview that's no longer wanted with SIGTERM to its process group, then SIGKILL if it's still running 5 seconds later,
+- stops trying a preview whose worktree can't be read, recording a `preview` event, or that the policy no longer runs, until a new commit or `try`. A problem with one preview is logged, and the others carry on.
 
 Setup and server output go to `.git/orchestral/logs/preview-<pr>.log`.
 
-`previews` lists each preview as `starting`, `running` with its link, `failed`, `stopping`, or `stopped` (a preview stopped to make room, with how to restart it), and its log:
+`previews` lists each preview as `starting`, `running` with its link, `failed` with why, `stopping`, or `stopped` (stopped to make room, with how to restart it, or by `try --stop`), and its log:
 
 ```text
 PR #40 stopped: stopped to make room; `orchestral try 40` restarts it (log .git/orchestral/logs/preview-40.log)

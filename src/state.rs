@@ -69,8 +69,16 @@ pub struct Preview {
     pub set_up_for: Option<String>,
     /// Restarts since it last started cleanly at its commit.
     pub restarts: u32,
-    /// The commit it exited twice at. It stays down until a new commit.
-    pub failed_at: Option<String>,
+    /// Why it stopped trying. It stays down until a new commit or `try`.
+    pub failure: Option<PreviewFailure>,
+}
+
+/// A preview that stopped trying.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreviewFailure {
+    /// The worktree's commit then, empty when it couldn't be read.
+    pub at: String,
+    pub why: String,
 }
 
 /// Whether a preview should run.
@@ -80,9 +88,10 @@ pub enum Want {
     Running,
     /// Stopped for a newer preview past `max_running`.
     MadeRoom,
-    /// Stopped by `try --stop` or a merge or close, and forgotten once its
-    /// server is gone.
+    /// Stopped by `try --stop`.
     Off,
+    /// Its PR merged or closed. Forgotten once its server is gone.
+    Closed,
 }
 
 /// A running preview server.

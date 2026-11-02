@@ -226,8 +226,11 @@ fn a_preview_starts_serves_its_worktree_and_stops() {
     );
     assert_eq!(repo.reconcile(), ["stopped PR #42's preview"]);
     assert!(closed(port));
-    assert!(repo.state().previews.is_empty());
-    assert_eq!(repo.stdout(&["previews"]), "No previews.\n");
+    assert_eq!(repo.state().previews[&42].want, Want::Off);
+    assert!(
+        repo.stdout(&["previews"])
+            .starts_with("PR #42 stopped (log ")
+    );
 }
 
 #[test]
@@ -363,6 +366,10 @@ fn a_failed_setup_records_an_event_and_starts_nothing() {
     );
     assert_eq!(repo.state().previews[&4].server, None);
     assert!(repo.reconcile().is_empty());
+    assert!(
+        repo.stdout(&["previews"])
+            .starts_with("PR #4 failed: its setup failed;")
+    );
 }
 
 #[test]
@@ -449,4 +456,81 @@ fn try_refuses_without_a_preview_policy_or_a_worker() {
             "{stderr}"
         );
     }
+}
+
+#[test]
+fn setup_runs_once_per_worktree_across_a_stop_and_a_lockfile_setup_writes() {
+    // Setup writes a lockfile, as `npm install` does with none committed.
+    let repo = repo(
+        "  setup: 'echo setup >> setups.txt; echo {} > package-lock.json'\n  run: 'exec sleep 600'\n",
+        &[11],
+    );
+    repo.stdout(&["try", "11"]);
+    let worktree = repo.state().previews[&11].worktree.clone();
+
+    repo.reconcile();
+    let pid = repo.pid(11);
+    assert!(repo.reconcile().is_empty());
+    assert_eq!(repo.pid(11), pid);
+    repo.stdout(&["try", "11", "--stop"]);
+    repo.reconcile();
+    repo.stdout(&["try", "11"]);
+    repo.reconcile();
+
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("setups.txt")).unwrap(),
+        "setup\n"
+    );
+    repo.stdout(&["try", "11", "--stop"]);
+    repo.reconcile();
+}
+
+#[test]
+fn a_missing_worktree_fails_once_without_stopping_the_others() {
+    let repo = repo("  run: 'exec sleep 600'\n", &[12, 13]);
+    repo.stdout(&["try", "12"]);
+    repo.stdout(&["try", "13"]);
+    let gone = repo.state().previews[&12].worktree.clone();
+    std::fs::remove_dir_all(&gone).unwrap();
+
+    let lines = repo.reconcile();
+
+    assert_eq!(
+        lines[0],
+        format!(
+            "PR #12's preview stopped: its worktree {} can't be read",
+            gone.display()
+        )
+    );
+    assert!(repo.state().previews[&13].server.is_some());
+    assert!(repo.reconcile().is_empty());
+    let listed = repo.stdout(&["previews"]);
+    assert!(
+        listed.starts_with("PR #12 failed: its worktree "),
+        "{listed}"
+    );
+    repo.stdout(&["try", "13", "--stop"]);
+    repo.reconcile();
+}
+
+#[test]
+fn a_policy_without_previews_stops_them() {
+    let repo = repo("  run: 'exec sleep 600'\n", &[14]);
+    repo.stdout(&["try", "14"]);
+    repo.reconcile();
+    std::fs::write(
+        repo.main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\n---\n",
+    )
+    .unwrap();
+
+    let lines = repo.reconcile();
+
+    assert_eq!(
+        lines,
+        ["stopped PR #14's preview: the policy no longer runs previews"]
+    );
+    let state = repo.state();
+    assert_eq!(state.previews[&14].server, None);
+    assert!(!preview::wanted(&state));
 }
