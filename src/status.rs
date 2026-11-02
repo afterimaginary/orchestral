@@ -19,9 +19,10 @@ use crate::limits::{self, Limits};
 use crate::observe::Observed;
 use crate::outcome::Failure;
 use crate::policy::Policy;
+use crate::preview;
 use crate::sessions::{self, Activity, Agent};
 use crate::spawn::main_checkout;
-use crate::state::{State, Store};
+use crate::state::{State, Store, Want};
 use crate::transcript::{self, Context};
 
 #[derive(Debug, Serialize)]
@@ -34,6 +35,8 @@ pub struct Status {
     pub budget: Budget,
     /// The latest review verdict on each open PR that has one.
     pub reviews: Vec<ReviewStatus>,
+    /// The previews that are running.
+    pub previews: Vec<PreviewStatus>,
     /// Parts that couldn't be read, and why.
     pub warnings: Vec<String>,
 }
@@ -66,6 +69,13 @@ pub struct ReviewStatus {
     /// The head commit the verdict is for.
     pub sha: String,
     pub passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviewStatus {
+    pub pr: u64,
+    pub branch: String,
+    pub url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,6 +130,18 @@ pub fn status(cwd: &Path) -> Result<Status, Failure> {
                 pr: *pr,
                 sha: review.sha.clone(),
                 passed: review.passed,
+            })
+            .collect(),
+        previews: state
+            .previews
+            .iter()
+            .filter(|(_, preview)| preview.want == Want::Running && preview.failure.is_none())
+            .filter_map(|(pr, preview)| {
+                Some(PreviewStatus {
+                    pr: *pr,
+                    branch: preview.branch.clone(),
+                    url: preview::link(preview.server.as_ref()?),
+                })
             })
             .collect(),
         warnings,
@@ -297,6 +319,16 @@ impl fmt::Display for Status {
                 review.pr,
                 if review.passed { "passed" } else { "failed" },
                 &review.sha[..review.sha.len().min(7)]
+            )?;
+        }
+        if !self.previews.is_empty() {
+            write!(f, "\nPreviews:")?;
+        }
+        for preview in &self.previews {
+            write!(
+                f,
+                "\n  PR #{} ({}) at {}",
+                preview.pr, preview.branch, preview.url
             )?;
         }
         for warning in &self.warnings {

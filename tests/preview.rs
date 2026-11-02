@@ -1,10 +1,11 @@
 //! PR previews: `try`, `previews` and `try --stop` against stub `gh`, and
-//! the supervisor's reconcile against a small test server on `$PORT`.
+//! the supervisor's reconcile against a small test server, on `$PORT` or
+//! under a stand-in portless.
 
 mod common;
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
@@ -12,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use common::Stubs;
 use orchestral::github::Snapshot;
-use orchestral::preview;
+use orchestral::preview::{self, Tools};
 use orchestral::state::{State, Store, Want, Worker};
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -147,7 +148,30 @@ impl Repo {
     }
 
     fn reconcile(&self) -> Vec<String> {
-        preview::reconcile(&self.store).unwrap()
+        let tools = Tools {
+            gh: self.stubs.dir().join("gh"),
+            portless: self.stubs.dir().join("portless"),
+            tailscale: self.stubs.dir().join("tailscale"),
+        };
+        preview::reconcile(&self.store, &tools).unwrap()
+    }
+
+    /// Replaces the `portless` stub with a stand-in that runs servers.
+    fn use_portless(&self) {
+        for (from, to) in [
+            ("tests/stubs/portless-fake.sh", "portless"),
+            ("tests/stubs/portless-route.py", "portless-route.py"),
+        ] {
+            let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(from);
+            std::fs::copy(source, self.stubs.dir().join(to)).unwrap();
+        }
+    }
+
+    /// The pid the stand-in portless lists for a route, if it's listed.
+    fn route_pid(&self, name: &str) -> Option<u32> {
+        let route = self.stubs.dir().join(format!("routes/{name}.route"));
+        let text = std::fs::read_to_string(route).ok()?;
+        text.split(' ').nth(2)?.parse().ok()
     }
 
     fn state(&self) -> State {
@@ -160,6 +184,15 @@ impl Repo {
 
     fn pid(&self, pr: u64) -> u32 {
         self.state().previews[&pr].server.as_ref().unwrap().pid
+    }
+
+    fn url(&self, pr: u64) -> Option<String> {
+        self.state().previews[&pr]
+            .server
+            .as_ref()
+            .unwrap()
+            .url
+            .clone()
     }
 }
 
@@ -533,4 +566,177 @@ fn a_policy_without_previews_stops_them() {
     let state = repo.state();
     assert_eq!(state.previews[&14].server, None);
     assert!(!preview::wanted(&state));
+}
+
+/// A local port in portless's range that nothing listens on.
+fn unused_portless_port() -> u16 {
+    (4000..=4999)
+        .find(|&port| {
+            TcpListener::bind(("127.0.0.1", port)).is_ok()
+                && TcpStream::connect(("127.0.0.1", port)).is_err()
+        })
+        .expect("a free port from 4000 to 4999")
+}
+
+#[test]
+fn under_portless_a_preview_posts_its_tailnet_link_and_stops_with_sigint() {
+    let repo = repo(&format!("  run: '{SERVER}'\n"), &[42]);
+    repo.use_portless();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let busy = TcpListener::bind(("127.0.0.1", unused_portless_port())).unwrap();
+    let busy_port = busy.local_addr().unwrap().port();
+    let stale = unused_portless_port();
+    let proxy =
+        |port: u16| json!({"Handlers": {"/": {"Proxy": format!("http://127.0.0.1:{port}")}}});
+    let serve = json!({
+        "TCP": {"443": {"HTTPS": true}, "8443": {"HTTPS": true}, "8444": {"HTTPS": true}, "8445": {"HTTPS": true}},
+        "Web": {
+            // Not a port portless hands out.
+            "host.example.ts.net:443": proxy(listener.local_addr().unwrap().port()),
+            // Stale: nothing listens, and no route uses it.
+            "host.example.ts.net:8443": proxy(stale),
+            // Something listens there.
+            "host.example.ts.net:8444": proxy(busy_port),
+            // More than a single proxy.
+            "host.example.ts.net:8445": {"Handlers": {
+                "/": {"Proxy": format!("http://127.0.0.1:{stale}")},
+                "/api": {"Proxy": "http://127.0.0.1:3000"},
+            }},
+        },
+    });
+    drop(listener);
+    repo.stubs.respond("tailscale", &["status"], "", 0);
+    repo.stubs.respond(
+        "tailscale",
+        &["serve", "status", "--json"],
+        &serve.to_string(),
+        0,
+    );
+    repo.stubs
+        .respond("tailscale", &["serve", "--https=8443", "off"], "", 0);
+    repo.stubs.respond("gh", &["api", "-X", "PATCH"], "", 0);
+    repo.stubs.respond("gh", &["api"], "555\n", 0);
+
+    repo.stdout(&["try", "42"]);
+    let lines = repo.reconcile();
+
+    assert_eq!(
+        lines[0],
+        format!("removed a stale tailscale serve entry on port 8443, for local port {stale}")
+    );
+    let port = repo.port(42);
+    let url = format!("https://host.example.ts.net:{port}");
+    assert_eq!(repo.url(42).as_deref(), Some(url.as_str()));
+    assert_eq!(fetch(port).as_deref(), Some("PR 42\n"));
+    // The route's own pid, not the wrapper's.
+    assert_eq!(repo.route_pid("main-pr-42"), Some(repo.pid(42)));
+    assert_eq!(repo.state().previews[&42].comment, Some(555));
+    let body = format!(
+        "body=<!-- orchestral -->\nPreview: {url}\n\nThis link is updated when the preview restarts."
+    );
+    assert!(repo.stubs.calls("gh").contains(&vec![
+        "api".to_owned(),
+        "repos/{owner}/{repo}/issues/42/comments".into(),
+        "-f".into(),
+        body,
+        "--jq".into(),
+        ".id".into(),
+    ]));
+    assert_eq!(
+        repo.stdout(&["previews"]).split(" (log").next(),
+        Some(format!("PR #42 running at {url}").as_str())
+    );
+
+    // A crash: the restarted server's new link replaces the old one.
+    let group = repo.state().previews[&42].server.as_ref().unwrap().group;
+    Command::new("kill")
+        .args(["-KILL", "--", &format!("-{group}")])
+        .status()
+        .unwrap();
+    assert!(closed(port));
+    let lines = repo.reconcile();
+    assert!(
+        lines.contains(&"PR #42's preview exited; starting it again".to_owned()),
+        "{lines:?}"
+    );
+    let port = repo.port(42);
+    let url = format!("https://host.example.ts.net:{port}");
+    assert_eq!(repo.url(42).as_deref(), Some(url.as_str()));
+    let patch = repo.stubs.calls("gh").pop().unwrap();
+    assert_eq!(
+        patch[..4],
+        [
+            "api",
+            "-X",
+            "PATCH",
+            "repos/{owner}/{repo}/issues/comments/555"
+        ]
+    );
+    assert!(patch[5].contains(&url), "{patch:?}");
+
+    repo.stdout(&["try", "42", "--stop"]);
+    assert_eq!(repo.reconcile(), ["stopped PR #42's preview"]);
+    // The route went away, which only portless's SIGINT handling does.
+    assert_eq!(repo.route_pid("main-pr-42"), None);
+    assert!(closed(port));
+
+    let calls = repo.stubs.calls("tailscale");
+    let removed: Vec<_> = calls
+        .iter()
+        .filter(|call| call.last().map(String::as_str) == Some("off"))
+        .collect();
+    // Only the stale entry, before each start, since the stub still lists it.
+    assert!(!removed.is_empty());
+    assert!(
+        removed
+            .iter()
+            .all(|call| call[..] == ["serve", "--https=8443", "off"]),
+        "{removed:?}"
+    );
+    assert!(!calls.iter().flatten().any(|arg| arg == "reset"));
+    drop(busy);
+}
+
+#[test]
+fn without_tailscale_a_portless_preview_has_a_local_link_and_no_comment() {
+    let repo = repo(&format!("  run: '{SERVER}'\n"), &[43]);
+    repo.use_portless();
+    repo.stubs.respond("tailscale", &["status"], "", 1);
+
+    repo.stdout(&["try", "43"]);
+    repo.reconcile();
+
+    assert_eq!(
+        repo.url(43).as_deref(),
+        Some("https://main-pr-43.localhost")
+    );
+    assert_eq!(fetch(repo.port(43)).as_deref(), Some("PR 43\n"));
+    assert_eq!(repo.stubs.calls("tailscale"), [["status"]]);
+    assert!(!repo.stubs.calls("gh").iter().any(|call| call[0] == "api"));
+    repo.stdout(&["try", "43", "--stop"]);
+    repo.reconcile();
+    assert_eq!(repo.route_pid("main-pr-43"), None);
+}
+
+#[test]
+fn when_portless_runs_no_route_the_preview_falls_back_to_port() {
+    let repo = repo(&format!("  run: '{SERVER}'\n"), &[44]);
+    repo.stubs
+        .respond("portless", &["--version"], "0.15.6\n", 0);
+    repo.stubs
+        .respond("portless", &["list"], "No active routes.\n", 0);
+    repo.stubs.respond("portless", &["main-pr-44"], "", 1);
+    repo.stubs.respond("tailscale", &["status"], "", 1);
+
+    repo.stdout(&["try", "44"]);
+    let lines = repo.reconcile();
+
+    assert!(
+        lines[0]
+            .starts_with("portless didn't list the route main-pr-44, so it runs on $PORT instead"),
+        "{lines:?}"
+    );
+    assert_eq!(repo.url(44), None);
+    assert!(!repo.state().previews[&44].server.as_ref().unwrap().portless);
+    assert_eq!(fetch(repo.port(44)).as_deref(), Some("PR 44\n"));
 }

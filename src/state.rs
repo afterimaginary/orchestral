@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 10;
+pub const SCHEMA: u32 = 11;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -64,6 +64,8 @@ pub struct Preview {
     pub requested_at: String,
     /// The worker worktree it runs in.
     pub worktree: PathBuf,
+    /// The PR's branch.
+    pub branch: String,
     pub server: Option<Server>,
     /// The lockfile hash `preview.setup` last ran for.
     pub set_up_for: Option<String>,
@@ -71,6 +73,8 @@ pub struct Preview {
     pub restarts: u32,
     /// Why it stopped trying. It stays down until a new commit or `try`.
     pub failure: Option<PreviewFailure>,
+    /// The PR comment holding its tailnet link, updated on each start.
+    pub comment: Option<u64>,
 }
 
 /// A preview that stopped trying.
@@ -97,6 +101,8 @@ pub enum Want {
 /// A running preview server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Server {
+    /// The server's pid, or under portless, the pid `portless list` shows
+    /// for its route.
     pub pid: u32,
     /// Its process group, which a stop signals.
     pub group: u32,
@@ -105,6 +111,10 @@ pub struct Server {
     pub port: u16,
     /// The worktree's commit when it started.
     pub head: String,
+    /// Whether portless runs it, so a stop sends SIGINT to `pid`.
+    pub portless: bool,
+    /// Its link from `portless list`: the tailnet one when it has one.
+    pub url: Option<String>,
 }
 
 /// Who merges a PR.

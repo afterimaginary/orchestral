@@ -6,12 +6,17 @@
 //! again when a lockfile changes. Each server is detached in its own process
 //! group, so it outlives the supervisor; a restarted supervisor finds it by
 //! pid and start time.
+//!
+//! Where portless is installed, each server runs under a named portless
+//! route, registered with `tailscale serve` while Tailscale is running, and
+//! its link is posted on the PR (ADR-0006). Otherwise it gets a free port on
+//! localhost as `$PORT`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::hash::{DefaultHasher, Hasher};
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -24,7 +29,7 @@ use crate::github::{self, gh_json};
 use crate::outcome::Failure;
 use crate::policy::{Policy, PreviewStart};
 use crate::sessions;
-use crate::spawn::main_checkout;
+use crate::spawn::{main_checkout, repo_slug};
 use crate::state::{Preview, PreviewFailure, Server, State, Store, Want};
 
 /// The longest `preview.setup` may run.
@@ -33,7 +38,38 @@ const SETUP_DEADLINE: Duration = Duration::from_secs(15 * 60);
 /// How long a stopped server has to exit before it's killed.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 
+/// How long portless has after SIGINT: longer than its own 10 seconds before
+/// it kills the app, which runs in a process group of its own.
+const PORTLESS_GRACE: Duration = Duration::from_secs(12);
+
 const POLL: Duration = Duration::from_millis(100);
+
+/// How long a portless route has to show up in `portless list`.
+const ROUTE_DEADLINE: Duration = Duration::from_secs(15);
+
+/// The longest a `portless` or `tailscale` query may take.
+const TOOL_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The local ports portless gives its servers. A `tailscale serve` entry
+/// proxying to one of them may be a crashed preview's.
+const PORTLESS_PORTS: std::ops::RangeInclusive<u16> = 4000..=4999;
+
+/// The external tools previews use. Tests point these at stand-ins.
+pub struct Tools {
+    pub gh: PathBuf,
+    pub portless: PathBuf,
+    pub tailscale: PathBuf,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Tools {
+            gh: "gh".into(),
+            portless: "portless".into(),
+            tailscale: "tailscale".into(),
+        }
+    }
+}
 
 /// Files whose change means the dependencies changed, so setup runs again.
 const LOCKFILES: [&str; 12] = [
@@ -203,14 +239,17 @@ pub fn try_pr(cwd: &Path, pr: u64) -> Result<Tried, Failure> {
             want: Want::Running,
             requested_at: now.clone(),
             worktree: worktree.clone(),
+            branch: view.head_ref_name.clone(),
             server: None,
             set_up_for: None,
             restarts: 0,
             failure: None,
+            comment: None,
         });
         entry.want = Want::Running;
         entry.requested_at = now;
         entry.worktree = worktree;
+        entry.branch = view.head_ref_name.clone();
         entry.restarts = 0;
         entry.failure = None;
         Ok(make_room(&mut state.previews, preview.max_running))
@@ -289,13 +328,21 @@ pub fn list(cwd: &Path) -> Result<Previews, Failure> {
                     .server
                     .as_ref()
                     .filter(|_| status == "running")
-                    .map(|server| format!("http://localhost:{}", server.port)),
+                    .map(link),
                 detail,
                 log: log_path(&store, *pr),
             }
         })
         .collect();
     Ok(Previews { previews })
+}
+
+/// A running server's link.
+pub(crate) fn link(server: &Server) -> String {
+    server
+        .url
+        .clone()
+        .unwrap_or_else(|| format!("http://localhost:{}", server.port))
 }
 
 /// Whether a preview is wanted, and hasn't failed, or is still running,
@@ -309,7 +356,7 @@ pub fn wanted(state: &State) -> bool {
 /// Brings the servers in line with the desired state. Run by the supervisor
 /// on every tick; returns lines for its log. A preview that can't be
 /// handled is logged, and the others carry on.
-pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
+pub fn reconcile(store: &Store, tools: &Tools) -> Result<Vec<String>, Failure> {
     let state = store.read()?;
     if state.previews.is_empty() {
         return Ok(Vec::new());
@@ -323,7 +370,15 @@ pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
     let setup = preview.and_then(|preview| preview.setup);
     let mut lines = Vec::new();
     for (pr, preview) in state.previews {
-        match reconcile_one(store, pr, preview, run.as_deref(), setup.as_deref()) {
+        match reconcile_one(
+            store,
+            tools,
+            &main,
+            pr,
+            preview,
+            run.as_deref(),
+            setup.as_deref(),
+        ) {
             Ok(more) => lines.extend(more),
             Err(err) => lines.push(format!(
                 "can't check PR #{pr}'s preview: {}",
@@ -336,6 +391,8 @@ pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
 
 fn reconcile_one(
     store: &Store,
+    tools: &Tools,
+    main: &Path,
     pr: u64,
     mut preview: Preview,
     run: Option<&str>,
@@ -441,17 +498,35 @@ fn reconcile_one(
         // After setup, which may write a lockfile itself.
         set_up_for = Some(lockfile_hash(&preview.worktree));
     }
-    let server = start(run, &preview.worktree, &log, head)?;
+    let name = route_name(main, pr);
+    let (server, tailnet) = start(tools, &name, run, &preview.worktree, &log, head, &mut lines)?;
     lines.push(format!(
-        "started PR #{pr}'s preview on port {} (pid {})",
-        server.port, server.pid
+        "started PR #{pr}'s preview at {} (pid {})",
+        link(&server),
+        server.pid
     ));
+    // The link goes on the PR only when other devices can open it. An old
+    // link could now reach another preview, so it's taken down.
+    let comment = match (tailnet.as_deref(), preview.comment) {
+        (None, None) => None,
+        (url, comment) => match post_link(tools, main, pr, url, comment) {
+            Ok(id) => Some(id),
+            Err(err) => {
+                lines.push(format!(
+                    "can't post PR #{pr}'s preview link: {}",
+                    crate::supervisor::failure_text(&err)
+                ));
+                comment
+            }
+        },
+    };
     let restarts = preview.restarts;
     update(store, pr, &preview, |entry| {
         entry.server = Some(server);
         entry.set_up_for = set_up_for;
         entry.restarts = restarts;
         entry.failure = None;
+        entry.comment = comment;
     })?;
     Ok(lines)
 }
@@ -494,6 +569,7 @@ fn update(
             change(&mut changed);
             entry.server = changed.server;
             entry.set_up_for = changed.set_up_for;
+            entry.comment = changed.comment;
         }
         if entry.want == Want::Closed && entry.server.is_none() {
             state.previews.remove(&pr);
@@ -559,25 +635,101 @@ fn run_setup(setup: &str, worktree: &Path, log: &Path) -> Result<(), String> {
     }
 }
 
-/// Starts `run` detached with `PORT` set, logging to `log`.
-fn start(run: &str, worktree: &Path, log: &Path, head: String) -> Result<Server, Failure> {
-    let port = free_port()?;
+/// Starts `run` detached, logging to `log`, and returns the server and its
+/// tailnet link, if it has one. Under portless, the route is named `name`.
+/// Without portless, or when its route doesn't show up, the server gets a
+/// free port as `$PORT`.
+fn start(
+    tools: &Tools,
+    name: &str,
+    run: &str,
+    worktree: &Path,
+    log: &Path,
+    head: String,
+    lines: &mut Vec<String>,
+) -> Result<(Server, Option<String>), Failure> {
     open_log(log).map_err(|err| Failure::Error(format!("{}: {err}", log.display())))?;
-    // `sh` starts the server in the background and exits, so the server
-    // isn't the supervisor's child: it can't linger as a zombie, and it
-    // outlives the supervisor. `$!` is the server's pid. The new process
-    // group, numbered after this `sh`, lets a stop reach the server's own
-    // children too.
-    let spawned = Command::new("sh")
+    if succeeds(Command::new(&tools.portless).arg("--version")) {
+        let tailscale = succeeds(Command::new(&tools.tailscale).arg("status"));
+        if tailscale {
+            lines.extend(clear_stale_serves(tools));
+        }
+        let mut command = detached(log, worktree);
+        command
+            .arg(&tools.portless)
+            .args([name, "--force", "sh", "-c", run]);
+        match tailscale {
+            true => command.env("PORTLESS_TAILSCALE", "1"),
+            false => command.env_remove("PORTLESS_TAILSCALE"),
+        };
+        let (pid, group) = spawn(command)?;
+        // portless may sit behind a wrapper, so its own pid comes from its
+        // route.
+        if let Some(route) = wait_for_route(tools, name, tailscale, pid) {
+            let server = Server {
+                pid: route.pid,
+                group,
+                started: started(route.pid)?,
+                port: route.port,
+                head,
+                portless: true,
+                url: Some(route.tailnet.clone().unwrap_or(route.url)),
+            };
+            return Ok((server, route.tailnet));
+        }
+        stop_server(&Server {
+            pid,
+            group,
+            started: started(pid)?,
+            port: 0,
+            head: head.clone(),
+            portless: false,
+            url: None,
+        });
+        lines.push(format!(
+            "portless didn't list the route {name}, so it runs on $PORT instead; see {}",
+            log.display()
+        ));
+    }
+    let port = free_port()?;
+    let mut command = detached(log, worktree);
+    command
+        .args(["sh", "-c", run])
+        .env("PORT", port.to_string());
+    let (pid, group) = spawn(command)?;
+    let server = Server {
+        pid,
+        group,
+        started: started(pid)?,
+        port,
+        head,
+        portless: false,
+        url: None,
+    };
+    Ok((server, None))
+}
+
+/// A command that starts the program and arguments added to it in the
+/// background and exits, so the server isn't the supervisor's child: it
+/// can't linger as a zombie, and it outlives the supervisor. It prints the
+/// server's pid. The new process group, numbered after this `sh`, lets a stop
+/// reach the server's own children too.
+fn detached(log: &Path, worktree: &Path) -> Command {
+    let mut command = Command::new("sh");
+    command
         .args([
             "-c",
-            "sh -c \"$1\" </dev/null >>\"$2\" 2>&1 & echo $!",
+            "log=$1; shift; \"$@\" </dev/null >>\"$log\" 2>&1 & echo $!",
             "sh",
-            run,
         ])
         .arg(log)
-        .current_dir(worktree)
-        .env("PORT", port.to_string())
+        .current_dir(worktree);
+    command
+}
+
+/// Runs a [`detached`] command, and returns the server's pid and group.
+fn spawn(mut command: Command) -> Result<(u32, u32), Failure> {
+    let spawned = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -588,22 +740,251 @@ fn start(run: &str, worktree: &Path, log: &Path, head: String) -> Result<Server,
     let output = spawned
         .wait_with_output()
         .map_err(|err| Failure::Error(format!("can't start the preview: {err}")))?;
-    let pid: u32 = String::from_utf8_lossy(&output.stdout)
+    let pid = String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse()
         .map_err(|_| Failure::Error("the preview's shell didn't print a pid".into()))?;
-    // A server that exited at once has no start time, and counts as exited
-    // on the next tick.
-    let started = sessions::process(pid)?
+    Ok((pid, group))
+}
+
+/// A process's start time. One that exited at once has none, and counts as
+/// exited on the next tick.
+fn started(pid: u32) -> Result<String, Failure> {
+    Ok(sessions::process(pid)?
         .map(|process| process.started)
-        .unwrap_or_default();
-    Ok(Server {
-        pid,
-        group,
-        started,
-        port,
-        head,
+        .unwrap_or_default())
+}
+
+/// `<repo slug>-pr-<n>`, as a hostname label.
+fn route_name(main: &Path, pr: u64) -> String {
+    let slug: String = repo_slug(main)
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    format!("{}-pr-{pr}", slug.trim_matches('-'))
+}
+
+/// One route in `portless list`.
+#[derive(Debug, Clone)]
+struct Route {
+    url: String,
+    port: u16,
+    pid: u32,
+    /// Its tailnet link, once registered with Tailscale.
+    tailnet: Option<String>,
+}
+
+/// The routes `portless list` shows, or `None` when it can't be read.
+fn routes(tools: &Tools) -> Option<Vec<Route>> {
+    let output = crate::deadline::output(
+        Command::new(&tools.portless).arg("list"),
+        TOOL_DEADLINE,
+        "portless",
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
+    Some(parse_routes(&strip_colors(&String::from_utf8_lossy(
+        &output.stdout,
+    ))))
+}
+
+/// Reads lines like
+/// `https://app.localhost  ->  localhost:4321  (pid 123)`, each optionally
+/// followed by `tailscale: <url>` or `funnel: <url>`.
+fn parse_routes(text: &str) -> Vec<Route> {
+    let mut routes: Vec<Route> = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if let Some(url) = line
+            .strip_prefix("tailscale:")
+            .or_else(|| line.strip_prefix("funnel:"))
+        {
+            if let Some(route) = routes.last_mut() {
+                route.tailnet = Some(url.trim().to_owned());
+            }
+            continue;
+        }
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let [url, "->", target, "(pid", pid] = words[..] else {
+            continue;
+        };
+        let port = target.rsplit(':').next().and_then(|port| port.parse().ok());
+        let pid = pid.trim_end_matches(')').parse().ok();
+        if let (Some(port), Some(pid)) = (port, pid) {
+            routes.push(Route {
+                url: url.to_owned(),
+                port,
+                pid,
+                tailnet: None,
+            });
+        }
+    }
+    routes
+}
+
+fn strip_colors(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // An SGR sequence: ESC [ ... m.
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
+/// Waits for the route named `name`, and for its tailnet link when
+/// `tailscale` is on. Without the link by the deadline, the route is
+/// returned as it is. Gives up early once `launched` has exited.
+fn wait_for_route(tools: &Tools, name: &str, tailscale: bool, launched: u32) -> Option<Route> {
+    let host = format!("https://{name}.localhost");
+    let deadline = Instant::now() + ROUTE_DEADLINE;
+    let mut found = None;
+    loop {
+        found = routes(tools)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|route| route.url == host || route.url.starts_with(&format!("{host}:")))
+            .or(found);
+        let done = found
+            .as_ref()
+            .is_some_and(|route: &Route| !tailscale || route.tailnet.is_some());
+        let exited = found.is_none() && !matches!(sessions::process(launched), Ok(Some(_)));
+        if done || exited || Instant::now() >= deadline {
+            return found;
+        }
+        thread::sleep(POLL * 5);
+    }
+}
+
+/// Removes `tailscale serve` entries a crashed preview left: a single `/`
+/// proxy to a local port portless hands out, with nothing listening there
+/// and no portless route using it. Other entries are left alone, and it
+/// never resets the whole configuration.
+fn clear_stale_serves(tools: &Tools) -> Vec<String> {
+    let Ok(output) = crate::deadline::output(
+        Command::new(&tools.tailscale).args(["serve", "status", "--json"]),
+        TOOL_DEADLINE,
+        "tailscale",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(config) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return Vec::new();
+    };
+    // Without the routes, an entry can't be shown to be unused.
+    let Some(routes) = routes(tools) else {
+        return Vec::new();
+    };
+    let in_use: Vec<u16> = routes.iter().map(|route| route.port).collect();
+    let mut lines = Vec::new();
+    let Some(web) = config.get("Web").and_then(|web| web.as_object()) else {
+        return lines;
+    };
+    for (host_port, entry) in web {
+        let Some(serve_port) = host_port.rsplit(':').next() else {
+            continue;
+        };
+        let https = config["TCP"][serve_port]["HTTPS"].as_bool() == Some(true);
+        let Some(handlers) = entry.get("Handlers").and_then(|h| h.as_object()) else {
+            continue;
+        };
+        let target = match (handlers.len(), handlers.get("/")) {
+            (1, Some(handler)) => handler.get("Proxy").and_then(|proxy| proxy.as_str()),
+            _ => None,
+        };
+        let Some(port) = target.and_then(local_port) else {
+            continue;
+        };
+        if !https || !PORTLESS_PORTS.contains(&port) || in_use.contains(&port) || listening(port) {
+            continue;
+        }
+        let off = format!("--https={serve_port}");
+        let removed = crate::deadline::output(
+            Command::new(&tools.tailscale).args(["serve", &off, "off"]),
+            TOOL_DEADLINE,
+            "tailscale",
+        );
+        lines.push(match removed {
+            Ok(output) if output.status.success() => format!(
+                "removed a stale tailscale serve entry on port {serve_port}, for local port {port}"
+            ),
+            _ => format!("can't remove the stale tailscale serve entry on port {serve_port}"),
+        });
+    }
+    lines
+}
+
+/// The port of a proxy target on this machine, such as
+/// `http://127.0.0.1:4321`.
+fn local_port(target: &str) -> Option<u16> {
+    let rest = target.strip_prefix("http://")?.trim_end_matches('/');
+    let (host, port) = rest.rsplit_once(':')?;
+    matches!(host, "127.0.0.1" | "localhost")
+        .then(|| port.parse().ok())
+        .flatten()
+}
+
+fn listening(port: u16) -> bool {
+    let local: [std::net::IpAddr; 2] =
+        [[127, 0, 0, 1].into(), std::net::Ipv6Addr::LOCALHOST.into()];
+    local.into_iter().any(|ip| {
+        TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_millis(500)).is_ok()
     })
+}
+
+fn succeeds(command: &mut Command) -> bool {
+    crate::deadline::output(command, TOOL_DEADLINE, "tool")
+        .is_ok_and(|output| output.status.success())
+}
+
+/// Creates the PR's link comment, or updates it when there is one, and
+/// returns its id. Without a link, it says there's none.
+fn post_link(
+    tools: &Tools,
+    main: &Path,
+    pr: u64,
+    url: Option<&str>,
+    comment: Option<u64>,
+) -> Result<u64, Failure> {
+    let body = match url {
+        Some(url) => format!(
+            "{}\nPreview: {url}\n\nThis link is updated when the preview restarts.",
+            github::MARKER
+        ),
+        None => format!(
+            "{}\nThe preview restarted without a tailnet link, so it can't be opened from other devices for now.",
+            github::MARKER
+        ),
+    };
+    let body = format!("body={body}");
+    match comment {
+        Some(id) => {
+            let path = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
+            github::gh_output(
+                &tools.gh,
+                main,
+                &["api", "-X", "PATCH", &path, "-f", &body, "--silent"],
+            )?;
+            Ok(id)
+        }
+        None => {
+            let path = format!("repos/{{owner}}/{{repo}}/issues/{pr}/comments");
+            let id =
+                github::gh_output(&tools.gh, main, &["api", &path, "-f", &body, "--jq", ".id"])?;
+            String::from_utf8_lossy(&id)
+                .trim()
+                .parse()
+                .map_err(|_| Failure::Error("gh api didn't give the comment's id".into()))
+        }
+    }
 }
 
 fn is_alive(server: &Server) -> bool {
@@ -611,11 +992,23 @@ fn is_alive(server: &Server) -> bool {
 }
 
 /// Stops a server and its process group: SIGTERM, then SIGKILL if it's
-/// still running after a grace period, so it never keeps its port.
+/// still running after a grace period, so it never keeps its port. Under
+/// portless, SIGINT to the route's pid comes first, which lets portless
+/// remove its route and `tailscale serve` entry.
 fn stop_server(server: &Server) {
+    if server.portless {
+        signal("INT", &server.pid.to_string());
+        let deadline = Instant::now() + PORTLESS_GRACE;
+        while is_alive(server) && Instant::now() < deadline {
+            thread::sleep(POLL);
+        }
+    }
+    // The group too, for any children left behind.
     let group = format!("-{}", server.group);
     signal("TERM", &group);
-    signal("TERM", &server.pid.to_string());
+    if is_alive(server) {
+        signal("TERM", &server.pid.to_string());
+    }
     let deadline = Instant::now() + STOP_GRACE;
     while is_alive(server) && Instant::now() < deadline {
         thread::sleep(POLL);
