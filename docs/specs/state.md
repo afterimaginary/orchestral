@@ -10,6 +10,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 | --- | --- |
 | `state.json` | The current state. |
 | `events.jsonl` | Every event, one per line, append-only. |
+| `watch-cursor` | The `seq` of the last event `orchestral watch` delivered to the orchestrator, as a number and a newline. |
 | `lock` | The advisory lock. Its contents don't matter. |
 | `supervisor.pid` | The running supervisor, as `{"pid": n, "started": "<ps lstart>"}`. The start time tells it from a later process that reuses the pid. |
 | `logs/supervisor.log` | The supervisor's log, one timestamped line per entry. |
@@ -45,7 +46,7 @@ Each line is one event:
 | `kind` | What the event is about. |
 | `text` | The event, for people and the orchestrator. |
 
-Lines are only ever appended. Reading events out, and tracking which were delivered, belong to the event stream.
+Lines are only ever appended. `orchestral watch` delivers them to the orchestrator and records the last one delivered in `watch-cursor` (see `docs/specs/cli.md`).
 
 ## Writes
 

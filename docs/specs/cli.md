@@ -221,6 +221,18 @@ It refuses, exiting `2`, while another live session holds the claim. A holder wh
 Session 00000000-0000-4000-8000-0000000000c1 is the orchestrator.
 ```
 
+### `orchestral watch`
+
+The event stream: the one way events reach the orchestrator. The plugin's monitor, `orchestral-events` in `monitors/monitors.json`, runs it in every session that loads the plugin. It has no `when` key, because a monitor started that way didn't start when its skill ran as a slash command (ADR-0001). Each line it prints reaches the session as a notification that starts a turn, even when the session is idle.
+
+Every second it:
+
+- finds the repository from its working directory, and stays silent outside one,
+- reads the state, and stays silent unless the claim's session is its own `CLAUDE_CODE_SESSION_ID`, so it starts printing within 2 seconds of its session claiming,
+- prints the `text` of each complete event in `events.jsonl` with a `seq` after `watch-cursor`, one line each, with any line breaks in the text replaced by spaces. Then it saves the last `seq` printed as the cursor, so a crash in between repeats an event rather than losing it.
+
+A session that takes over the claim carries on from the cursor, so no event is lost. The cursor never moves back, so while two sessions' `watch` overlap during a handoff, an event can be printed twice but never skipped. A cursor at or past the state's `next_seq` was left by a state that has since been reset, and is ignored. An unreadable state or events file counts as nothing to print. It never exits by itself, only when its session ends: its stdout closes, or the session exits and leaves it orphaned.
+
 ### `orchestral resolve <name> [--json]`
 
 Prints the SendMessage address of a worker, or of the claimed orchestrator when `<name>` is `orchestrator`. The address is `uds:<messaging socket>`, which is also the `from` on messages that session sends, so it identifies a sender exactly.
