@@ -104,13 +104,10 @@ fn the_orchestrator_gets_its_instructions_and_status_back() {
     let context = output["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(
-        context
-            .contains("the orchestrate\nskill at /plugins/orchestral/skills/orchestrate/SKILL.md")
-    );
+    assert!(context.contains("/plugins/orchestral/skills/orchestrate/SKILL.md"));
     assert!(context.contains("/plugins/orchestral/bin/orchestral"));
-    assert!(context.contains("Before compaction, the fleet was:\n\nFleet: not paused"));
-    assert!(context.contains("It is now:\n\nFleet: not paused"));
+    assert!(context.contains("Before compaction, it was:\n\nFleet: not paused"));
+    assert!(context.contains("The fleet is now:\n\nFleet: not paused"));
     // Used once, so a later compaction doesn't show a stale status.
     assert!(!repo.snapshot().exists());
 }

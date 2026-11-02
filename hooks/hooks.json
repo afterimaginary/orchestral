@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orchestral\" hook pre-compact"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orchestral\" hook pre-compact",
+            "timeout": 30
           }
         ]
       }
@@ -16,7 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orchestral\" hook session-compact"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orchestral\" hook session-compact",
+            "timeout": 30
           }
         ]
       }
