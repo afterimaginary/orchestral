@@ -3,6 +3,7 @@
 pub mod budget;
 pub mod claim;
 pub mod gate;
+pub mod github;
 pub mod guard;
 pub mod limits;
 pub mod observe;
