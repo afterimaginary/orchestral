@@ -22,11 +22,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Tested and recorded: proposals from background workers, the merge command, worker permissions under auto mode, `/approve` comments, preview servers and reminder sessions (ADR-0002 to ADR-0007)
 - CLI conventions: exit codes, refusals and `--json` (`docs/specs/cli.md`)
 - Integration test harness with stub external tools
+- State store: `state.json` and `events.jsonl` under the git common directory (`docs/specs/state.md`)
 
 ## Up Next
 
 1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, starting with the state store (#12) and the policy file (#17).
+2. Milestone 2 (Core), in work order, next the policy file (#17), transcripts (#13) and the session reader (#15).
 
 ## Needs Your Decision
 

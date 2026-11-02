@@ -1,7 +1,7 @@
 ready:
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
-	cargo test --bins --test cli
+	cargo test --lib --bins --test cli
 
 verify: ready
 	cargo test

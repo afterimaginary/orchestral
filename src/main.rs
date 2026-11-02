@@ -1,11 +1,9 @@
-mod limits;
-mod outcome;
-
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use outcome::Failure;
+use orchestral::limits;
+use orchestral::outcome::{self, Failure};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
