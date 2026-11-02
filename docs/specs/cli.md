@@ -42,7 +42,7 @@ week (Fable): 0% used, resets Nov 4 at 12:59pm PST
 {"available":true,"windows":[{"name":"session","percent":2,"resets":"2026-11-02T06:49:00-08:00[America/Los_Angeles]"}]}
 ```
 
-The limits are unavailable when `claude` can't run or exits non-zero, when the output has no `Current` lines, or when any `Current` line doesn't parse, so a changed format is never guessed at:
+The limits are unavailable when `claude` can't run, exits non-zero (the reason then includes its first error line), or hasn't finished within 60 seconds, when it's stopped, when the output has no `Current` lines, or when any `Current` line doesn't parse, so a changed format is never guessed at:
 
 ```text
 Plan limits are unavailable: claude -p /usage printed no usage windows.

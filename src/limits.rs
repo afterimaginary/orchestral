@@ -3,12 +3,18 @@
 
 use std::fmt;
 use std::fs;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use jiff::fmt::strtime;
 use jiff::tz::TimeZone;
 use jiff::{ToSpan, Zoned};
 use serde::Serialize;
+
+/// How long a read may take. A read normally takes a few seconds.
+const DEADLINE: Duration = Duration::from_secs(60);
 
 /// The plan's usage windows, or why they can't be read.
 #[derive(Debug, Serialize)]
@@ -46,17 +52,20 @@ impl fmt::Display for Limits {
         if let Some(reason) = &self.reason {
             return write!(f, "Plan limits are unavailable: {reason}.");
         }
-        let mut lines = self.windows.iter().peekable();
-        while let Some(window) = lines.next() {
-            write!(f, "{}: {}% used", window.name, window.percent)?;
-            if let Some(resets) = &window.resets {
-                write!(f, ", resets {}", resets.strftime("%b %-d at %-I:%M%P %Z"))?;
-            }
-            if lines.peek().is_some() {
-                writeln!(f)?;
-            }
-        }
-        Ok(())
+        let lines: Vec<String> = self
+            .windows
+            .iter()
+            .map(|window| match &window.resets {
+                Some(resets) => format!(
+                    "{}: {}% used, resets {}",
+                    window.name,
+                    window.percent,
+                    resets.strftime("%b %-d at %-I:%M%P %Z")
+                ),
+                None => format!("{}: {}% used", window.name, window.percent),
+            })
+            .collect();
+        write!(f, "{}", lines.join("\n"))
     }
 }
 
@@ -79,26 +88,87 @@ pub fn read() -> Limits {
 /// Runs the read from a new temporary directory, outside any session, so no
 /// project settings, hooks or session apply to it.
 fn run_usage() -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!("orchestral-usage-{}", std::process::id()));
-    fs::create_dir_all(&dir).map_err(|err| format!("can't create {}: {err}", dir.display()))?;
-    let output = Command::new("claude")
-        .args([
-            "-p",
-            "/usage",
-            "--no-session-persistence",
-            "--settings",
-            r#"{"disableAllHooks":true}"#,
-        ])
-        .current_dir(&dir)
-        .env_remove("CLAUDE_CODE_SESSION_ID")
-        .env_remove("CLAUDECODE")
-        .output();
+    // A directory that already exists is refused, so nothing left in it can
+    // apply to the read.
+    let dir = std::env::temp_dir().join(format!(
+        "orchestral-usage-{}-{}",
+        std::process::id(),
+        jiff::Timestamp::now().as_nanosecond()
+    ));
+    fs::create_dir(&dir).map_err(|err| format!("can't create {}: {err}", dir.display()))?;
+    let output = run_with_deadline(
+        Command::new("claude")
+            .args([
+                "-p",
+                "/usage",
+                "--no-session-persistence",
+                "--settings",
+                r#"{"disableAllHooks":true}"#,
+            ])
+            .current_dir(&dir)
+            .env_remove("CLAUDE_CODE_SESSION_ID")
+            .env_remove("CLAUDECODE"),
+    );
     let _ = fs::remove_dir_all(&dir);
-    let output = output.map_err(|err| format!("can't run claude: {err}"))?;
+    let output = output?;
     if !output.status.success() {
-        return Err(format!("claude -p /usage exited with {}", output.status));
+        let errors = String::from_utf8_lossy(&output.stderr);
+        let cause = errors.lines().find(|line| !line.trim().is_empty());
+        return Err(match cause {
+            Some(cause) => format!(
+                "claude -p /usage exited with {}: {}",
+                output.status,
+                cause.trim()
+            ),
+            None => format!("claude -p /usage exited with {}", output.status),
+        });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Runs `command`, killing it if it hasn't finished within [`DEADLINE`], so a
+/// hung read can't hold up the command that asked for the limits.
+fn run_with_deadline(command: &mut Command) -> Result<Output, String> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("can't run claude: {err}"))?;
+    // Read both pipes while waiting, so a full pipe can't stall the child.
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    let stdout = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        bytes
+    });
+    let stderr = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes);
+        bytes
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < DEADLINE => thread::sleep(Duration::from_millis(100)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "claude -p /usage didn't finish within {} seconds",
+                    DEADLINE.as_secs()
+                ));
+            }
+            Err(err) => return Err(format!("can't wait for claude: {err}")),
+        }
+    };
+    Ok(Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
 }
 
 /// Reads the `Current …` lines of `/usage` output and ignores the rest. Any
