@@ -24,11 +24,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Integration test harness with stub external tools
 - State store: `state.json` and `events.jsonl` under the git common directory (`docs/specs/state.md`)
 - Policy file: settings and rules in `.orchestral/policy.md`, read from `origin/main` (`docs/specs/policy.md`)
+- Context and cache state read from transcripts (`docs/specs/claude-code-internals.md`)
 
 ## Up Next
 
 1. Finish milestone 1: #8 (reading plan limits) waits for a limit reset, and #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next transcripts (#13) and the session reader (#15).
+2. Milestone 2 (Core), in work order, next the session reader (#15) and fleet token accounting (#14).
 
 ## Needs Your Decision
 
