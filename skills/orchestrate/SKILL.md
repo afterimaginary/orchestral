@@ -123,7 +123,7 @@ Fleet events arrive as notifications from the `orchestral-events` monitor, one l
 - **An issue opened:** decide whether it's ready for a worker, as in Start work. An `untriaged` one waits for the owner, as in Scope and the end of a run.
 - **An issue approved:** it lost `untriaged`, so decide whether it's ready for a worker.
 - **A heartbeat:** nothing to do. It keeps your cache warm. Never message a worker because of one.
-- **Limits or budget:** follow the refusal rules in Start work. Past the plan limit, workers finish their turn and you start nothing new until the reset. When the budget is reached, ask the owner how to continue.
+- **Limits or budget:** past the plan limit, start nothing new, and let workers finish their turn. Don't stop them. When the window has reset, fill free slots again, as in Start work. When the budget is reached, start nothing new and ask the owner how to continue, once.
 - **Polls failed:** tell the owner GitHub can't be read, with the error, once.
 
 A worker whose cache is cold re-reads its whole context on the next message, which `status` shows as an expensive wake. For a cold worker, hold anything that doesn't need it to act now, and send it together with the next message that does.

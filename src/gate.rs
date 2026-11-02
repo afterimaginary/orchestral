@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::budget::{self, Estimate};
-use crate::limits::{self, Limits};
+use crate::limits::{self, Limits, Window};
 use crate::outcome::Failure;
 use crate::policy::Settings;
 use crate::sessions::Agent;
@@ -37,14 +37,7 @@ pub fn check_capacity(state: &State, settings: &Settings) -> Result<(), Failure>
 /// that can't be read never refuse; the caller warns instead.
 pub fn check_plan_limits(limits: &Limits, settings: &Settings) -> Result<(), Failure> {
     let threshold = settings.plan_limit_percent;
-    // Of the windows at the limit, the one that resets last is what spawning
-    // waits on. A window with no reset time sorts last.
-    let Some(window) = limits
-        .windows
-        .iter()
-        .filter(|window| window.percent >= threshold)
-        .max_by_key(|window| (window.resets.is_none(), window.resets.clone()))
-    else {
+    let Some(window) = limiting_window(limits, threshold) else {
         return Ok(());
     };
     Err(Failure::Refused {
@@ -60,6 +53,31 @@ pub fn check_plan_limits(limits: &Limits, settings: &Settings) -> Result<(), Fai
             None => "wait until it resets".into(),
         },
     })
+}
+
+/// Refuses while the supervisor has the fleet wound down at a plan limit and
+/// the limits can't be read to check it again.
+pub fn check_wound_down(state: &State, limits: &Limits) -> Result<(), Failure> {
+    match &state.wound_down {
+        Some(wound) if !limits.available => Err(Failure::Refused {
+            reason: format!(
+                "the fleet is wound down for the {} window, and the plan limits can't be read to check it",
+                wound.window
+            ),
+            fix: "wait for the supervisor to record that the window has reset".into(),
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// Of the windows at or past `threshold`, the one that resets last, which is
+/// what spawning waits on. A window with no reset time sorts last.
+pub fn limiting_window(limits: &Limits, threshold: u8) -> Option<&Window> {
+    limits
+        .windows
+        .iter()
+        .filter(|window| window.percent >= threshold)
+        .max_by_key(|window| (window.resets.is_none(), window.resets.clone()))
 }
 
 /// Refuses when the run has used its `fleet_token_budget`.

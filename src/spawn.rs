@@ -84,6 +84,7 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
     if let Some(reason) = &limits.reason {
         eprintln!("warning: plan limits are unavailable, so they weren't checked: {reason}");
     }
+    gate::check_wound_down(&state, &limits)?;
     gate::check_plan_limits(&limits, &policy.settings)?;
 
     let worktree = main.join(WORKTREES).join(name);
