@@ -52,17 +52,16 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Findings: workers end each PR body with a `## Findings` section, the orchestrator decides each finding, and `src/findings.rs` checks every one is decided, for the merge check to use (#46)
 - Merge check: `orchestral merge-check <pr>` shows each merge condition at the head commit, for the owner's route or the supervisor's, and never merges (#47)
 - Previews: `orchestral try <pr>` asks for a PR's preview, which the supervisor runs in its worker's worktree on `$PORT`, restarting it once, rerunning setup on a lockfile change, keeping within `max_running` and stopping it on merge or close (#51)
-- Design proposals: `spawn --proposal` starts a worker on its issue's proposal, the worker publishes variants from `.proposals/` and waits, the orchestrator records the owner's choice on the issue, and `status` shows what proposals spend (#45)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
 2. Milestone 3 (Autonomous loop): reminders (#41, PR #104) wait for the owner to confirm a banner arrived, and the long-idle run (#44) is still to do. #93 and #100 need the owner's decision.
-3. Milestone 4 (User decision points): merge routing (#48) needs reminders (#41) and supervisor merges (#49) need #48. Tailnet links (#52) build on previews (#51).
+3. Milestone 4 (User decision points): merge routing (#48) needs reminders (#41) and supervisor merges (#49) need #48. Tailnet links (#52) build on previews (#51). Design proposals (#45, PR #109) are built, but their sandbox run is blocked on #93.
 
 ## Needs Your Decision
 
-- #93: auto mode blocks workers from acting on the orchestrator's messages (pushes, `gh pr ready`). Pick how workers get those permissions.
+- #93: auto mode blocks workers from acting on the orchestrator's messages (pushes, `gh pr ready`, and linking a design proposal on its issue). Pick how workers get those permissions. #45 waits on it.
 - #100: ready PRs can fill the worker cap so no reviewer can start. Pick how reviewers get a slot.
 - #41: confirm whether the sandbox reminder banners reached the Mac or phone. PR #104 is otherwise ready.
 
