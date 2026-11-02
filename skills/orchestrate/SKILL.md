@@ -90,6 +90,18 @@ Summaries tell the owner what happened, including what was left out. Publish eac
 
 Write each summary once. A milestone summary is due when an issue in it closes or starts waiting on the owner, which the merge, close and blocked events below say to check. Whenever you write one, also check whether the run has ended: if it was the last milestone with work, write the final summary too.
 
+## Findings
+
+Each PR body ends with a `## Findings` section: `None`, or one `- [tag] text` line per finding. A PR can't merge until every finding is decided. Workers report theirs as `[pending]`, and you decide each one once the review passes:
+
+- `[fixed]`: the worker fixed it in this PR. Ask it to, when the fix is small and in code it's already changing.
+- `[issue #N]`: filed as an issue. Doubt goes here: a finding you're unsure about becomes a backlog issue labelled `priority:low`, which costs little and isn't worked on until the owner asks.
+- `[dropped: reason]`: dropped, only when it has no user impact. The reason can't contain `]`.
+
+A bug is either a blocker that stops this milestone or its demo, which the worker fixes now; a real bug that can wait, filed with the `bug` label for a bug sprint the owner calls; or not worth tracking, and dropped with its reason. A feature that fails its acceptance criteria isn't a bug: its worker isn't finished.
+
+To record your decisions, rewrite each `[pending]` tag in the PR body: read it with `gh pr view <n> --json body --jq .body`, change only the tags, and save it with `gh pr edit <n> --body-file <file>`. Then read it back to check every tag changed. Milestone and final summaries list every drop, as in Summaries.
+
 ## Keep in touch
 
 - `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status` shows each worker's PR, what it's doing or waiting for, its context, and what waking it costs. A cold cache makes the next message expensive, so batch what you send.
@@ -117,7 +129,7 @@ Fleet events arrive as notifications from the `orchestral-events` monitor, one l
   ```
 
   If spawn refuses because the fleet is at its worker cap, start the reviewer as soon as a slot frees, before any new issue. A PR has one reviewer at a time, and the reviewer counts toward the cap.
-- **A review passed:** remove the reviewer with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral cleanup <name>`. The PR waits for the owner.
+- **A review passed:** remove the reviewer with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral cleanup <name>`. Then decide the PR's findings, as in Findings. The PR waits for the owner.
 - **A review failed, round 1 of 2:** remove the reviewer, and tell the author to fix what the review comment says. Don't say how. When the author says the fix is pushed, start a fresh reviewer for the new commit.
 - **A review failed, round 2 of 2:** Orchestral has labelled the issue `blocked`. Remove the reviewer and the author with `cleanup`, which frees their slots and leaves the PR open, and move on to other work. The owner decides what happens to a blocked issue. If that leaves nothing in its milestone for the fleet, write the milestone summary.
 - **A PR merged:** its worker is finished. Remove it, and its reviewer if it has one, with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral cleanup <name>`, which frees their slots. Then start the next ready issue if there's a free slot. If that was the last of its milestone, write the milestone summary. If no approved issue is left open and no worker is open, the run is done.
