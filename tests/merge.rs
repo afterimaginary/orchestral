@@ -176,8 +176,9 @@ fn the_supervisor_route_needs_no_approval_but_refuses_owner_paths_and_a_disabled
     }
 }
 
-#[test]
-fn the_command_prints_each_condition_and_refuses_when_one_fails() {
+/// A repository with a policy and the state from `state()`, changed by
+/// `change`.
+fn repo(change: impl FnOnce(&mut State)) -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let main = dir.path().canonicalize().unwrap();
     let status = Command::new("git")
@@ -189,38 +190,51 @@ fn the_command_prints_each_condition_and_refuses_when_one_fails() {
     std::fs::create_dir(main.join(".orchestral")).unwrap();
     std::fs::write(
         main.join(".orchestral/policy.md"),
-        "---\nfleet_token_budget: 1000\n---\n",
+        "---\nfleet_token_budget: 1000\nsupervisor_merges: true\n---\n",
     )
     .unwrap();
     let store = Store::for_repo(&main).unwrap();
-    store.update(|s| *s = state()).unwrap();
+    store
+        .update(|s| {
+            *s = state();
+            change(s);
+        })
+        .unwrap();
+    (dir, main)
+}
+
+fn view(checks: Value) -> String {
+    json!({
+        "state": "OPEN", "isDraft": false, "baseRefName": "main",
+        "mergeable": "MERGEABLE", "headRefOid": HEAD,
+        "body": "## Findings\n\nNone\n",
+        "statusCheckRollup": checks
+    })
+    .to_string()
+}
+
+fn merge_check(stubs: &Stubs, main: &std::path::Path, json: bool) -> std::process::Output {
+    let mut command = stubs.orchestral();
+    command.args(["merge-check", "42"]).current_dir(main);
+    if json {
+        command.arg("--json");
+    }
+    command.output().unwrap()
+}
+
+#[test]
+fn the_command_prints_each_condition_and_refuses_when_one_fails() {
+    let (_dir, main) = repo(|_| {});
     let stubs = Stubs::new();
     stubs.respond(
         "gh",
         &["pr", "view", "42"],
-        &json!({
-            "number": 42, "state": "OPEN", "isDraft": false, "baseRefName": "main",
-            "mergeable": "MERGEABLE", "headRefOid": HEAD,
-            "body": "## Findings\n\nNone\n",
-            "statusCheckRollup": [{"status": "IN_PROGRESS", "conclusion": null}]
-        })
-        .to_string(),
+        &view(json!([{"status": "IN_PROGRESS", "conclusion": null}])),
         0,
     );
-    stubs.respond("gh", &["pr", "diff", "42"], "src/app.rs\n", 0);
 
-    let text = stubs
-        .orchestral()
-        .args(["merge-check", "42"])
-        .current_dir(&main)
-        .output()
-        .unwrap();
-    let json = stubs
-        .orchestral()
-        .args(["merge-check", "42", "--json"])
-        .current_dir(&main)
-        .output()
-        .unwrap();
+    let text = merge_check(&stubs, &main, false);
+    let json = merge_check(&stubs, &main, true);
 
     assert_eq!(text.status.code(), Some(2));
     let stdout = String::from_utf8(text.stdout).unwrap();
@@ -232,13 +246,84 @@ fn the_command_prints_each_condition_and_refuses_when_one_fails() {
         stdout.contains("\n  FAIL  CI passed: checks are still running\n"),
         "{stdout}"
     );
-    assert!(
-        stdout.ends_with("It can't merge yet: 1 condition failed.\n"),
-        "{stdout}"
-    );
+    assert!(stdout.ends_with("1 condition failed.\n"), "{stdout}");
     let json: Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(json["route"], "human");
-    assert_eq!(json["conditions"].as_array().unwrap().len(), 10);
-    // It reads GitHub and never merges.
-    assert!(stubs.calls("gh").iter().all(|call| call[1] != "merge"));
+    let names: Vec<&str> = json["conditions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|condition| condition["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"CI passed"));
+    assert!(names.contains(&"approved by the owner"));
+    // The owner's route doesn't need the changed paths, and nothing merges.
+    assert!(
+        stubs
+            .calls("gh")
+            .iter()
+            .all(|call| call[0] == "pr" && call[1] == "view")
+    );
+}
+
+#[test]
+fn only_skipped_checks_are_not_a_pass() {
+    let (_dir, main) = repo(|_| {});
+    let stubs = Stubs::new();
+    stubs.respond(
+        "gh",
+        &["pr", "view", "42"],
+        &view(json!([
+            {"status": "COMPLETED", "conclusion": "SKIPPED"},
+            {"status": "COMPLETED", "conclusion": "NEUTRAL"}
+        ])),
+        0,
+    );
+
+    let output = merge_check(&stubs, &main, false);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("\n  FAIL  CI passed: no check has succeeded\n"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_supervisor_route_reads_renames_out_of_a_checked_directory() {
+    let (_dir, main) = repo(|state| {
+        state.approvals.clear();
+        supervisor_route(state);
+    });
+    let stubs = Stubs::new();
+    stubs.respond(
+        "gh",
+        &["pr", "view", "42"],
+        &view(json!([{"status": "COMPLETED", "conclusion": "SUCCESS"}])),
+        0,
+    );
+    stubs.respond(
+        "gh",
+        &["api", "repos/{owner}/{repo}/pulls/42/files"],
+        "ci/verify.yml\n.github/workflows/verify.yml\n",
+        0,
+    );
+
+    let output = merge_check(&stubs, &main, false);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains(
+            "FAIL  no change to .orchestral/ or .github/: it changes .github/workflows/verify.yml\n"
+        ),
+        "{stdout}"
+    );
+    let api = stubs
+        .calls("gh")
+        .into_iter()
+        .find(|call| call[0] == "api")
+        .unwrap();
+    assert!(api.contains(&"--paginate".to_string()), "{api:?}");
 }

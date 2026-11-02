@@ -218,19 +218,19 @@ The plugin's `hooks/hooks.json` runs both, so the orchestrator carries on correc
 
 ### `orchestral merge-check <pr> [--json]`
 
-Shows whether PR `<pr>` could merge at its head commit, condition by condition, and never merges. It reads the PR with `gh pr view` and the paths it changes with `gh pr diff --name-only`, then checks:
+Shows whether PR `<pr>` could merge at its head commit, condition by condition, and never merges. It reads the PR with `gh pr view`, then checks:
 
 - the fleet isn't paused,
 - the PR is open, isn't a draft, targets `main`, and GitHub reports it `MERGEABLE`; an `UNKNOWN` answer fails until GitHub has worked it out,
 - the owner hasn't put it on hold (the state's `holds`),
-- CI passed: at least one check, and every check on the head commit passed,
+- CI passed: at least one check on the head commit succeeded and none failed, so checks that were all skipped or neutral don't count,
 - a review passed at the head commit (the state's `reviews`),
 - every finding is decided (see [Findings](findings.md)).
 
 Then the route, from the state's `routes`, where no record means the owner's:
 
 - **the owner's:** the owner approved the head commit (the state's `approvals`). An approval of an earlier commit doesn't count.
-- **the supervisor's:** the policy's `supervisor_merges` is on, and the PR changes nothing under `.orchestral/` or `.github/`, which are the owner's to review.
+- **the supervisor's:** the policy's `supervisor_merges` is on, and the PR changes nothing under `.orchestral/` or `.github/`, which are the owner's to review. It reads the changed paths from the GitHub API only on this route, and a rename counts as changing both its old and new path.
 
 ```text
 PR #42 at 4f2c9e1, merged by the owner:

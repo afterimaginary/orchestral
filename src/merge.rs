@@ -17,6 +17,7 @@ use crate::findings;
 use crate::github::{self, Ci, GhCheck, gh_json, gh_output};
 use crate::outcome::Failure;
 use crate::policy::{Policy, Settings};
+use crate::review::short;
 use crate::spawn::main_checkout;
 use crate::state::{MergeRoute, State, Store};
 
@@ -35,8 +36,10 @@ pub struct Pr {
     pub mergeable: String,
     pub head: String,
     pub body: String,
+    /// `None` when no check succeeded, even if none failed.
     pub ci: Ci,
-    /// The paths the PR changes.
+    /// The paths the PR changes, with the old path of a rename. Read only
+    /// for the supervisor route.
     pub files: Vec<String>,
 }
 
@@ -137,7 +140,7 @@ pub fn evaluate(pr: &Pr, state: &State, settings: &Settings) -> MergeCheck {
         "CI passed",
         match pr.ci {
             Ci::Passed => None,
-            Ci::None => Some("it has no checks".into()),
+            Ci::None => Some("no check has succeeded".into()),
             Ci::Pending => Some("checks are still running".into()),
             Ci::Failed => Some("a check failed".into()),
         },
@@ -156,10 +159,7 @@ pub fn evaluate(pr: &Pr, state: &State, settings: &Settings) -> MergeCheck {
             .err()
             .map(|problem| problem.to_string()),
     );
-    let route = state
-        .routes
-        .get(&pr.number)
-        .map_or(MergeRoute::Human, |route| route.to);
+    let route = route(state, pr.number);
     match route {
         MergeRoute::Human => add(
             "approved by the owner",
@@ -195,19 +195,31 @@ pub fn evaluate(pr: &Pr, state: &State, settings: &Settings) -> MergeCheck {
     }
 }
 
+/// A PR's route. With no record, it's the owner's.
+pub fn route(state: &State, pr: u64) -> MergeRoute {
+    state
+        .routes
+        .get(&pr)
+        .map_or(MergeRoute::Human, |route| route.to)
+}
+
 /// `orchestral merge-check <pr>`.
 pub fn check(cwd: &Path, number: u64) -> Result<MergeCheck, Failure> {
     let store = Store::for_repo(cwd)?;
     let main = main_checkout(store.dir())?;
     let settings = Policy::load(cwd)?.settings;
-    let pr = read_pr(Path::new("gh"), &main, number)?;
-    Ok(evaluate(&pr, &store.read()?, &settings))
+    let state = store.read()?;
+    let gh = Path::new("gh");
+    let mut pr = read_pr(gh, &main, number)?;
+    if route(&state, number) == MergeRoute::Supervisor {
+        pr.files = changed_files(gh, &main, number)?;
+    }
+    Ok(evaluate(&pr, &state, &settings))
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PrView {
-    number: u64,
     state: String,
     is_draft: bool,
     base_ref_name: String,
@@ -218,7 +230,7 @@ struct PrView {
     status_check_rollup: Vec<GhCheck>,
 }
 
-/// Reads a PR, and the paths it changes, with `gh`.
+/// Reads a PR with `gh`, without the paths it changes.
 pub fn read_pr(gh: &Path, main: &Path, number: u64) -> Result<Pr, Failure> {
     let view: PrView = gh_json(
         gh,
@@ -228,30 +240,43 @@ pub fn read_pr(gh: &Path, main: &Path, number: u64) -> Result<Pr, Failure> {
             "view",
             &number.to_string(),
             "--json",
-            "number,state,isDraft,baseRefName,mergeable,headRefOid,body,statusCheckRollup",
+            "state,isDraft,baseRefName,mergeable,headRefOid,body,statusCheckRollup",
         ],
     )?;
-    let files = gh_output(
-        gh,
-        main,
-        &["pr", "diff", &number.to_string(), "--name-only"],
-    )?;
+    let ci = match github::ci(&view.status_check_rollup) {
+        Ci::Passed if !github::succeeded(&view.status_check_rollup) => Ci::None,
+        ci => ci,
+    };
     Ok(Pr {
-        number: view.number,
+        number,
         state: view.state,
         draft: view.is_draft,
         base: view.base_ref_name,
         mergeable: view.mergeable,
         head: view.head_ref_oid,
         body: view.body,
-        ci: github::ci(&view.status_check_rollup),
-        files: String::from_utf8_lossy(&files)
-            .lines()
-            .map(str::to_owned)
-            .collect(),
+        ci,
+        files: Vec::new(),
     })
 }
 
-fn short(sha: &str) -> &str {
-    &sha[..sha.len().min(7)]
+/// The paths a PR changes, and the old path of each rename, so moving a
+/// file out of a checked directory still counts as changing it.
+fn changed_files(gh: &Path, main: &Path, number: u64) -> Result<Vec<String>, Failure> {
+    let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{number}/files");
+    let output = gh_output(
+        gh,
+        main,
+        &[
+            "api",
+            &endpoint,
+            "--paginate",
+            "--jq",
+            ".[] | .filename, (.previous_filename // empty)",
+        ],
+    )?;
+    Ok(String::from_utf8_lossy(&output)
+        .lines()
+        .map(str::to_owned)
+        .collect())
 }
