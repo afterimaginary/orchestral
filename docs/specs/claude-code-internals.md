@@ -131,4 +131,4 @@ Current session: 2% used · resets Nov 2 at 6:49am (America/Los_Angeles)
 Current week (all models): 26% used · resets Nov 4 at 12:59pm (America/Los_Angeles)
 ```
 
-The label is `session` or `week (<models>)`. The reset time has no year, drops `:00` on the hour, and is in the IANA time zone in parentheses. Reset times drift by a minute between reads of the same window. A breakdown of what used the plan follows the windows.
+The label is `session` or `week (<models>)`. The reset time has no year, drops `:00` on the hour, and is in the IANA time zone in parentheses. Reset times drift by a minute between reads of the same window, so a reset is confirmed as ADR-0008 describes, not by a changed time. A breakdown of what used the plan follows the windows.
