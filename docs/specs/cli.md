@@ -52,6 +52,44 @@ Plan limits are unavailable: claude -p /usage printed no usage windows.
 {"available":false,"reason":"claude -p /usage printed no usage windows"}
 ```
 
+### `orchestral status [--json]`
+
+One view of the fleet: whether it's paused, the run's budget, the plan windows from `orchestral limits`, and each worker. A part that can't be read, such as `claude agents` or `gh pr list`, is left empty and named in a warning, and the command still exits `0`.
+
+For each worker it shows:
+
+- its issue, and the open PR whose head is the worker's branch,
+- its session: `running` when `claude agents --json --all` lists it with a pid, `stopped` when it's listed without one, or `unknown`,
+- what the session is doing, from `waitingFor` first, then `state`,
+- its context size and cache state, from its transcript (see [Claude Code internals](claude-code-internals.md)), and
+- the cost to wake it: the context sent with the next message, weighted as in [Budget](budget.md). A warm cache is read at 0.1. A cold one is written again at 2 when the session last used a 1-hour cache, and at 1.25 otherwise. It's an estimate.
+
+```text
+Fleet: not paused
+Budget: about 120000 tokens (estimate) of 3000000 used this run
+Plan limits:
+  session: 9% used, resets Nov 2 at 6:50am PST
+  week (all models): 27% used, resets Nov 4 at 1:00pm PST
+Workers: 2 of 3
+  issue-12 · issue #12 · PR #40 · running, waiting: input needed · context 33954 tokens (17%) · cache cold · wake about 67908 tokens (estimate)
+  issue-13 · issue #13 · unknown
+warning: PRs are unknown: gh pr list failed: …
+```
+
+Before a run has started, the budget line reads `Budget: no run has started; <n> tokens per run`.
+
+`--json` carries the same data, and is the shape later interfaces read. Fields are only ever added:
+
+| Field | Meaning |
+| --- | --- |
+| `paused` | Whether the fleet is paused (`orchestral pause`). |
+| `workers[]` | `name`, `issue`, `pr` (or null), `session_name`, `session`, `activity` (`working`, `waiting`, `done`, `failed` or `unknown`), `waiting_for` (`waitingFor`, or `blocked` when the session's `state` is `blocked`, or null), `context` (or null) and `wake_cost` (`{"estimated_tokens": n}`, or null). |
+| `workers[].context` | `tokens`, `model`, `identity`, `window`, `percent`, `last_request_at`, `compactions` (each `at` and `post_tokens`), `cache_ttl` in seconds and `warm`, as defined in [Claude Code internals](claude-code-internals.md). |
+| `worker_cap` | The policy's `workers`. |
+| `limits` | The output of `orchestral limits --json`. |
+| `budget` | `used` (`{"estimated_tokens": n}`, or null when it can't be read), `fleet_token_budget` and `run_started_at`. |
+| `warnings` | Each part that couldn't be read, and why. |
+
 ### `orchestral spawn <name> --issue <n> --prompt <text> [--model <m>] [--effort <e>] [--json]`
 
 Starts a worker on an issue as a background Claude Code session. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.

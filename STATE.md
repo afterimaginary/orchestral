@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, still running. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from a run start that the supervisor, #25, will record), `pause`, `unpause`, `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, still running. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from a run start that the supervisor, #25, will record), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -37,7 +37,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 ## Up Next
 
 1. Finish milestone 1: #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next fleet status (#22), then the supervisor (#25).
+2. Milestone 2 (Core), in work order, next the supervisor (#25).
 
 ## Needs Your Decision
 
