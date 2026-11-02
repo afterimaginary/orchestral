@@ -69,7 +69,7 @@ The supervisor:
 
 - claims `supervisor.pid` under the state lock, so only one runs, and exits if another holds it or later takes it over,
 - starts a new run when no worker is open, setting `run_started_at` and recording a `run` event. With workers open, it continues the run in progress, such as after a crash, and keeps its start,
-- before its first tick, checks each worker in the state for whether it can be resumed: its worktree must exist, and `claude agents --json --all` must still list its session. A worker recorded more than 2 minutes ago that never launched can't be resumed either. Each worker that can't records one `worker` event, `issue-12 is lost: its worktree is gone, so it can't be resumed: clean it up with `orchestral cleanup issue-12`, and start its issue again`. The worker is then observed as `lost` until it's cleaned up, so neither this check nor the 2-second tick reports it again. A worker whose session simply ended, as after a reboot, isn't lost: the 2-second tick reports it as exited, to resume,
+- before its first tick, checks each worker in the state for whether it can be resumed: its worktree must exist, and `claude agents --json --all` must still list its session. A worker recorded more than 2 minutes ago that never launched can't be resumed either. A worker with no job id, from a launch whose output wasn't read, can be resumed if a session with its name is listed. Each worker that can't records one `worker` event, `issue-12 is lost: its worktree is gone, so it can't be resumed: clean it up with `orchestral cleanup issue-12`, and start its issue again, on its PR if it has one`. When `claude agents` can't be read, it records one `supervisor` event saying so instead, since a lost worker would then be reported as exited. The worker is then observed as `lost` until it's cleaned up, so neither this check nor the 2-second tick reports it again. A worker whose session simply ended, as after a reboot, isn't lost: the 2-second tick reports it as exited, to resume,
 - on macOS, holds a sleep assertion with `caffeinate -i -w <pid>` for its lifetime. Elsewhere, or without `caffeinate`, it logs that the machine may sleep,
 - runs on three ticks, each working from the files on disk, so a restart carries on where it stopped:
   - **every 2 seconds**, it reads the state and the session records. For each launched worker, it observes whether the session is busy (`busy` or `shell`), idle, waiting, or exited (no live record has the worker's session name). When that differs from the worker's last observation in the state, a change to idle, waiting or exited records a `worker` event that names the worker and what to do, such as `issue-12 is idle: check its PR, or send it its next step` or `issue-12 is waiting for input needed: see what it needs`. A blocked session shows as waiting, with what it waits for. Events are recorded before the observation is saved, so a crash between them repeats an event rather than losing it,
@@ -91,7 +91,7 @@ One view of the fleet: whether it's paused, the run's budget, the plan windows f
 For each worker it shows:
 
 - its issue, and the open PR whose head is the worker's branch, marked `(draft)` while it is one,
-- its session: `running` when `claude agents --json --all` lists it with a pid, `stopped` when it's listed without one, or `unknown`,
+- its session: `lost` when the supervisor found it can't be resumed, or else `running` when `claude agents --json --all` lists it with a pid, `stopped` when it's listed without one, or `unknown`,
 - what the session is doing, from `waitingFor` first, then `state`,
 - its context size and cache state, from its transcript (see [Claude Code internals](claude-code-internals.md)), and
 - the cost to wake it: the context sent with the next message, weighted as in [Budget](budget.md). A warm cache is read at 0.1. A cold one is written again at 2 when the session last used a 1-hour cache, and at 1.25 otherwise. It's an estimate.
@@ -105,10 +105,12 @@ Plan limits:
 Workers: 2 of 3
   issue-12 · issue #12 · PR #40 · running, waiting: input needed · context 33954 tokens (17%) · cache cold · wake about 67908 tokens (estimate)
   issue-13 · issue #13 · unknown
+Reviews:
+  PR #38 passed at 4f2c9e1
 warning: PRs are unknown: gh pr list failed: …
 ```
 
-Before a run has started, the budget line reads `Budget: no run has started; <n> tokens per run`.
+Before a run has started, the budget line reads `Budget: no run has started; <n> tokens per run`. Reviews lists the latest verdict recorded with `orchestral review` on each open PR, at the head commit it was for, and is left out when there's none.
 
 `--json` carries the same data, and is the shape later interfaces read. Fields are only ever added:
 
@@ -120,6 +122,7 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 | `worker_cap` | The policy's `workers`. |
 | `limits` | The output of `orchestral limits --json`. |
 | `budget` | `used` (`{"estimated_tokens": n}`, or null when it can't be read), `fleet_token_budget` and `run_started_at`. |
+| `reviews[]` | `pr`, `sha` (the head commit the verdict is for) and `passed`, for each open PR with a recorded verdict. |
 | `warnings` | Each part that couldn't be read, and why. |
 
 ### `orchestral spawn <name> --issue <n> [--role worker|reviewer] [--pr <n>] --prompt <text> [--model <m>] [--effort <e>] [--json]`

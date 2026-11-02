@@ -63,7 +63,7 @@ impl Change {
                 "{name}'s session exited: resume it with `orchestral resume {name}`, or clean it up"
             ),
             Observed::Busy => format!("{name} is working"),
-            Observed::Lost => format!("{name} is lost"),
+            Observed::Lost => unreachable!("changes() skips lost workers"),
         }
     }
 }

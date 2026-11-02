@@ -6,7 +6,7 @@ use jiff::Timestamp;
 use orchestral::observe::{self, Observed};
 use orchestral::recover;
 use orchestral::sessions::Agent;
-use orchestral::state::{State, Worker};
+use orchestral::state::{State, Store, Worker};
 use tempfile::TempDir;
 
 const NOW: &str = "2026-11-02T12:00:00Z";
@@ -117,4 +117,56 @@ fn a_lost_worker_is_reported_once_and_not_as_exited() {
     assert!(again.is_empty());
     assert!(changes.is_empty());
     assert!(observations.is_empty());
+}
+
+#[test]
+fn a_launch_whose_job_id_was_not_read_is_found_by_name() {
+    let dir = TempDir::new().unwrap();
+    let mut running = agent("558b988a");
+    running.id = Some("0000aaaa".into());
+
+    let lost = lost(worker(dir.path(), None, "2026-11-02T11:00:00Z"), &[running]);
+
+    assert!(lost.is_empty());
+}
+
+#[test]
+fn a_restarted_supervisor_reports_a_lost_worker_once() {
+    let repo = TempDir::new().unwrap();
+    let main = repo.path().canonicalize().unwrap();
+    let status = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&main)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let store = Store::for_repo(&main).unwrap();
+    store
+        .update(|state| {
+            state.workers.insert(
+                "issue-12".into(),
+                worker(
+                    &main.join("gone"),
+                    Some("558b988a"),
+                    "2026-11-02T10:00:00Z",
+                ),
+            )
+        })
+        .unwrap();
+    let now = NOW.parse::<Timestamp>().unwrap();
+
+    let first = recover::report(&store, &[], now).unwrap();
+    let second = recover::report(&store, &[], now).unwrap();
+
+    assert_eq!(
+        first,
+        ["issue-12 is lost: its worktree is gone, so it can't be resumed: clean it up with `orchestral cleanup issue-12`, and start its issue again, on its PR if it has one"]
+    );
+    assert!(second.is_empty());
+    assert_eq!(
+        store.read().unwrap().observed.get("issue-12"),
+        Some(&Observed::Lost)
+    );
+    let events = std::fs::read_to_string(store.dir().join("events.jsonl")).unwrap();
+    assert_eq!(events.matches("is lost").count(), 1);
 }

@@ -33,6 +33,14 @@ pub fn lost(state: &State, agents: &[Agent], now: Timestamp) -> Vec<(String, &'s
             }
             "Claude Code no longer has its session"
         } else {
+            // A launch whose job id wasn't read may still have started a
+            // session under the worker's name.
+            if agents
+                .iter()
+                .any(|agent| agent.name.as_deref() == Some(worker.session_name.as_str()))
+            {
+                continue;
+            }
             let created = worker.created_at.parse::<Timestamp>().ok();
             if created.is_none_or(|created| now.duration_since(created) < LAUNCH_GRACE) {
                 continue;
@@ -44,16 +52,32 @@ pub fn lost(state: &State, agents: &[Agent], now: Timestamp) -> Vec<(String, &'s
     lost
 }
 
+/// Checks the workers against Claude Code's sessions. When the sessions
+/// can't be read, one event says so, since lost workers would otherwise be
+/// reported as exited.
+pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
+    match sessions::agents(Path::new("claude")) {
+        Ok(agents) => report(store, &agents, Timestamp::now()),
+        Err(err) => {
+            let line = format!(
+                "supervisor: can't check for lost workers: {}: a worker reported as exited may not resume, so clean it up and start its issue again if it doesn't",
+                crate::supervisor::failure_text(&err)
+            );
+            store.record("supervisor", &line)?;
+            Ok(vec![line])
+        }
+    }
+}
+
 /// Records one event for each lost worker, then marks it lost, so it's
 /// reported once.
-pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
+pub fn report(store: &Store, agents: &[Agent], now: Timestamp) -> Result<Vec<String>, Failure> {
     let state = store.read()?;
-    let agents = sessions::agents(Path::new("claude"))?;
-    let lost = lost(&state, &agents, Timestamp::now());
+    let lost = lost(&state, agents, now);
     let mut lines = Vec::new();
     for (name, reason) in &lost {
         let line = format!(
-            "{name} is lost: {reason}, so it can't be resumed: clean it up with `orchestral cleanup {name}`, and start its issue again"
+            "{name} is lost: {reason}, so it can't be resumed: clean it up with `orchestral cleanup {name}`, and start its issue again, on its PR if it has one"
         );
         store.record("worker", &line)?;
         lines.push(line);

@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::budget::Estimate;
 use crate::gate;
 use crate::limits::{self, Limits};
+use crate::observe::Observed;
 use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::sessions::{self, Activity, Agent};
@@ -31,6 +32,8 @@ pub struct Status {
     pub worker_cap: u32,
     pub limits: Limits,
     pub budget: Budget,
+    /// The latest review verdict on each open PR that has one.
+    pub reviews: Vec<ReviewStatus>,
     /// Parts that couldn't be read, and why.
     pub warnings: Vec<String>,
 }
@@ -45,7 +48,7 @@ pub struct WorkerStatus {
     pub draft: bool,
     pub session_name: String,
     /// `running`, `stopped`, or `unknown` when `claude agents` doesn't list
-    /// the session.
+    /// the session. `lost` when the supervisor found it can't be resumed.
     pub session: &'static str,
     /// `working`, `waiting`, `done`, `failed` or `unknown`.
     pub activity: &'static str,
@@ -55,6 +58,14 @@ pub struct WorkerStatus {
     /// What the next message will cost: the context re-read from the cache
     /// when it's warm, or written to it again when it's cold.
     pub wake_cost: Option<Estimate>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewStatus {
+    pub pr: u64,
+    /// The head commit the verdict is for.
+    pub sha: String,
+    pub passed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +110,18 @@ pub fn status(cwd: &Path) -> Result<Status, Failure> {
             fleet_token_budget: policy.settings.fleet_token_budget,
             run_started_at: state.run_started_at.clone(),
         },
+        reviews: state
+            .reviews
+            .iter()
+            .filter(|(pr, review)| {
+                !review.sha.is_empty() && prs.iter().any(|(_, number, _)| number == *pr)
+            })
+            .map(|(pr, review)| ReviewStatus {
+                pr: *pr,
+                sha: review.sha.clone(),
+                passed: review.passed,
+            })
+            .collect(),
         warnings,
     })
 }
@@ -143,6 +166,7 @@ fn workers(
                 draft: pr.is_some_and(|(_, _, draft)| *draft),
                 session_name: worker.session_name.clone(),
                 session: match agent {
+                    _ if state.observed.get(name) == Some(&Observed::Lost) => "lost",
                     Some(agent) if agent.pid.is_some() => "running",
                     Some(_) => "stopped",
                     None => "unknown",
@@ -262,6 +286,18 @@ impl fmt::Display for Status {
         write!(f, "Workers: {} of {}", self.workers.len(), self.worker_cap)?;
         for worker in &self.workers {
             write!(f, "\n  {}", worker)?;
+        }
+        if !self.reviews.is_empty() {
+            write!(f, "\nReviews:")?;
+        }
+        for review in &self.reviews {
+            write!(
+                f,
+                "\n  PR #{} {} at {}",
+                review.pr,
+                if review.passed { "passed" } else { "failed" },
+                &review.sha[..review.sha.len().min(7)]
+            )?;
         }
         for warning in &self.warnings {
             write!(f, "\nwarning: {warning}")?;
