@@ -17,21 +17,33 @@ use crate::state::{Event, State, Store};
 /// Under the 1-hour cache's lifetime, with time for the turn to start.
 pub const INTERVAL: SignedDuration = SignedDuration::from_secs(55 * 60);
 
-/// Whether a heartbeat is due `now`: a session holds the claim, and no event
-/// was recorded for `INTERVAL`. Every event reaches the orchestrator within
-/// seconds of being recorded, and refreshes its cache as a heartbeat would.
-/// With no event yet, it counts from the claim.
-pub fn due(store: &Store, state: &State, now: Timestamp) -> Result<bool, Failure> {
+/// Whether a heartbeat is due `now`: a session holds the claim, and it has
+/// had nothing for `INTERVAL`. Its last turn is the latest of the last event
+/// recorded (every event reaches it within seconds, and refreshes its cache
+/// as a heartbeat would), the claim, and its own last request, `last_request`,
+/// such as a conversation with the owner.
+pub fn due(
+    store: &Store,
+    state: &State,
+    last_request: Option<Timestamp>,
+    now: Timestamp,
+) -> Result<bool, Failure> {
     let Some(holder) = &state.orchestrator else {
         return Ok(false);
     };
-    let since = match last_event_at(&store.dir().join("events.jsonl"))? {
-        Some(at) => at,
-        None => holder
-            .claimed_at
-            .parse()
-            .map_err(|err| Failure::Error(format!("the claim's time is invalid: {err}")))?,
-    };
+    let claimed_at: Timestamp = holder
+        .claimed_at
+        .parse()
+        .map_err(|err| Failure::Error(format!("the claim's time is invalid: {err}")))?;
+    let since = [
+        last_event_at(&store.dir().join("events.jsonl"))?,
+        Some(claimed_at),
+        last_request,
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+    .expect("the claim's time is always there");
     Ok(now.duration_since(since) >= INTERVAL)
 }
 

@@ -45,7 +45,7 @@ fn no_heartbeat_without_a_claim() {
     let dir = TempDir::new().unwrap();
     let store = Store::at(dir.path().to_path_buf());
     let state = store.read().unwrap();
-    assert!(!heartbeat::due(&store, &state, at("23:00:00")).unwrap());
+    assert!(!heartbeat::due(&store, &state, None, at("23:00:00")).unwrap());
 }
 
 #[test]
@@ -53,8 +53,8 @@ fn due_55_minutes_after_the_claim_when_nothing_happened() {
     let dir = TempDir::new().unwrap();
     let store = Store::at(dir.path().to_path_buf());
     let state = claimed(&store);
-    assert!(!heartbeat::due(&store, &state, at("10:54:59")).unwrap());
-    assert!(heartbeat::due(&store, &state, at("10:55:00")).unwrap());
+    assert!(!heartbeat::due(&store, &state, None, at("10:54:59")).unwrap());
+    assert!(heartbeat::due(&store, &state, None, at("10:55:00")).unwrap());
 }
 
 #[test]
@@ -63,12 +63,27 @@ fn any_event_puts_it_off() {
     let store = Store::at(dir.path().to_path_buf());
     let state = claimed(&store);
     event_at(&store, "10:30:00");
-    assert!(!heartbeat::due(&store, &state, at("11:24:59")).unwrap());
-    assert!(heartbeat::due(&store, &state, at("11:25:00")).unwrap());
+    assert!(!heartbeat::due(&store, &state, None, at("11:24:59")).unwrap());
+    assert!(heartbeat::due(&store, &state, None, at("11:25:00")).unwrap());
     // A heartbeat is an event too, so the next is 55 minutes after it.
     event_at(&store, "11:25:00");
-    assert!(!heartbeat::due(&store, &state, at("12:19:59")).unwrap());
-    assert!(heartbeat::due(&store, &state, at("12:20:00")).unwrap());
+    assert!(!heartbeat::due(&store, &state, None, at("12:19:59")).unwrap());
+    assert!(heartbeat::due(&store, &state, None, at("12:20:00")).unwrap());
+}
+
+#[test]
+fn it_counts_from_the_latest_of_the_last_event_the_claim_and_the_last_request() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::at(dir.path().to_path_buf());
+    // An event from before the claim doesn't count.
+    event_at(&store, "08:00:00");
+    let state = claimed(&store);
+    assert!(!heartbeat::due(&store, &state, None, at("10:54:59")).unwrap());
+    assert!(heartbeat::due(&store, &state, None, at("10:55:00")).unwrap());
+    // A conversation with the owner puts it off too.
+    let request = Some(at("10:40:00"));
+    assert!(!heartbeat::due(&store, &state, request, at("11:34:59")).unwrap());
+    assert!(heartbeat::due(&store, &state, request, at("11:35:00")).unwrap());
 }
 
 #[test]
@@ -82,7 +97,7 @@ fn a_torn_last_line_falls_back_to_the_event_before() {
         .open(store.dir().join("events.jsonl"))
         .unwrap();
     write!(file, r#"{{"seq":2,"ts":"2026-11-02T11:2"#).unwrap();
-    assert!(heartbeat::due(&store, &state, at("11:25:00")).unwrap());
+    assert!(heartbeat::due(&store, &state, None, at("11:25:00")).unwrap());
 }
 
 #[test]

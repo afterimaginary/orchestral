@@ -155,6 +155,13 @@ pub fn resolve(cwd: &Path, name: &str) -> Result<Address, Failure> {
 }
 
 /// Session records whose process is alive.
+/// Whether a live session has `session_id`.
+pub(crate) fn is_live(session_id: &str) -> Result<bool, Failure> {
+    Ok(live_records()?
+        .iter()
+        .any(|record| record.session_id == session_id))
+}
+
 fn live_records() -> Result<Vec<Record>, Failure> {
     let Some(dir) = sessions::records_dir() else {
         return Ok(vec![]);

@@ -4,8 +4,7 @@
 //! Every 2 seconds it checks the workers and records an event when one needs
 //! someone; every minute it polls GitHub, logs the fleet's usage and writes
 //! a heartbeat when one is due, and every 5 minutes it logs the plan
-//! windows. It keeps
-//! the machine awake while the fleet has work.
+//! windows. It keeps the machine awake while the fleet has work.
 
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -291,16 +290,25 @@ fn fleet_usage(store: &Store) -> Result<crate::budget::Estimate, Failure> {
 fn beat(store: &Store, used: Option<&crate::budget::Estimate>) -> Result<Option<String>, Failure> {
     let state = store.read()?;
     let now = jiff::Timestamp::now();
-    if !heartbeat::due(store, &state, now)? {
+    // A holder whose session ended can't be woken, and its successor would
+    // get every beat at once.
+    let Some(holder) = &state.orchestrator else {
+        return Ok(None);
+    };
+    if !crate::claim::is_live(&holder.session_id)? {
         return Ok(None);
     }
     let main = crate::spawn::main_checkout(store.dir())?;
-    let context = state.orchestrator.as_ref().and_then(|holder| {
-        let path = transcript::find(&transcript::projects_dir()?, &main, &holder.session_id)?;
-        transcript::read(&path, now, crate::status::organization().as_deref())
-            .ok()?
-            .percent
-    });
+    let context = transcript::projects_dir()
+        .and_then(|projects| transcript::find(&projects, &main, &holder.session_id))
+        .and_then(|path| {
+            transcript::read(&path, now, crate::status::organization().as_deref()).ok()
+        });
+    let last_request = context.as_ref().and_then(|context| context.last_request_at);
+    if !heartbeat::due(store, &state, last_request, now)? {
+        return Ok(None);
+    }
+    let context = context.and_then(|context| context.percent);
     let budget = used
         .zip(Policy::load(&main).ok())
         .map(|(used, policy)| (used.estimated_tokens, policy.settings.fleet_token_budget));
