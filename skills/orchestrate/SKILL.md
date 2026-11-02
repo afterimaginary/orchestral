@@ -45,10 +45,11 @@ Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as ever
 
 The approved list is the open issues without `untriaged`. The fleet works only on those, so it never grows its own scope.
 
-- New significant work found during the run, such as a feature, or a change beyond an issue's criteria, becomes an issue with the `untriaged` label: `gh issue create --label untriaged`. Nobody starts it. A small fix in code a worker is already changing stays in that worker's PR.
+- New significant work found during the run, such as a feature, or a change beyond an issue's criteria, becomes an issue with the `untriaged` label: `gh issue create --label untriaged`. If the repository has no such label yet, create it first with `gh label create untriaged`, and likewise for `needs-discussion` and `blocked`. Nobody starts it. A small fix in code a worker is already changing stays in that worker's PR.
 - Untriaged issues wait for the owner's batch approval. Ask once, when the approved list is nearly done or a milestone ends, listing each untriaged issue with one line on why it matters. Don't ask again while they wait.
 - The owner approves an issue by removing `untriaged`, which adds it to the approved list, and declines one by closing it as not planned. Never remove the label yourself unless the owner tells you to in this session.
 - The run ends when every approved issue is closed and no worker is open. Tell the owner the run is done, list what merged, and list the untriaged issues that still wait for approval. Then start nothing more until the owner approves new work.
+- When no worker is open and no approved issue can start, because each waits on a dependency the owner declined or hasn't approved, or on a decision, the run is stalled. Tell the owner once, listing each waiting issue and what it waits on.
 
 ## Keep in touch
 
@@ -77,10 +78,9 @@ Fleet events arrive as notifications from the `orchestral-events` monitor, one l
 
   If spawn refuses because the fleet is at its worker cap, start the reviewer as soon as a slot frees, before any new issue.
 - **A PR merged:** its worker is finished. Remove it, and its reviewer if it has one, with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral cleanup <name>`, which frees their slots. Then start the next ready issue if there's a free slot. If no approved issue is left open and no worker is open, the run is done.
-- **A PR closed without merging, or an issue closed:** stop the worker if it's still on it, and remove it with `cleanup` once it has no open PR. Don't restart the work unless the owner asks.
+- **A PR closed without merging, or an issue closed:** stop the worker if it's still on it, and remove it with `cleanup` once it has no open PR. Don't restart the work unless the owner asks. If no approved issue is left open and no worker is open, the run is done.
 - **An issue opened:** decide whether it's ready for a worker, as in Start work. An `untriaged` one waits for the owner, as in Scope and the end of a run.
 - **An issue approved:** it lost `untriaged`, so decide whether it's ready for a worker.
-- **An issue closed with no worker:** if no approved issue is left open and no worker is open, the run is done.
 - **A heartbeat:** nothing to do. It keeps your cache warm. Never message a worker because of one.
 - **Limits or budget:** follow the refusal rules in Start work. Past the plan limit, workers finish their turn and you start nothing new until the reset. When the budget is reached, ask the owner how to continue.
 - **Polls failed:** tell the owner GitHub can't be read, with the error, once.
