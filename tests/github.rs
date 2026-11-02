@@ -248,7 +248,7 @@ fn issues_and_prs_produce_one_event_per_change() {
         "pr #40 \"Add login\" (worker issue-12): CI failed: have issue-12 fix it",
         "pr #42 \"Docs\" (branch docs): opened, ready for review: route it for review",
         "pr #42 \"Docs\" (branch docs): CI passed: no action needed",
-        "pr #41 \"Bump deps\" (branch deps): merged: no action needed",
+        "pr #41 \"Bump deps\" (branch deps): merged: start any work it unblocks",
     ];
     assert_eq!(lines, expected);
     assert_eq!(repo.events(), expected);
@@ -271,7 +271,9 @@ fn a_worker_s_pr_merging_or_closing_names_the_worker() {
     });
     assert_eq!(
         merged,
-        ["pr #40 \"Add login\" (worker issue-12): merged: clean up issue-12"]
+        [
+            "pr #40 \"Add login\" (worker issue-12): merged: clean up issue-12, and start any work it unblocks"
+        ]
     );
 
     let repo = Repo::new();
@@ -412,7 +414,9 @@ fn a_pr_whose_outcome_can_t_be_read_fails_the_poll_and_is_read_again() {
     });
     assert_eq!(
         lines,
-        ["pr #40 \"Add login\" (worker issue-12): merged: clean up issue-12"]
+        [
+            "pr #40 \"Add login\" (worker issue-12): merged: clean up issue-12, and start any work it unblocks"
+        ]
     );
 }
 
