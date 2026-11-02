@@ -6,7 +6,7 @@
 //! a partial write and doesn't need the lock.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -58,8 +58,9 @@ impl Store {
             .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
         if !output.status.success() {
             return Err(Failure::Error(format!(
-                "{} isn't inside a git repository",
-                cwd.display()
+                "can't find the git repository for {}: {}",
+                cwd.display(),
+                String::from_utf8_lossy(&output.stderr).trim_end()
             )));
         }
         let common = String::from_utf8_lossy(&output.stdout)
@@ -86,16 +87,20 @@ impl Store {
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(State::default()),
             Err(err) => return Err(io_error(&path, err)),
         };
-        let state: State = serde_json::from_str(&text)
-            .map_err(|err| Failure::Error(format!("{} is invalid: {err}", path.display())))?;
-        if state.schema != SCHEMA {
+        let invalid = |err: serde_json::Error| {
+            Failure::Error(format!("{} is invalid: {err}", path.display()))
+        };
+        // Check the version before the shape, since another schema may have
+        // a different one.
+        let value: serde_json::Value = serde_json::from_str(&text).map_err(invalid)?;
+        let schema = &value["schema"];
+        if *schema != SCHEMA {
             return Err(Failure::Error(format!(
-                "{} has schema {}, and this orchestral reads schema {SCHEMA}",
+                "{} has schema {schema}, and this orchestral reads schema {SCHEMA}",
                 path.display(),
-                state.schema
             )));
         }
-        Ok(state)
+        serde_json::from_value(value).map_err(invalid)
     }
 
     /// Changes the state under the lock, and writes it back atomically.
@@ -124,11 +129,18 @@ impl Store {
         let path = self.dir.join("events.jsonl");
         let mut line = serde_json::to_string(&event).expect("an event always serializes");
         line.push('\n');
-        OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(&path)
-            .and_then(|mut file| file.write_all(line.as_bytes()))
+            .map_err(|err| io_error(&path, err))?;
+        // A crash mid-append leaves a line without its newline. End it, so
+        // the torn line can't swallow this event.
+        if !ends_with_newline(&mut file).map_err(|err| io_error(&path, err))? {
+            line.insert(0, '\n');
+        }
+        file.write_all(line.as_bytes())
             .map_err(|err| io_error(&path, err))?;
         Ok(event)
     }
@@ -149,9 +161,8 @@ impl Store {
 
     fn write(&self, state: &State) -> Result<(), Failure> {
         let path = self.dir.join("state.json");
-        let temp = self
-            .dir
-            .join(format!("state.json.{}.tmp", std::process::id()));
+        // Writes hold the lock, so one temp name is enough.
+        let temp = self.dir.join("state.json.tmp");
         let json = serde_json::to_string_pretty(state).expect("state always serializes");
         let mut file = File::create(&temp).map_err(|err| io_error(&temp, err))?;
         file.write_all(json.as_bytes())
@@ -159,6 +170,17 @@ impl Store {
             .map_err(|err| io_error(&temp, err))?;
         fs::rename(&temp, &path).map_err(|err| io_error(&path, err))
     }
+}
+
+/// Whether a file is empty or ends with a newline.
+fn ends_with_newline(file: &mut File) -> std::io::Result<bool> {
+    if file.metadata()?.len() == 0 {
+        return Ok(true);
+    }
+    let mut last = [0];
+    file.seek(SeekFrom::End(-1))?;
+    file.read_exact(&mut last)?;
+    Ok(last[0] == b'\n')
 }
 
 fn io_error(path: &Path, err: std::io::Error) -> Failure {

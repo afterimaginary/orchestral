@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use std::thread;
 
+use orchestral::outcome::Failure;
 use orchestral::state::{Event, SCHEMA, State, Store};
 use tempfile::TempDir;
 
@@ -102,17 +103,39 @@ fn an_update_is_written_and_leaves_no_temp_file() {
 }
 
 #[test]
-fn a_state_from_another_schema_is_an_error() {
+fn a_state_from_another_schema_is_a_schema_error() {
     let dir = TempDir::new().unwrap();
+    // Another schema can have another shape, here with no `next_seq`.
     fs::write(
         dir.path().join("state.json"),
-        r#"{"schema": 99, "next_seq": 1}"#,
+        r#"{"schema": 2, "workers": {}}"#,
     )
     .unwrap();
 
-    let result = Store::at(dir.path().to_owned()).read();
+    let Err(Failure::Error(message)) = Store::at(dir.path().to_owned()).read() else {
+        panic!("expected an error");
+    };
 
-    assert!(result.is_err());
+    assert!(message.contains("has schema 2"), "{message}");
+}
+
+#[test]
+fn an_event_after_a_torn_line_stays_on_its_own_line() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::at(dir.path().to_owned());
+    store.record("test", "whole").unwrap();
+    let path = dir.path().join("events.jsonl");
+    let mut torn = fs::read_to_string(&path).unwrap();
+    torn.push_str(r#"{"seq":2,"ts":"#);
+    fs::write(&path, torn).unwrap();
+
+    store.record("test", "after").unwrap();
+
+    let text = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3);
+    let last: Event = serde_json::from_str(lines[2]).unwrap();
+    assert_eq!(last.text, "after");
 }
 
 #[test]
