@@ -170,7 +170,9 @@ impl Launch<'_> {
             let settings = dir.join("settings.json");
             let prompt = dir.join("prompt.md");
             write(&settings, &settings_json(name, self.main, &plugin_ids()?)?)?;
-            write(&prompt, &worker_prompt(name, request.issue))?;
+            let exe = std::env::current_exe()
+                .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
+            write(&prompt, &worker_prompt(name, request.issue, &exe))?;
             // Recorded before launching, so a crash leaves a visible entry.
             // Pause and the cap are checked again under the lock, so two
             // spawns at once can't both take the last place.
@@ -402,14 +404,16 @@ fn plugin_ids() -> Result<Vec<String>, Failure> {
         .collect())
 }
 
-fn worker_prompt(name: &str, issue: u64) -> String {
-    // Spawn runs from the orchestrator's own session.
-    let orchestrator = std::env::var("CLAUDE_CODE_SESSION_ID")
-        .unwrap_or_else(|_| "the session that started you".into());
+fn worker_prompt(name: &str, issue: u64, orchestral: &Path) -> String {
+    // A worker runs with the plugin turned off, so it calls this binary by
+    // its path (ADR-0001).
     include_str!("prompts/worker.md")
         .replace("{{name}}", name)
         .replace("{{issue}}", &issue.to_string())
-        .replace("{{orchestrator}}", &orchestrator)
+        .replace(
+            "{{orchestral}}",
+            &shell_quote(&orchestral.display().to_string()),
+        )
 }
 
 /// The job id from `backgrounded · <id> · <name>`, after removing any ANSI
@@ -526,9 +530,10 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_worker_and_its_issue() {
-        let prompt = worker_prompt("issue-12", 12);
+        let prompt = worker_prompt("issue-12", 12, Path::new("/opt/orchestral"));
 
         assert!(prompt.starts_with("You are worker issue-12 on issue #12."));
+        assert!(prompt.contains("`'/opt/orchestral' resolve orchestrator`"));
         assert!(prompt.contains("Start every GitHub comment with <!-- orchestral -->."));
         assert!(prompt.contains("Never merge"));
         assert!(!prompt.contains("{{"));

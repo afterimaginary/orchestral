@@ -475,3 +475,35 @@ fn a_comment_on_a_pr_closed_earlier_is_still_called_a_pr() {
         ["pr #99: comment from owner: \"Thanks for this\": answer it if it needs you"]
     );
 }
+
+#[test]
+fn only_an_escalation_raised_during_the_run_counts() {
+    let repo = Repo::new();
+    let store = repo.store();
+    let with = |labelled: &[u64]| GitHub {
+        issues: [12, 13]
+            .iter()
+            .map(|&n| {
+                let labels: &[&str] = if labelled.contains(&n) {
+                    &["needs-discussion"]
+                } else {
+                    &[]
+                };
+                issue(n, "Work", labels)
+            })
+            .collect(),
+        ..GitHub::default()
+    };
+    // #13 was already waiting on the owner before the run.
+    repo.poll(&with(&[13]));
+    assert!(!github::has_escalation(&store));
+
+    repo.poll(&with(&[12, 13]));
+    assert_eq!(repo.snapshot().escalations, [12].into());
+    assert!(github::has_escalation(&store));
+    repo.poll(&with(&[12, 13]));
+    assert!(github::has_escalation(&store));
+
+    repo.poll(&with(&[13]));
+    assert!(!github::has_escalation(&store));
+}

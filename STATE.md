@@ -37,11 +37,13 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Supervisor ticks and worker events (#28), and the event stream: `orchestral watch` and the plugin monitor (#29)
 - GitHub events from a minute poll (#30)
 - Idle heartbeat every 55 minutes, keeping the orchestrator's cache warm (#32)
+- The skill reacts to fleet events (#31)
+- Worker questions: workers reach their orchestrator through `resolve`, escalations wait on `needs-discussion` and keep the supervisor running (#35)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next dependency order (#34).
+2. Milestone 3 (Autonomous loop), next dependency order (#34) and planning from a brief (#33).
 
 ## Needs Your Decision
 
