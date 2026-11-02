@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 3;
+pub const SCHEMA: u32 = 4;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -27,6 +27,11 @@ pub struct State {
     pub workers: BTreeMap<String, Worker>,
     /// The session that claimed this repository, if any.
     pub orchestrator: Option<Orchestrator>,
+    /// While set, spawns are refused.
+    pub paused: bool,
+    /// When the current run started, in RFC 3339 UTC. The fleet budget
+    /// counts from here.
+    pub run_started_at: Option<String>,
 }
 
 /// The session acting as orchestrator.
@@ -44,6 +49,8 @@ impl Default for State {
             next_seq: 1,
             workers: BTreeMap::new(),
             orchestrator: None,
+            paused: false,
+            run_started_at: None,
         }
     }
 }

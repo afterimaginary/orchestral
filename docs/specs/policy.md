@@ -21,7 +21,7 @@ Always ask me before changing auth, payments or migrations.
 | --- | --- | --- |
 | `fleet_token_budget` | none, required | Tokens the whole fleet may use in a run. A whole number above 0. |
 | `workers` | `3` | Most worker and reviewer sessions running at once. |
-| `plan_limit_percent` | `85` | Plan usage, in percent, past which no new session starts. |
+| `plan_limit_percent` | `85` | Plan usage, in percent, at or past which no new session starts. Any window counts. |
 | `default_model` | `claude-opus-5-5` | Model for a session that doesn't name one. |
 | `default_effort` | `high` | Effort for a session that doesn't name one. |
 | `merge_method` | `squash` | `squash`, `merge` or `rebase`. |

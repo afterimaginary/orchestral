@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, still running. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, still running. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget, `pause`, `unpause`, `stop`, `resume`, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -27,7 +27,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Context and cache state read from transcripts (`docs/specs/claude-code-internals.md`)
 - Session reader: session records, pid liveness and `claude agents --json`
 - Fleet token accounting, shown as an estimate (`docs/specs/budget.md`)
-- `orchestral spawn`: starts a worker in its own worktree, with its own settings and prompt
+- `orchestral spawn`: starts a worker in its own worktree, with its own settings and prompt, and refuses past the fleet's limits
 - `orchestral stop` and `resume`: pause a worker and pick it up later
 - `orchestral claim` and `resolve`: one orchestrator per repository, and checked messaging addresses
 - Worker guard and pre-push hooks: workers can't merge, approve, push to `main`, or post `/approve` or `/hold`
@@ -37,7 +37,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 ## Up Next
 
 1. Finish milestone 1: #2 (a long idle) needs at least 48 idle hours.
-2. Milestone 2 (Core), in work order, next refusing at limits (#20), then fleet status (#22) and the supervisor (#25).
+2. Milestone 2 (Core), in work order, next fleet status (#22), then the supervisor (#25).
 
 ## Needs Your Decision
 

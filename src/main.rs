@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{claim, guard, limits, setup, spawn, stop};
+use orchestral::{claim, gate, guard, limits, setup, spawn, stop};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -68,6 +68,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Refuse new spawns until `unpause`.
+    Pause {
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Allow spawns again after `pause`.
+    Unpause {
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Set up this repository: policy template, pre-push hook, checks.
     Init {
         /// Print JSON instead of text.
@@ -119,6 +131,10 @@ fn main() -> ExitCode {
 fn run(command: Command) -> Result<(), Failure> {
     match command {
         Command::Limits { json } => outcome::print(&limits::read(), json),
+        Command::Pause { json } => outcome::print(&gate::set_paused(&current_dir()?, true)?, json),
+        Command::Unpause { json } => {
+            outcome::print(&gate::set_paused(&current_dir()?, false)?, json)
+        }
         Command::Spawn {
             name,
             issue,
