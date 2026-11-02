@@ -202,3 +202,14 @@ fn a_torn_line_waits_for_its_newline() {
     fs::write(&events, text).unwrap();
     assert_eq!(watch.line(QUIET).as_deref(), Some("one"));
 }
+
+#[test]
+fn a_cursor_from_before_a_state_reset_is_ignored() {
+    let repo = Repo::new();
+    repo.claim(ME);
+    repo.record("one");
+    fs::write(repo.store().dir().join("watch-cursor"), "50\n").unwrap();
+    let watch = Watch::start(&repo.main, ME);
+    assert_eq!(watch.line(QUIET).as_deref(), Some("one"));
+    repo.wait_for_cursor("1\n");
+}

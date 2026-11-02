@@ -19,13 +19,18 @@ use crate::state::{Event, Store};
 /// starts printing within 2 seconds of a claim.
 const POLL: Duration = Duration::from_secs(1);
 
-/// Runs until stdout closes, which means its session has ended.
+/// Runs until its session ends: stdout closes, or the session that started
+/// it exits and leaves it orphaned.
 pub fn watch(cwd: &Path) -> Result<(), Failure> {
     let session_id = std::env::var("CLAUDE_CODE_SESSION_ID").unwrap_or_default();
     let mut store = None;
     let mut events = Events::default();
     let mut stdout = std::io::stdout().lock();
     loop {
+        // A silent watch never writes, so it can't notice stdout closing.
+        if std::os::unix::process::parent_id() == 1 {
+            return Ok(());
+        }
         // Outside a git repository it stays silent, but the directory may
         // become one later.
         if store.is_none() {
@@ -34,14 +39,15 @@ pub fn watch(cwd: &Path) -> Result<(), Failure> {
         if let Some(store) = &store
             && !session_id.is_empty()
         {
-            for line in deliverable(store, &session_id, &mut events) {
+            let (lines, last) = deliverable(store, &session_id, &mut events);
+            for line in lines {
                 writeln!(stdout, "{line}")
                     .and_then(|()| stdout.flush())
                     .map_err(|err| Failure::Error(format!("can't print events: {err}")))?;
             }
             // Events already printed aren't read again by this process, so
             // a cursor it can't save only matters to a successor.
-            if let Some(seq) = events.delivered.take()
+            if let Some(seq) = last
                 && let Err(err) = save_cursor(store, seq)
             {
                 eprintln!("error: can't save the watch cursor: {err}");
@@ -51,38 +57,40 @@ pub fn watch(cwd: &Path) -> Result<(), Failure> {
     }
 }
 
-/// The lines to print now: events after the cursor, while `session_id`
-/// holds the claim. Anything unreadable counts as nothing to print, since a
-/// state written by a newer orchestral or a store not set up yet are both
-/// silent cases.
-fn deliverable(store: &Store, session_id: &str, events: &mut Events) -> Vec<String> {
+/// The lines to print now, events after the cursor while `session_id` holds
+/// the claim, and the last `seq` among them. Anything unreadable counts as
+/// nothing to print, since a state written by a newer orchestral or a store
+/// not set up yet are both silent cases.
+fn deliverable(store: &Store, session_id: &str, events: &mut Events) -> (Vec<String>, Option<u64>) {
     let Ok(state) = store.read() else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
     if state
         .orchestrator
         .is_none_or(|holder| holder.session_id != session_id)
     {
-        return Vec::new();
+        return (Vec::new(), None);
     }
-    let cursor = read_cursor(store);
+    let cursor = valid_cursor(store, state.next_seq);
     let Ok(new) = events.read_new(&store.dir().join("events.jsonl")) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
-    let new: Vec<Event> = new.into_iter().filter(|event| event.seq > cursor).collect();
-    events.delivered = new.last().map(|event| event.seq);
+    let new: Vec<Event> = new
+        .into_iter()
+        .filter(|event| event.seq > cursor.unwrap_or(0))
+        .collect();
     // An event is one line, whatever its text holds.
-    new.iter()
+    let lines = new
+        .iter()
         .map(|event| event.text.replace(['\r', '\n'], " "))
-        .collect()
+        .collect();
+    (lines, new.last().map(|event| event.seq))
 }
 
 /// Reads `events.jsonl` from where the last read ended, since it only grows.
 #[derive(Default)]
 struct Events {
     offset: u64,
-    /// The last `seq` read but not yet saved as the cursor.
-    delivered: Option<u64>,
 }
 
 impl Events {
@@ -113,17 +121,26 @@ impl Events {
     }
 }
 
-fn read_cursor(store: &Store) -> u64 {
+/// The cursor, unless it's at or past the next `seq`: then it outlived a
+/// reset state, and would hide the new events.
+fn valid_cursor(store: &Store, next_seq: u64) -> Option<u64> {
+    read_cursor(store).filter(|&cursor| cursor < next_seq)
+}
+
+fn read_cursor(store: &Store) -> Option<u64> {
     fs::read_to_string(store.dir().join("watch-cursor"))
         .ok()
         .and_then(|text| text.trim().parse().ok())
-        .unwrap_or(0)
 }
 
 /// Saves the cursor after the lines are printed, so a crash in between
-/// repeats an event rather than losing it. Only the claim holder writes it,
-/// so it needs no lock.
+/// repeats an event rather than losing it. During a handoff the old holder
+/// can still be printing, so the cursor never moves back.
 fn save_cursor(store: &Store, seq: u64) -> std::io::Result<()> {
+    let next_seq = store.read().map_or(0, |state| state.next_seq);
+    if valid_cursor(store, next_seq).is_some_and(|cursor| cursor >= seq) {
+        return Ok(());
+    }
     let temp = store.dir().join("watch-cursor.tmp");
     fs::write(&temp, format!("{seq}\n"))?;
     fs::rename(&temp, store.dir().join("watch-cursor"))
