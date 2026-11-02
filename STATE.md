@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up: a minimal binary that only prints its version, the plugin manifest, `make ready` and `make verify`, and a `verify` check on a self-hosted runner. No product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up: a minimal binary that only prints its version, the plugin manifest, `make ready` and `make verify`, and a `verify` check on a self-hosted runner. No product behaviour exists yet. Milestone 1 is under way, and its test rigs live outside the repository, with results in `docs/decisions/`. The repository is private and written to be made public later.
 
 ## Features
 
@@ -17,10 +17,12 @@ The repository is set up: a minimal binary that only prints its version, the plu
 ## Recently Done
 
 - Repository setup and `verify` check
+- Milestones and issues filed for milestones 1 to 4
+- Plugin monitor shown to wake idle sessions, with a long idle still to test. Workers run with the plugin turned off (ADR-0001)
 
 ## Up Next
 
-1. File the milestones and issues
+1. Finish milestone 1, which tests the behaviour the design relies on (#2 to #9). #2 needs at least 48 idle hours and runs in the background.
 
 ## Needs Your Decision
 
