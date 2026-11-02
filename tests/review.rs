@@ -104,7 +104,7 @@ fn a_pass_is_recorded_for_the_head_commit() {
     assert!(review.passed);
     assert_eq!(
         repo.events(),
-        ["pr #40 (worker issue-12): review passed at 1111111: no action needed"]
+        ["pr #40 (worker issue-12): review passed at 1111111: clean up review-40"]
     );
 }
 
@@ -123,11 +123,13 @@ fn a_verdict_for_another_commit_is_refused() {
 fn two_failed_rounds_block_the_issue() {
     let repo = Repo::new();
 
-    let (first, stubs) = repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
+    let (first, _) = repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
     assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
     // A second verdict on the same commit isn't another round.
-    repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
+    let (again, stubs) = repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
+    assert_eq!(again.status.code(), Some(0), "{}", stderr(&again));
     assert!(stubs.calls("gh").iter().all(|call| call[0] != "issue"));
+    assert_eq!(repo.store().read().unwrap().reviews[&40].failed, [FIRST]);
 
     let (second, stubs) = repo.review(&["40", "--fail", "--sha", SECOND], SECOND, "OPEN");
 
@@ -139,14 +141,19 @@ fn two_failed_rounds_block_the_issue() {
                 .to_vec()
         )
     );
+    assert!(
+        stubs
+            .calls("gh")
+            .contains(&["label", "create", "blocked"].map(String::from).to_vec())
+    );
     let events = repo.events();
     assert_eq!(
         events.first().unwrap(),
-        "pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): have issue-12 fix it"
+        "pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): clean up review-40, and have issue-12 fix it"
     );
     assert_eq!(
         events.last().unwrap(),
-        "pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so stop issue-12 and move on"
+        "pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so clean up review-40 and issue-12, and move on"
     );
 }
 
@@ -163,4 +170,39 @@ fn a_closed_pr_or_one_without_a_reviewer_is_refused() {
     let (unreviewed, _) = repo.review(&["40", "--pass", "--sha", FIRST], FIRST, "OPEN");
     assert_eq!(unreviewed.status.code(), Some(2));
     assert!(stderr(&unreviewed).contains("PR #40 has no reviewer in this fleet"));
+}
+
+#[test]
+fn a_pass_after_a_fix_clears_the_failure() {
+    let repo = Repo::new();
+    repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
+
+    let (output, stubs) = repo.review(&["40", "--pass", "--sha", SECOND], SECOND, "OPEN");
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let review = &repo.store().read().unwrap().reviews[&40];
+    assert!(review.passed);
+    assert_eq!(review.sha, SECOND);
+    assert!(stubs.calls("gh").iter().all(|call| call[0] != "issue"));
+}
+
+#[test]
+fn a_failed_label_edit_records_nothing() {
+    let repo = Repo::new();
+    repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
+    let stubs = Stubs::new();
+    let view = json!({"state": "OPEN", "headRefOid": SECOND, "headRefName": "issue-12"});
+    stubs.respond("gh", &["pr", "view", "40"], &view.to_string(), 0);
+    stubs.respond("gh", &["issue", "edit"], "", 1);
+
+    let output = stubs
+        .orchestral()
+        .args(["review", "40", "--fail", "--sha", SECOND])
+        .current_dir(&repo.main)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(repo.store().read().unwrap().reviews[&40].failed, [FIRST]);
+    assert_eq!(repo.events().len(), 1);
 }

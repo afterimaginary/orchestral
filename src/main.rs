@@ -221,7 +221,10 @@ fn run(command: Command) -> Result<(), Failure> {
             let cwd = current_dir()?;
             let review_of = match role {
                 Role::Worker if pr.is_some() => {
-                    return Err(Failure::Error("--pr is only for `--role reviewer`".into()));
+                    return Err(Failure::Refused {
+                        reason: "--pr is only for `--role reviewer`".into(),
+                        fix: "drop --pr, or add `--role reviewer`".into(),
+                    });
                 }
                 Role::Worker => None,
                 Role::Reviewer => pr,

@@ -586,6 +586,6 @@ fn a_reviewer_needs_a_pr_and_a_worker_takes_none() {
     ]);
 
     assert_eq!(reviewer.status.code(), Some(1), "{}", stderr(&reviewer));
-    assert_eq!(worker.status.code(), Some(1), "{}", stderr(&worker));
+    assert_eq!(worker.status.code(), Some(2), "{}", stderr(&worker));
     assert!(stderr(&worker).contains("--pr is only for `--role reviewer`"));
 }

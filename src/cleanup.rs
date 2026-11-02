@@ -1,8 +1,9 @@
 //! `orchestral cleanup`: removing a finished worker, its worktree, branch
 //! and session.
 //!
-//! A worker is finished when its PR merged or closed. Git can't tell, since
-//! a squash merge leaves the branch's own commits unmerged.
+//! A worker is finished when its PR merged or closed, or failed its last
+//! review round. Git can't tell, since a squash merge leaves the branch's own
+//! commits unmerged.
 
 use std::fmt;
 use std::path::Path;
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::git::git;
 use crate::outcome::Failure;
+use crate::review::ROUNDS;
 use crate::sessions;
 use crate::spawn::main_checkout;
 use crate::state::{Store, Worker};
@@ -51,13 +53,19 @@ struct Pr {
 
 pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure> {
     let store = Store::for_repo(cwd)?;
-    let worker = store
-        .read()?
+    let mut state = store.read()?;
+    let worker = state
         .workers
         .remove(name)
         .ok_or_else(|| Failure::Error(format!("there's no worker named {name}")))?;
     let main = main_checkout(store.dir())?;
-    let pr = finished_pr(&main, name, &worker, force)?;
+    let blocked = |pr: u64| {
+        state
+            .reviews
+            .get(&pr)
+            .is_some_and(|review| review.failed.len() >= ROUNDS)
+    };
+    let pr = finished_pr(&main, name, &worker, force, blocked)?;
 
     let agent = match &worker.job_id {
         Some(job_id) => sessions::agents(Path::new("claude"))?
@@ -117,13 +125,16 @@ pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure
     })
 }
 
-/// The worker's merged or closed PR from this repository, if it has one,
-/// preferring a merged one. Refuses while one is open, unless `force`.
+/// The worker's finished PR from this repository, if it has one: an open one
+/// that failed its last review round, or else a merged or closed one,
+/// preferring a merged one. Refuses while one is open otherwise, unless
+/// `force`.
 fn finished_pr(
     main: &Path,
     name: &str,
     worker: &Worker,
     force: bool,
+    blocked: impl Fn(u64) -> bool,
 ) -> Result<Option<Pr>, Failure> {
     let output = Command::new("gh")
         .args([
@@ -152,6 +163,11 @@ fn finished_pr(
         .into_iter()
         .filter(|pr| !pr.is_cross_repository)
         .collect();
+    if let Some(open) = prs.iter().position(|pr| pr.state == "OPEN")
+        && blocked(prs[open].number)
+    {
+        return Ok(Some(prs.swap_remove(open)));
+    }
     if let Some(open) = prs.iter().find(|pr| pr.state == "OPEN")
         && !force
     {

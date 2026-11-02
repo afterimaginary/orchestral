@@ -173,7 +173,7 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         ticks.run(&store);
         // An open escalation keeps the run going while the owner decides.
         let open = match store.read() {
-            Ok(state) => !state.workers.is_empty() || github::has_escalation(&store),
+            Ok(state) => !state.workers.is_empty() || github::waits_on_owner(&store),
             Err(err) => {
                 log(&format!("can't read the state: {}", failure_text(&err)));
                 true
@@ -189,7 +189,7 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         // Checked again under the lock, so a worker spawned just now isn't
         // left without a supervisor.
         let exited = store.update(|state| {
-            if !state.workers.is_empty() || github::has_escalation(&store) {
+            if !state.workers.is_empty() || github::waits_on_owner(&store) {
                 return false;
             }
             if read_pid(&pid_path).is_some_and(|record| record.pid == pid) {

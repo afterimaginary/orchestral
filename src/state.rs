@@ -40,7 +40,7 @@ pub struct State {
 }
 
 /// A reviewer's verdict on one commit of a PR.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Review {
     /// The head commit the verdict is for.
     pub sha: String,

@@ -501,16 +501,16 @@ fn only_an_escalation_raised_during_the_run_counts() {
     };
     // #13 was already waiting on the owner before the run.
     repo.poll(&with(&[13]));
-    assert!(!github::has_escalation(&store));
+    assert!(!github::waits_on_owner(&store));
 
     repo.poll(&with(&[12, 13]));
     assert_eq!(repo.snapshot().escalations, [12].into());
-    assert!(github::has_escalation(&store));
+    assert!(github::waits_on_owner(&store));
     repo.poll(&with(&[12, 13]));
-    assert!(github::has_escalation(&store));
+    assert!(github::waits_on_owner(&store));
 
     repo.poll(&with(&[13]));
-    assert!(!github::has_escalation(&store));
+    assert!(!github::waits_on_owner(&store));
 }
 
 #[test]
@@ -560,11 +560,11 @@ fn an_issue_blocked_during_the_run_waits_on_the_owner() {
         ..GitHub::default()
     };
     repo.poll(&with(&[]));
-    assert!(!github::has_escalation(&store));
+    assert!(!github::waits_on_owner(&store));
 
     repo.poll(&with(&["blocked"]));
-    assert!(github::has_escalation(&store));
+    assert!(github::waits_on_owner(&store));
 
     repo.poll(&with(&[]));
-    assert!(!github::has_escalation(&store));
+    assert!(!github::waits_on_owner(&store));
 }

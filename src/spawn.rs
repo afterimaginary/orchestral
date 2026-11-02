@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::git::git;
 use crate::outcome::Failure;
 use crate::policy::{Policy, Settings};
-use crate::state::{Store, Worker};
+use crate::state::{State, Store, Worker};
 use crate::{gate, limits, sessions};
 
 /// Claude Code renames a session whose name is taken, and names longer than
@@ -72,17 +72,7 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
             fix: "choose another name".into(),
         });
     }
-    if let Some(pr) = request.review_of
-        && let Some((other, _)) = state
-            .workers
-            .iter()
-            .find(|(_, worker)| worker.review_of == Some(pr))
-    {
-        return Err(Failure::Refused {
-            reason: format!("PR #{pr} already has a reviewer, {other}"),
-            fix: format!("wait for {other}'s verdict, or clean it up first"),
-        });
-    }
+    check_one_reviewer(&state, request.review_of)?;
     gate::check_capacity(&state, &policy.settings)?;
     let agents = match state.run_started_at {
         Some(_) => sessions::agents(Path::new("claude"))?,
@@ -157,6 +147,22 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
     })
 }
 
+/// Refuses a second reviewer for the same PR.
+fn check_one_reviewer(state: &State, review_of: Option<u64>) -> Result<(), Failure> {
+    if let Some(pr) = review_of
+        && let Some((other, _)) = state
+            .workers
+            .iter()
+            .find(|(_, worker)| worker.review_of == Some(pr))
+    {
+        return Err(Failure::Refused {
+            reason: format!("PR #{pr} already has a reviewer, {other}"),
+            fix: format!("wait for {other}'s verdict, or clean it up first"),
+        });
+    }
+    Ok(())
+}
+
 /// Whether a failed launch may have left a session running.
 enum Launched {
     No(Failure),
@@ -198,10 +204,11 @@ impl Launch<'_> {
             };
             write(&prompt, &text)?;
             // Recorded before launching, so a crash leaves a visible entry.
-            // Pause and the cap are checked again under the lock, so two
-            // spawns at once can't both take the last place.
+            // Pause, the cap and the PR's reviewer are checked again under
+            // the lock, so two spawns at once can't both take the last place.
             self.store.update(|state| {
                 gate::check_capacity(state, self.settings)?;
+                check_one_reviewer(state, request.review_of)?;
                 state.workers.insert(
                     name.clone(),
                     Worker {

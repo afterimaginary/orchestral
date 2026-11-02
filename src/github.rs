@@ -22,9 +22,12 @@ use crate::state::{State, Store};
 /// Marks an issue waiting on the owner's decision.
 pub const ESCALATION: &str = "needs-discussion";
 
-/// Labels that leave an issue waiting on the owner: an escalation, or work
-/// the fleet gave up on after failed reviews.
-const WAITS_ON_OWNER: [&str; 2] = [ESCALATION, crate::review::BLOCKED];
+/// Marks an issue the fleet gave up on after failed reviews, until the owner
+/// looks.
+pub const BLOCKED: &str = "blocked";
+
+/// Labels that leave an issue waiting on the owner.
+const WAITS_ON_OWNER: [&str; 2] = [ESCALATION, BLOCKED];
 
 /// Marks new work that waits for the owner's batch approval.
 pub const UNTRIAGED: &str = "untriaged";
@@ -145,7 +148,7 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
 
 /// Whether an issue escalated or blocked during the run still waits on the
 /// owner. An unreadable snapshot counts as none.
-pub fn has_escalation(store: &Store) -> bool {
+pub fn waits_on_owner(store: &Store) -> bool {
     read_snapshot(&store.dir().join("github.json"))
         .ok()
         .flatten()
@@ -615,7 +618,11 @@ fn number_from_url(url: &str) -> Option<u64> {
     url.rsplit('/').next()?.parse().ok()
 }
 
-fn gh_json<T: DeserializeOwned>(gh: &Path, main: &Path, args: &[&str]) -> Result<T, Failure> {
+pub(crate) fn gh_json<T: DeserializeOwned>(
+    gh: &Path,
+    main: &Path,
+    args: &[&str],
+) -> Result<T, Failure> {
     let stdout = gh_output(gh, main, args)?;
     serde_json::from_slice(&stdout).map_err(|err| unexpected(args, err))
 }
@@ -631,7 +638,7 @@ fn gh_pages<T: DeserializeOwned>(gh: &Path, main: &Path, args: &[&str]) -> Resul
     Ok(items)
 }
 
-fn gh_output(gh: &Path, main: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
+pub(crate) fn gh_output(gh: &Path, main: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
     let output = crate::deadline::output(
         Command::new(gh).args(args).current_dir(main),
         GH_DEADLINE,

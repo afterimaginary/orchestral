@@ -208,12 +208,12 @@ Commands are split at `;`, `&`, `|`, parentheses and newlines, with quotes and l
 
 Records a reviewer's verdict on PR `<pr>`'s head commit, in the state's `reviews`. It refuses, exiting `2`, when the PR isn't open, when `<sha>` (at least 7 characters) isn't the PR's current head, or when the fleet has no reviewer for the PR. A verdict holds only for the commit it names.
 
-A failed verdict on a commit that hasn't failed before is a round. On the second round, it adds the `blocked` label to the issue the reviewer was started for, and the fleet moves on. It records one `pr` event:
+A failed verdict on a commit that hasn't failed before is a round. On the second round, it adds the `blocked` label to the issue the reviewer was started for, creating the label if the repository lacks it, and the fleet moves on. The label is added before anything is recorded, so when it fails the verdict can be recorded again. It records one `pr` event:
 
 ```text
-pr #40 (worker issue-12): review passed at 1111111: no action needed
-pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): have issue-12 fix it
-pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so stop issue-12 and move on
+pr #40 (worker issue-12): review passed at 1111111: clean up review-40
+pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): clean up review-40, and have issue-12 fix it
+pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so clean up review-40 and issue-12, and move on
 ```
 
 ### `orchestral stop <name> [--json]`
@@ -234,9 +234,9 @@ Resumed issue-12 (job 558b988a). It's idle until it gets a message.
 
 ### `orchestral cleanup <name> [--force] [--json]`
 
-Removes a finished worker: its session, worktree and local branch, and its entry in the state. A worker is finished when its PR merged or closed, as `gh pr list --head <branch> --state all` shows. PRs from forks are ignored, and a merged PR is preferred over a closed one. Git isn't asked, since a squash merge leaves the branch's own commits off `main`. A worker with no PR, such as a reviewer, can be removed when its branch has no commits beyond `origin/main`, where it started.
+Removes a finished worker: its session, worktree and local branch, and its entry in the state. A worker is finished when its PR merged or closed, as `gh pr list --head <branch> --state all` shows, or when its open PR failed its last review round, which leaves the PR open for the owner. PRs from forks are ignored, and a merged PR is preferred over a closed one. Git isn't asked, since a squash merge leaves the branch's own commits off `main`. A worker with no PR, such as a reviewer, can be removed when its branch has no commits beyond `origin/main`, where it started.
 
-It refuses, exiting `2`, while the worker's PR is open, before touching anything. Otherwise it stops the session as `stop` does, so nothing lands after the check, and refuses when the worktree has uncommitted changes, when the branch has commits its PR's head doesn't contain (fetching `pull/<n>/head` when that head isn't local), or when it has commits and no PR. A refusal leaves the worker stopped, with its worktree and branch. `--force` skips these checks and discards that work. Like `stop`, it refuses anything but a background session.
+It refuses, exiting `2`, while the worker's PR is open and not blocked by reviews, before touching anything. Otherwise it stops the session as `stop` does, so nothing lands after the check, and refuses when the worktree has uncommitted changes, when the branch has commits its PR's head doesn't contain (fetching `pull/<n>/head` when that head isn't local), or when it has commits and no PR. A refusal leaves the worker stopped, with its worktree and branch. `--force` skips these checks and discards that work. Like `stop`, it refuses anything but a background session.
 
 Then it runs `git worktree remove`, after `git worktree prune` so a deleted worktree directory doesn't hold the branch, deletes the local branch, then runs `claude rm <job id>`, retrying for 15 seconds while the stopped session still holds its lock. It never runs `git clean`. A session `claude agents` no longer lists is skipped. It records a `<name> cleaned up` event.
 

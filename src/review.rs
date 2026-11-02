@@ -6,19 +6,16 @@
 
 use std::fmt;
 use std::path::Path;
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::github::{BLOCKED, gh_json, gh_output};
 use crate::outcome::Failure;
 use crate::spawn::main_checkout;
-use crate::state::{Review, Store};
+use crate::state::Store;
 
 /// Failed review rounds before the issue is blocked.
 pub const ROUNDS: usize = 2;
-
-/// The label for an issue the fleet has given up on until the owner looks.
-pub const BLOCKED: &str = "blocked";
 
 #[derive(Debug, Serialize)]
 pub struct Reviewed {
@@ -61,7 +58,9 @@ struct PrView {
 pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, Failure> {
     let store = Store::for_repo(cwd)?;
     let main = main_checkout(store.dir())?;
+    let gh = Path::new("gh");
     let view: PrView = gh_json(
+        gh,
         &main,
         &[
             "pr",
@@ -85,11 +84,11 @@ pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, 
         });
     }
     let state = store.read()?;
-    let Some(issue) = state
+    let Some((reviewer, issue)) = state
         .workers
-        .values()
-        .find(|worker| worker.review_of == Some(pr))
-        .map(|worker| worker.issue)
+        .iter()
+        .find(|(_, worker)| worker.review_of == Some(pr))
+        .map(|(name, worker)| (name.clone(), worker.issue))
     else {
         return Err(Failure::Refused {
             reason: format!("PR #{pr} has no reviewer in this fleet"),
@@ -102,28 +101,31 @@ pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, 
         .find(|(_, worker)| worker.branch == view.head_ref_name && worker.review_of.is_none())
         .map(|(name, _)| name.clone());
 
-    let review = store.update(|state| {
-        let review = state.reviews.entry(pr).or_insert_with(|| Review {
-            sha: head.clone(),
-            passed,
-            failed: Vec::new(),
-        });
-        review.sha = head.clone();
-        review.passed = passed;
-        // A second verdict on the same commit isn't another round.
-        if !passed && !review.failed.contains(&head) {
-            review.failed.push(head.clone());
-        }
-        review.clone()
-    })?;
-    let rounds = review.failed.len();
+    // A second verdict on the same commit isn't another round.
+    let mut failed = state.reviews.get(&pr).cloned().unwrap_or_default().failed;
+    if !passed && !failed.contains(&head) {
+        failed.push(head.clone());
+    }
+    let rounds = failed.len();
     let blocked = !passed && rounds >= ROUNDS;
+    // Labelled before anything is recorded, so a failure here leaves the
+    // verdict to be recorded again.
     if blocked {
-        gh(
+        // A new repository may not have the label yet. Creating one that
+        // exists fails, and the edit below reports anything else.
+        let _ = gh_output(gh, &main, &["label", "create", BLOCKED]);
+        gh_output(
+            gh,
             &main,
             &["issue", "edit", &issue.to_string(), "--add-label", BLOCKED],
         )?;
     }
+    store.update(|state| {
+        let review = state.reviews.entry(pr).or_default();
+        review.sha = head.clone();
+        review.passed = passed;
+        review.failed = failed;
+    })?;
 
     let fixer = author.as_deref().unwrap_or("its author");
     let subject = match &author {
@@ -132,14 +134,14 @@ pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, 
     };
     let at = short(&head);
     let line = if passed {
-        format!("{subject}: review passed at {at}: no action needed")
+        format!("{subject}: review passed at {at}: clean up {reviewer}")
     } else if blocked {
         format!(
-            "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): issue #{issue} is now blocked, so stop {fixer} and move on"
+            "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): issue #{issue} is now blocked, so clean up {reviewer} and {fixer}, and move on"
         )
     } else {
         format!(
-            "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): have {fixer} fix it"
+            "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): clean up {reviewer}, and have {fixer} fix it"
         )
     };
     store.record("pr", &line)?;
@@ -154,30 +156,4 @@ pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, 
 
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(7)]
-}
-
-fn gh(main: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
-    let output = Command::new("gh")
-        .args(args)
-        .current_dir(main)
-        .output()
-        .map_err(|err| Failure::Error(format!("can't run gh: {err}")))?;
-    if !output.status.success() {
-        return Err(Failure::Error(format!(
-            "gh {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        )));
-    }
-    Ok(output.stdout)
-}
-
-fn gh_json<T: serde::de::DeserializeOwned>(main: &Path, args: &[&str]) -> Result<T, Failure> {
-    let stdout = gh(main, args)?;
-    serde_json::from_slice(&stdout).map_err(|err| {
-        Failure::Error(format!(
-            "gh {} printed something unexpected: {err}",
-            args.join(" ")
-        ))
-    })
 }
