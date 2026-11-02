@@ -12,10 +12,12 @@ Requires a Rust toolchain. To run the checks before every push:
 git config core.hooksPath .githooks
 ```
 
-| Command       | Does                                                                     |
-| ------------- | ------------------------------------------------------------------------ |
-| `make ready`  | Format check, lints and tests.                                           |
-| `make verify` | `ready`, a release build and plugin validation. CI runs it on every PR.  |
+| Command       | Does                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| `make ready`  | Format check, lints, unit tests and CLI tests.                                             |
+| `make verify` | `ready`, integration tests, a release build and plugin validation. CI runs it on every PR. |
+
+Integration tests run offline: `tests/common/mod.rs` puts stub `claude`, `gh`, `portless` and `tailscale` scripts on `PATH`, which record their calls and reply with canned output. Output captured from Claude Code is kept under `tests/fixtures/claude/<version>/`.
 
 ## Documentation
 
