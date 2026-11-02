@@ -18,7 +18,7 @@ The repository is set up: a minimal binary that only prints its version, the plu
 
 - Repository setup and `verify` check
 - Milestones and issues filed for milestones 1 to 4
-- Plugin monitor shown to wake idle sessions, with a long idle still to test (ADR-0001, proposed)
+- Plugin monitor shown to wake idle sessions, with a long idle still to test. Workers run with the plugin turned off (ADR-0001)
 
 ## Up Next
 
@@ -26,7 +26,7 @@ The repository is set up: a minimal binary that only prints its version, the plu
 
 ## Needs Your Decision
 
-- #1 found that a running monitor makes an idle session look busy, which changes how idle workers are detected. ADR-0001 proposes that a worker's `watch` exits at once.
+- None.
 
 ## Notes
 
