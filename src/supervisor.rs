@@ -1,5 +1,6 @@
 //! The supervisor's lifecycle: `orchestral up` starts it detached, and it
-//! runs until no worker is open and the keepalive window has passed.
+//! runs until no worker or escalation is open and the keepalive window has
+//! passed.
 //!
 //! Every 2 seconds it checks the workers and records an event when one needs
 //! someone; every minute it polls GitHub, logs the fleet's usage and writes
@@ -170,8 +171,9 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
             return Ok(());
         }
         ticks.run(&store);
+        // An open escalation keeps the run going while the owner decides.
         let open = match store.read() {
-            Ok(state) => !state.workers.is_empty(),
+            Ok(state) => !state.workers.is_empty() || github::has_escalation(&store),
             Err(err) => {
                 log(&format!("can't read the state: {}", failure_text(&err)));
                 true
@@ -187,7 +189,7 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         // Checked again under the lock, so a worker spawned just now isn't
         // left without a supervisor.
         let exited = store.update(|state| {
-            if !state.workers.is_empty() {
+            if !state.workers.is_empty() || github::has_escalation(&store) {
                 return false;
             }
             if read_pid(&pid_path).is_some_and(|record| record.pid == pid) {
@@ -196,7 +198,7 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
             true
         })?;
         if exited {
-            log("no worker is open and the keepalive window has passed; exiting");
+            log("no worker or escalation is open and the keepalive window has passed; exiting");
             return Ok(());
         }
         idle_since = jiff::Timestamp::now();

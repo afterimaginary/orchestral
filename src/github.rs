@@ -19,6 +19,9 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 use crate::state::{State, Store};
 
+/// Marks an issue waiting on the owner's decision.
+pub const ESCALATION: &str = "needs-discussion";
+
 /// Marks Orchestral's own comments, which are never reported back.
 pub const MARKER: &str = "<!-- orchestral -->";
 
@@ -125,6 +128,20 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     }
     write_snapshot(&path, &snapshot)?;
     Ok(lines)
+}
+
+/// Whether an open issue in the last snapshot waits on the owner's
+/// decision. An unreadable snapshot counts as none.
+pub fn has_escalation(store: &Store) -> bool {
+    read_snapshot(&store.dir().join("github.json"))
+        .ok()
+        .flatten()
+        .is_some_and(|snapshot| {
+            snapshot
+                .issues
+                .values()
+                .any(|issue| issue.labels.iter().any(|label| label == ESCALATION))
+        })
 }
 
 /// What one successful read of GitHub found.

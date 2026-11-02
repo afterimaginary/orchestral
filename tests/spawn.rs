@@ -190,7 +190,12 @@ fn the_worker_gets_its_own_settings_and_prompt() {
     );
 
     let prompt = repo.worker_file("issue-12", "prompt.md");
-    assert!(prompt.contains(&format!("Your orchestrator is {ORCHESTRATOR}.")));
+    // The worker finds its orchestrator's address with this binary.
+    let resolve = format!(
+        "`'{}' resolve orchestrator`",
+        env!("CARGO_BIN_EXE_orchestral")
+    );
+    assert!(prompt.contains(&resolve), "{prompt}");
 }
 
 #[test]
