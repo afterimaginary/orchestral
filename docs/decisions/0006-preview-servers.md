@@ -21,20 +21,22 @@ A stand-in supervisor, a plain shell script detached with `nohup`, started two p
 | Restart one | SIGINT to the pid `portless list` showed removed its route and its `tailscale serve` entry. Starting it again gave a new local port, and its link was read from `portless list` and served the right content. |
 | Stop both | SIGINT to each pid shown removed both routes and both `tailscale serve` entries. No server processes were left. |
 
-The machine already had a stale `tailscale serve` entry on port 443, pointing at a local port with nothing listening. Because of it, the previews got ports 8443 and 8444 instead of 443 and 8443. In this run, the restarted preview happened to get its old tailnet port back, but that isn't guaranteed, because ports are handed out in start order.
+The machine already had a stale `tailscale serve` entry on port 443, pointing at local port 4249 with nothing listening. That's inside portless's 4000–4999 range, so #52's cleanup rule would have removed it. Because of it, the previews got ports 8443 and 8444 instead of 443 and 8443. In this run, the restarted preview happened to get its old tailnet port back, but that isn't guaranteed, because ports are handed out in start order.
 
 ## Decision
 
 - The supervisor starts each preview with `portless <name> --force <run command>`, detached, with `PORTLESS_TAILSCALE=1` when Tailscale is available. The `$PORT` with `tailscale serve` fallback isn't needed.
-- After every start, the supervisor reads the preview's link from `portless list`, and updates the PR comment if it changed.
+- `<name>` is `<repo slug>-pr-<n>`. An explicit name lets the supervisor find each PR's route in `portless list`, and doesn't depend on the project's own portless configuration. `portless run` would infer the name instead, and that form wasn't tested.
+- After every start, the supervisor reads the preview's link from `portless list` rather than assuming the previous one.
 - The supervisor stops a preview with SIGINT to the pid `portless list` shows for its route, never to a wrapper above it.
 - Before starting previews, the supervisor clears stale `tailscale serve` entries using the rule in #52. It never runs `tailscale serve reset`.
 
 ## Consequences
 
 - A preview survives the session and the process that started it, as long as the machine stays on.
-- A crash or hard kill leaves a stale entry, which pushes later previews to higher ports until it's cleared.
-- Without portless or Tailscale, previews fall back to plain `$PORT` on localhost (#51), and there's no link for other devices.
+- A crash or hard kill is expected to leave a stale entry, which pushes later previews to higher ports until it's cleared. This wasn't tested here (see Limits), but the pre-existing entry shows the effect.
+- Without Tailscale, previews still get a local portless route, but no link for other devices.
+- Without portless, previews fall back to plain `$PORT` on localhost (#51), also with no link for other devices.
 
 ## Limits
 
