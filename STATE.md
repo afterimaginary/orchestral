@@ -39,11 +39,13 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Idle heartbeat every 55 minutes, keeping the orchestrator's cache warm (#32)
 - The skill reacts to fleet events (#31)
 - Worker questions: workers reach their orchestrator through `resolve`, escalations wait on `needs-discussion` and keep the supervisor running (#35)
+- The pre-push hook keeps rejecting a worker's push to `main` after the binary moves, and `doctor` checks the hook (#88)
+- Work starts in dependency order: ready issues by milestone and priority, skipping ones that wait on an unmerged PR, an undecided design or already have a PR (#34)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop), next dependency order (#34) and planning from a brief (#33).
+2. Milestone 3 (Autonomous loop), next worker cleanup after a merge (#42), which frees the slot the next ready issue needs, then planning from a brief (#33).
 
 ## Needs Your Decision
 

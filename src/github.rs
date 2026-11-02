@@ -450,8 +450,10 @@ fn changes(
         .state
             == "MERGED";
         lines.push(match (merged, worker) {
-            (true, Some(worker)) => format!("{subject}: merged: clean up {worker}"),
-            (true, None) => format!("{subject}: merged: no action needed"),
+            (true, Some(worker)) => {
+                format!("{subject}: merged: clean up {worker}, and start any work it unblocks")
+            }
+            (true, None) => format!("{subject}: merged: start any work it unblocks"),
             (false, Some(worker)) => {
                 format!("{subject}: closed without merging: stop {worker} if it's still on it")
             }
