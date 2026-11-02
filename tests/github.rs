@@ -243,7 +243,7 @@ fn issues_and_prs_produce_one_event_per_change() {
     let (lines, _) = repo.poll(&now);
     let expected = [
         "issue #14 \"Dark mode\" opened [enhancement]: decide whether it's ready for a worker",
-        "issue #13 \"Fix typo\" closed: no action needed",
+        "issue #13 \"Fix typo\" closed: check whether any approved work is left",
         "pr #40 \"Add login\" (worker issue-12): ready for review: route it for review",
         "pr #40 \"Add login\" (worker issue-12): CI failed: have issue-12 fix it",
         "pr #42 \"Docs\" (branch docs): opened, ready for review: route it for review",
@@ -510,4 +510,42 @@ fn only_an_escalation_raised_during_the_run_counts() {
 
     repo.poll(&with(&[13]));
     assert!(!github::has_escalation(&store));
+}
+
+#[test]
+fn untriaged_work_waits_until_the_owner_approves_it() {
+    let repo = Repo::new();
+    repo.poll(&baseline());
+    let with = |issues| GitHub {
+        issues,
+        ..baseline()
+    };
+
+    let (opened, _) = repo.poll(&with(vec![
+        issue(12, "Add login", &[]),
+        issue(13, "Fix typo", &[]),
+        issue(14, "Dark mode", &["untriaged"]),
+        issue(15, "Export", &["untriaged"]),
+    ]));
+    assert_eq!(
+        opened,
+        [
+            "issue #14 \"Dark mode\" opened [untriaged]: it waits for the owner's approval; no action needed",
+            "issue #15 \"Export\" opened [untriaged]: it waits for the owner's approval; no action needed",
+        ]
+    );
+
+    // The owner approves #14 and declines #15.
+    let (decided, _) = repo.poll(&with(vec![
+        issue(12, "Add login", &[]),
+        issue(13, "Fix typo", &[]),
+        issue(14, "Dark mode", &[]),
+    ]));
+    assert_eq!(
+        decided,
+        [
+            "issue #14 \"Dark mode\" approved: decide whether it's ready for a worker",
+            "issue #15 \"Export\" closed: no action needed",
+        ]
+    );
 }

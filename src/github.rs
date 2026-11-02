@@ -22,6 +22,9 @@ use crate::state::{State, Store};
 /// Marks an issue waiting on the owner's decision.
 pub const ESCALATION: &str = "needs-discussion";
 
+/// Marks new work that waits for the owner's batch approval.
+pub const UNTRIAGED: &str = "untriaged";
+
 /// Marks Orchestral's own comments, which are never reported back.
 pub const MARKER: &str = "<!-- orchestral -->";
 
@@ -382,16 +385,28 @@ fn changes(
             .map(|(name, _)| name.as_str())
     };
 
+    let untriaged = |issue: &Issue| issue.labels.iter().any(|label| label == UNTRIAGED);
     for (number, issue) in &new.snapshot.issues {
-        if !old.issues.contains_key(number) {
-            let labels = match issue.labels.is_empty() {
-                true => String::new(),
-                false => format!(" [{}]", issue.labels.join(", ")),
-            };
-            lines.push(format!(
-                "issue #{number} \"{}\" opened{labels}: decide whether it's ready for a worker",
+        match old.issues.get(number) {
+            None => {
+                let labels = match issue.labels.is_empty() {
+                    true => String::new(),
+                    false => format!(" [{}]", issue.labels.join(", ")),
+                };
+                let action = match untriaged(issue) {
+                    true => "it waits for the owner's approval; no action needed",
+                    false => "decide whether it's ready for a worker",
+                };
+                lines.push(format!(
+                    "issue #{number} \"{}\" opened{labels}: {action}",
+                    issue.title
+                ));
+            }
+            Some(before) if untriaged(before) && !untriaged(issue) => lines.push(format!(
+                "issue #{number} \"{}\" approved: decide whether it's ready for a worker",
                 issue.title
-            ));
+            )),
+            Some(_) => {}
         }
     }
     for (number, issue) in &old.issues {
@@ -401,7 +416,13 @@ fn changes(
                     "issue #{number} \"{}\" closed (worker {worker}): stop the worker if it's still on it",
                     issue.title
                 ),
-                None => format!("issue #{number} \"{}\" closed: no action needed", issue.title),
+                None if untriaged(issue) => {
+                    format!("issue #{number} \"{}\" closed: no action needed", issue.title)
+                }
+                None => format!(
+                    "issue #{number} \"{}\" closed: check whether any approved work is left",
+                    issue.title
+                ),
             });
         }
     }
