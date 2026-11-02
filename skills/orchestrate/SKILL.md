@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a fleet of Claude Code workers on this repository's GitHub issues with Orchestral, within its policy and budget. Use when asked to orchestrate, start a fleet, or hand issues to workers.
+description: Plan a project from a brief and run a fleet of Claude Code workers on its GitHub issues with Orchestral, within its policy and budget. Use when asked to plan from a brief, orchestrate, start a fleet, or hand issues to workers.
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/orchestral *)
 ---
 
@@ -17,6 +17,26 @@ Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as ever
 3. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral up` to start the supervisor, or find it running.
 4. Read the policy as Orchestral enforces it, from `main` on the remote: `git show origin/main:.orchestral/policy.md`, or the local `.orchestral/policy.md` when there's no remote yet. Its settings are the fleet's limits, and the prose after them is the owner's rules for this project. Follow them.
 5. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status` to see the workers, plan windows, budget and pause state. Treat each worker that's already idle (`done`) with a `(draft)` PR as if it had just gone idle, since no event will say so.
+6. If the owner gave you a brief, or asked you to plan, plan first, as in Plan. Otherwise go on to Start work.
+
+## Plan
+
+A plan turns the owner's brief into milestones and issues. The owner approves it before anything is filed.
+
+1. Read the brief whole, then the repository and its open issues. When the owner asks to plan from the open issues, they're the starting point, and the brief is what the owner says about them.
+2. Work out the issues from what the brief means, not from any list in it. Split an item that holds two outcomes, merge items that can't be done apart, and add work the brief needs but doesn't name. Each issue is one outcome a worker can finish in one PR. Existing issues keep their numbers: plan changes to them, rather than copies.
+3. If the repository has no CI (no workflow under `.github/workflows/` that runs on pull requests), the first issue adds it. Every other issue depends on it.
+4. Group the issues into milestones, each one a usable step. Order them by dependency.
+5. Draft each issue with these sections:
+   - **Outcome:** what's true once it's done, in a sentence or two.
+   - **Acceptance criteria:** a checklist a reviewer can check against the PR.
+   - **Non-goals:** what's left out, naming the neighbouring issue that does it wherever the two could overlap.
+   - **Constraints and dependencies:** `Depends on #n` for each issue that must merge first, and `Needs a design proposal.` for a user-visible feature whose look or behaviour the owner should pick before it's built.
+6. Have a fresh agent check the drafts: start a subagent with the Agent tool, give it the brief and the drafts but not your reasoning, and ask it for issues that overlap, gaps the brief needs, criteria that can't be checked, and wrong dependencies. Revise for what holds up.
+7. Publish the plan as an artifact: the milestones, each issue's draft, which issues need a design proposal, and the checking agent's report with what you changed for it. Give the owner its link, and ask them to approve it or say what to change.
+8. File nothing until the owner approves here, in this session. Revise and publish again for each change they ask for.
+9. Once approved, file it. Create each milestone that's missing with `gh api repos/{owner}/{repo}/milestones -f title=<title>`. File the issues in dependency order, replacing each draft's placeholder references, in its dependencies and non-goals alike, with the numbers GitHub gave, so each names an issue that exists. File each with `gh issue create --title <title> --body-file <file> --milestone <title>`, and without `untriaged`: the owner approved them. Edit existing issues the plan changes with `gh issue edit`.
+10. Tell the owner what you filed, then go on to Start work.
 
 ## Start work
 
