@@ -1,0 +1,7 @@
+[
+  {
+    "name": "orchestral-events",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/orchestral watch",
+    "description": "Orchestral fleet events"
+  }
+]

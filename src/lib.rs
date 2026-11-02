@@ -16,3 +16,4 @@ pub mod status;
 pub mod stop;
 pub mod supervisor;
 pub mod transcript;
+pub mod watch;

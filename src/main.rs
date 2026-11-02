@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use orchestral::outcome::{self, Failure};
-use orchestral::{claim, gate, guard, limits, setup, spawn, status, stop, supervisor};
+use orchestral::{claim, gate, guard, limits, setup, spawn, status, stop, supervisor, watch};
 
 /// A small workflow layer for Claude Code.
 #[derive(Parser)]
@@ -61,6 +61,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Print fleet events while this session holds the claim. Run by the
+    /// plugin monitor in every session; never exits by itself.
+    Watch,
     /// Print the SendMessage address of a worker, or of `orchestrator`.
     Resolve {
         name: String,
@@ -187,6 +190,7 @@ fn run(command: Command) -> Result<(), Failure> {
             outcome::print(&stop::resume(&current_dir()?, &name)?, json)
         }
         Command::Claim { json } => outcome::print(&claim::claim(&current_dir()?)?, json),
+        Command::Watch => watch::watch(&current_dir()?),
         Command::Resolve { name, json } => {
             outcome::print(&claim::resolve(&current_dir()?, &name)?, json)
         }
