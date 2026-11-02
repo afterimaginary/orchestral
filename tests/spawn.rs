@@ -390,7 +390,7 @@ fn spawning_past_the_worker_cap_is_refused() {
     assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
     assert_refused(
         &second,
-        "the fleet has 1 workers, and the policy allows 1",
+        "the fleet is at its cap of 1 workers",
         "wait until a worker is cleaned up after its PR merges",
     );
     assert!(!repo.main.join(".claude/worktrees/issue-13").exists());
@@ -402,13 +402,14 @@ fn a_window_at_the_plan_limit_is_refused() {
     let repo = Repo::new();
     repo.policy("plan_limit_percent: 80\n");
     repo.usage(
-        "Current session: 12% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n\
+        "Current session: 95% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n\
          Current week (all models): 80% used · resets Nov 4 at 1pm (America/Los_Angeles)\n",
     );
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
 
+    // The zone abbreviation, PST or PDT, depends on the year.
     assert_refused(
         &output,
         "the week (all models) window is 80% used, at or past plan_limit_percent (80%)",

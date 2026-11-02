@@ -63,8 +63,8 @@ It refuses, exiting `2`, when:
 - a live session already has that session name,
 - the fleet is paused (see `orchestral pause`),
 - the state already has `workers` workers, the policy's cap. Every recorded worker counts, stopped or not, until it's cleaned up,
-- the run's fleet usage (see [Budget](budget.md)) has reached `fleet_token_budget`. Before a run has started, nothing counts. The fleet is every worker whose session `claude agents --json --all` still lists, and the orchestrator, or
-- any plan window from `orchestral limits` is at or past `plan_limit_percent`. The fix gives the window's reset time.
+- the run's fleet usage (see [Budget](budget.md)) has reached `fleet_token_budget`. Before a run has started, nothing counts, and until the supervisor (#25) starts runs, no run has. The fleet is every worker whose session `claude agents --json --all` still lists, and the orchestrator, or
+- any plan window from `orchestral limits` is at or past `plan_limit_percent`. When several are, the refusal names the one that resets last, and the fix gives its reset time.
 
 When the plan limits can't be read, spawn warns on stderr and carries on, so unavailable limits never stop work:
 

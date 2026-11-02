@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::budget::{self, Estimate};
-use crate::limits::Limits;
+use crate::limits::{self, Limits};
 use crate::outcome::Failure;
 use crate::policy::Settings;
-use crate::sessions::Agent;
+use crate::sessions;
 use crate::state::{State, Store};
 use crate::transcript;
 
@@ -24,13 +24,9 @@ pub fn check_capacity(state: &State, settings: &Settings) -> Result<(), Failure>
             fix: "run `orchestral unpause`".into(),
         });
     }
-    let workers = state.workers.len();
-    if workers >= settings.workers as usize {
+    if state.workers.len() >= settings.workers as usize {
         return Err(Failure::Refused {
-            reason: format!(
-                "the fleet has {workers} workers, and the policy allows {}",
-                settings.workers
-            ),
+            reason: format!("the fleet is at its cap of {} workers", settings.workers),
             fix: "wait until a worker is cleaned up after its PR merges".into(),
         });
     }
@@ -41,10 +37,13 @@ pub fn check_capacity(state: &State, settings: &Settings) -> Result<(), Failure>
 /// that can't be read never refuse; the caller warns instead.
 pub fn check_plan_limits(limits: &Limits, settings: &Settings) -> Result<(), Failure> {
     let threshold = settings.plan_limit_percent;
+    // Of the windows at the limit, the one that resets last is what spawning
+    // waits on. A window with no reset time sorts last.
     let Some(window) = limits
         .windows
         .iter()
-        .find(|window| window.percent >= threshold)
+        .filter(|window| window.percent >= threshold)
+        .max_by_key(|window| (window.resets.is_none(), window.resets.clone()))
     else {
         return Ok(());
     };
@@ -56,7 +55,7 @@ pub fn check_plan_limits(limits: &Limits, settings: &Settings) -> Result<(), Fai
         fix: match &window.resets {
             Some(resets) => format!(
                 "wait until it resets at {}",
-                resets.strftime("%b %-d at %-I:%M%P %Z")
+                resets.strftime(limits::RESET_FORMAT)
             ),
             None => "wait until it resets".into(),
         },
@@ -79,11 +78,7 @@ pub fn check_budget(used: &Estimate, settings: &Settings) -> Result<(), Failure>
 
 /// What the run has used: every fleet session's transcript since the run
 /// started. Before a run has started, nothing is read.
-pub fn fleet_usage(
-    state: &State,
-    main: &Path,
-    agents: impl FnOnce() -> Result<Vec<Agent>, Failure>,
-) -> Result<Estimate, Failure> {
+pub fn fleet_usage(state: &State, main: &Path) -> Result<Estimate, Failure> {
     let Some(started) = &state.run_started_at else {
         return Ok(Estimate::default());
     };
@@ -93,7 +88,7 @@ pub fn fleet_usage(
     let Some(projects) = transcript::projects_dir() else {
         return Ok(Estimate::default());
     };
-    let agents = agents()?;
+    let agents = sessions::agents(Path::new("claude"))?;
     let mut transcripts: Vec<PathBuf> = Vec::new();
     for worker in state.workers.values() {
         let session = agents

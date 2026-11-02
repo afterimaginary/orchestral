@@ -13,6 +13,9 @@ use jiff::tz::TimeZone;
 use jiff::{ToSpan, Zoned};
 use serde::Serialize;
 
+/// How reset times are shown, such as `Nov 4 at 1:00pm PST`.
+pub const RESET_FORMAT: &str = "%b %-d at %-I:%M%P %Z";
+
 /// How long a read may take. A read normally takes a few seconds.
 const DEADLINE: Duration = Duration::from_secs(60);
 
@@ -60,7 +63,7 @@ impl fmt::Display for Limits {
                     "{}: {}% used, resets {}",
                     window.name,
                     window.percent,
-                    resets.strftime("%b %-d at %-I:%M%P %Z")
+                    resets.strftime(RESET_FORMAT)
                 ),
                 None => format!("{}: {}% used", window.name, window.percent),
             })

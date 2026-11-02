@@ -70,7 +70,7 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
         });
     }
     gate::check_capacity(&state, &policy.settings)?;
-    let used = gate::fleet_usage(&state, &main, || sessions::agents(Path::new("claude")))?;
+    let used = gate::fleet_usage(&state, &main)?;
     gate::check_budget(&used, &policy.settings)?;
     let limits = limits::read();
     if let Some(reason) = &limits.reason {
