@@ -32,10 +32,14 @@ A plan turns the owner's brief into milestones and issues. The owner approves it
    - **Acceptance criteria:** a checklist a reviewer can check against the PR.
    - **Non-goals:** what's left out, naming the neighbouring issue that does it wherever the two could overlap.
    - **Constraints and dependencies:** `Depends on #n` for each issue that must merge first, and `Needs a design proposal.` for a user-visible feature whose look or behaviour the owner should pick before it's built.
-6. Have a fresh agent check the drafts: start a subagent with the Agent tool, give it the brief and the drafts but not your reasoning, and ask it for issues that overlap, gaps the brief needs, criteria that can't be checked, and wrong dependencies. Revise for what holds up.
-7. Publish the plan as an artifact: the milestones, each issue's draft, which issues need a design proposal, and the checking agent's report with what you changed for it. Give the owner its link, and ask them to approve it or say what to change.
+6. Have a fresh agent check the drafts: start a new subagent with the Agent tool, not a fork, so it doesn't share your context. Give it the brief and the drafts but not your reasoning, and ask it for issues that overlap, gaps the brief needs, criteria that can't be checked, and wrong dependencies. Revise for what holds up.
+7. Publish the plan as an artifact with the Artifact tool, loading it first with ToolSearch if it's deferred. It holds the milestones, each issue's draft, which issues need a design proposal, and the checking agent's report with what you changed for it. A plan only in chat is too long to review, so always publish it. Give the owner its link, and ask them to approve it or say what to change.
 8. File nothing until the owner approves here, in this session. Revise and publish again for each change they ask for.
-9. Once approved, file it. Create each milestone that's missing with `gh api repos/{owner}/{repo}/milestones -f title=<title>`. File the issues in dependency order, replacing each draft's placeholder references, in its dependencies and non-goals alike, with the numbers GitHub gave, so each names an issue that exists. File each with `gh issue create --title <title> --body-file <file> --milestone <title>`, and without `untriaged`: the owner approved them. Edit existing issues the plan changes with `gh issue edit`.
+9. Once approved, file it, and start no worker until filing is finished:
+   - Create the missing milestones in plan order, so their numbers follow it: `gh api repos/{owner}/{repo}/milestones -f title=<title>`. Start work takes the lowest-numbered open milestone first.
+   - Create each new issue with `gh issue create --title <title> --body-file <file> --milestone <title>`, without `untriaged`: the owner approved them.
+   - Once every issue has a number, replace every placeholder reference in every body, in dependencies and non-goals alike, with `gh issue edit <n> --body-file <file>`. Then read each body back with `gh issue view <n> --json body` and fix any placeholder that's left.
+   - Edit the existing issues the plan changes. Approving the plan approves the existing issues in it, so remove `untriaged` from each one with `gh issue edit <n> --remove-label untriaged`.
 10. Tell the owner what you filed, then go on to Start work.
 
 ## Start work
