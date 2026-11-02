@@ -138,6 +138,7 @@ fn stderr(output: &Output) -> String {
 fn doctor_passes_a_ready_project() {
     let repo = Repo::new();
     repo.push_policy();
+    repo.run(&["init"]);
 
     let (code, statuses) = repo.doctor();
 
@@ -145,7 +146,7 @@ fn doctor_passes_a_ready_project() {
     assert_eq!(
         statuses,
         json!({"claude": "ok", "auth": "ok", "gh": "ok", "git": "ok", "trust": "ok",
-               "policy": "ok", "portless": "ok", "tailscale": "ok"})
+               "policy": "ok", "hook": "ok", "portless": "ok", "tailscale": "ok"})
     );
 }
 
@@ -269,6 +270,41 @@ fn init_respects_hooks_path_and_keeps_an_existing_hook_working() {
     git(&repo.main, &["push", "-q", "origin", "HEAD:main"]);
     let seen = fs::read_to_string(repo.main.join(".git/refs-seen")).unwrap();
     assert!(seen.contains("refs/heads/main"), "{seen:?}");
+}
+
+#[test]
+fn the_hook_still_rejects_a_workers_push_to_main_after_the_binary_moves() {
+    let repo = Repo::new();
+    repo.push_policy();
+    repo.run(&["init"]);
+    assert_eq!(repo.doctor().1["hook"], "ok");
+    // A plugin update moves the binary the hook calls.
+    let hook = repo.main.join(".git/hooks/pre-push");
+    let exe = env!("CARGO_BIN_EXE_orchestral");
+    let text = fs::read_to_string(&hook).unwrap();
+    assert!(text.contains(exe), "{text}");
+    fs::write(&hook, text.replace(exe, "/gone/orchestral")).unwrap();
+    git(&repo.main, &["commit", "-q", "--allow-empty", "-m", "work"]);
+
+    let push = |target: &str, worker: Option<&str>| {
+        let mut command = Command::new("git");
+        command
+            .args(["push", "-q", "origin", &format!("HEAD:{target}")])
+            .current_dir(&repo.main)
+            .env_remove("ORCHESTRAL_WORKER");
+        if let Some(worker) = worker {
+            command.env("ORCHESTRAL_WORKER", worker);
+        }
+        command.output().unwrap()
+    };
+    let worker = push("main", Some("issue-12"));
+    assert!(!worker.status.success());
+    assert!(stderr(&worker).contains("workers can't push to main"));
+    assert!(push("issue-12", Some("issue-12")).status.success());
+    let owner = push("main", None);
+    assert!(owner.status.success(), "{}", stderr(&owner));
+    assert!(stderr(&owner).contains("run orchestral init again"));
+    assert_eq!(repo.doctor().1["hook"], "warn");
 }
 
 #[test]
