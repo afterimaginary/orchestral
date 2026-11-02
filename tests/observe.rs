@@ -41,13 +41,13 @@ fn record(name: &str, status: &str, waiting_for: Option<&str>) -> Record {
     }
 }
 
-fn state(observed: &[(&str, &str)]) -> State {
+fn state(observed: &[(&str, Observed)]) -> State {
     let mut state = State::default();
     state
         .workers
         .insert("issue-12".into(), worker("issue-12", Some("a001")));
     for (name, seen) in observed {
-        state.observed.insert((*name).into(), (*seen).into());
+        state.observed.insert((*name).into(), *seen);
     }
     state
 }
@@ -63,7 +63,7 @@ fn change(observed: Observed, waiting_for: Option<&str>) -> Change {
 #[test]
 fn going_idle_waiting_or_exiting_is_a_change() {
     let alive = |_: &Record| true;
-    let busy = state(&[("issue-12", "busy")]);
+    let busy = state(&[("issue-12", Observed::Busy)]);
 
     let (idle, _) = observe::changes(&busy, &[record("issue-12", "idle", None)], alive);
     let (waiting, _) = observe::changes(
@@ -92,7 +92,7 @@ fn going_idle_waiting_or_exiting_is_a_change() {
 #[test]
 fn becoming_busy_is_observed_without_a_change() {
     let (changes, observations) = observe::changes(
-        &state(&[("issue-12", "idle")]),
+        &state(&[("issue-12", Observed::Idle)]),
         &[record("issue-12", "busy", None)],
         |_| true,
     );
@@ -104,7 +104,7 @@ fn becoming_busy_is_observed_without_a_change() {
 #[test]
 fn the_same_observation_again_is_no_change() {
     let (changes, observations) = observe::changes(
-        &state(&[("issue-12", "idle")]),
+        &state(&[("issue-12", Observed::Idle)]),
         &[record("issue-12", "idle", None)],
         |_| true,
     );
@@ -115,7 +115,7 @@ fn the_same_observation_again_is_no_change() {
 
 #[test]
 fn a_dead_record_is_an_exit_and_an_unlaunched_worker_is_skipped() {
-    let mut state = state(&[("issue-12", "busy")]);
+    let mut state = state(&[("issue-12", Observed::Busy)]);
     state
         .workers
         .insert("issue-13".into(), worker("issue-13", None));

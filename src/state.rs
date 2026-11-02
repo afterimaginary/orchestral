@@ -34,7 +34,7 @@ pub struct State {
     pub run_started_at: Option<String>,
     /// What the supervisor last saw each worker's session doing: `busy`,
     /// `idle`, `waiting` or `exited`.
-    pub observed: BTreeMap<String, String>,
+    pub observed: BTreeMap<String, crate::observe::Observed>,
 }
 
 /// The session acting as orchestrator.
@@ -85,6 +85,7 @@ pub struct Event {
     pub text: String,
 }
 
+#[derive(Clone)]
 pub struct Store {
     dir: PathBuf,
 }

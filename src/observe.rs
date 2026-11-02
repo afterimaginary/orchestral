@@ -4,14 +4,15 @@
 //! The last observation of each worker is kept in the state, so a restarted
 //! supervisor carries on from it rather than reporting everything again.
 
-use std::fmt;
+use serde::{Deserialize, Serialize};
 
 use crate::outcome::Failure;
 use crate::sessions::{self, Record};
 use crate::state::{State, Store};
 
 /// What a worker's session is doing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Observed {
     /// Working, or running a Monitor.
     Busy,
@@ -25,34 +26,14 @@ pub enum Observed {
 
 impl Observed {
     fn from_record(record: Option<&Record>) -> Observed {
-        match record.and_then(|record| record.status.as_deref()) {
-            None if record.is_none() => Observed::Exited,
+        let Some(record) = record else {
+            return Observed::Exited;
+        };
+        match record.status.as_deref() {
             Some("idle") => Observed::Idle,
             Some("waiting") => Observed::Waiting,
             _ => Observed::Busy,
         }
-    }
-
-    fn parse(text: &str) -> Option<Observed> {
-        [
-            Observed::Busy,
-            Observed::Idle,
-            Observed::Waiting,
-            Observed::Exited,
-        ]
-        .into_iter()
-        .find(|observed| observed.to_string() == text)
-    }
-}
-
-impl fmt::Display for Observed {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(match self {
-            Observed::Busy => "busy",
-            Observed::Idle => "idle",
-            Observed::Waiting => "waiting",
-            Observed::Exited => "exited",
-        })
     }
 }
 
@@ -102,11 +83,7 @@ pub fn changes(
             .iter()
             .find(|record| record.name.as_deref() == Some(&worker.session_name) && alive(record));
         let observed = Observed::from_record(record);
-        let before = state
-            .observed
-            .get(name)
-            .and_then(|text| Observed::parse(text));
-        if before == Some(observed) {
+        if state.observed.get(name) == Some(&observed) {
             continue;
         }
         observations.push((name.clone(), observed));
@@ -143,7 +120,7 @@ pub fn check(store: &Store) -> Result<Vec<Change>, Failure> {
     store.update(|state| {
         for (name, observed) in observations {
             if state.workers.contains_key(&name) {
-                state.observed.insert(name, observed.to_string());
+                state.observed.insert(name, observed);
             }
         }
         // Workers that are gone don't keep an observation.
