@@ -65,7 +65,6 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - #93: auto mode blocks workers from acting on the orchestrator's messages (pushes, `gh pr ready`). Pick how workers get those permissions.
 - #100: ready PRs can fill the worker cap so no reviewer can start. Pick how reviewers get a slot.
 - #41: confirm whether the sandbox reminder banners reached the Mac or phone. PR #104 is otherwise ready.
-- #52: start Tailscale on the development machine, so PR #111's real run (two previews and a restart, opened from another device) can happen before it merges.
 
 ## Notes
 
