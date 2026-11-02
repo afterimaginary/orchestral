@@ -1,0 +1,25 @@
+# Runs the project's verify suite on the self-hosted runner for every PR head.
+# Merges require this job to pass at the PR head.
+# Self-hosted only while the repository is private. Before it goes public, move this
+# to GitHub-hosted runners and remove the runner: fork PR code must never run on a
+# maintainer's machine.
+name: verify
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: [self-hosted, macOS, orchestral]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make verify

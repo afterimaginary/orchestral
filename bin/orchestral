@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs the binary built from this checkout: `cargo build --release`.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$root/target/release/orchestral" "$@"
