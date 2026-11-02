@@ -6,6 +6,7 @@ pub mod deadline;
 pub mod gate;
 pub mod github;
 pub mod guard;
+pub mod heartbeat;
 pub mod limits;
 pub mod observe;
 pub mod outcome;
