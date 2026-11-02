@@ -40,3 +40,27 @@ Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as ever
 - To message a worker, get its address with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resolve <name>`, then use SendMessage with that address. Messages from workers come from the same addresses.
 - `${CLAUDE_PLUGIN_ROOT}/bin/orchestral stop <name>` stops a worker and keeps its worktree and conversation. `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resume <name>` brings it back.
 - Answer a worker's question when the policy and the issue already settle it. When the owner has to decide, ask the owner, and keep other work moving.
+
+## Events
+
+Fleet events arrive as notifications from the `orchestral-events` monitor, one line each. A line names the issue or PR, its worker, and the action needed. Act only when a line needs it. When it says `no action needed`, do nothing: no message to a worker, no command, and no reply beyond a word.
+
+- **Feedback, a comment, or a reply to a design proposal:** forward it to the worker it names, in the commenter's own words, quoted as the line gives it. Add nothing of your own unless the policy settles a question it raises. A comment with no worker: answer it if it's yours to answer, and otherwise leave it for the owner.
+- **CI failed, or a review failed:** tell the worker what failed and that it should fix it. Don't say how.
+- **A worker is waiting, or asks you something:** answer from the policy and the issue. When the owner has to decide, ask the owner once, and keep other work moving.
+- **A worker is idle:** check its PR with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status`. If the issue isn't done, send it its next step. If it is, there's nothing to send.
+- **A worker's session exited:** resume it with `${CLAUDE_PLUGIN_ROOT}/bin/orchestral resume <name>` if its issue isn't done.
+- **A PR is ready for review:** start a fresh reviewer, so the author never reviews its own work:
+
+  ```bash
+  ${CLAUDE_PLUGIN_ROOT}/bin/orchestral spawn review-42 --issue 12 --prompt "Review PR #42 against issue #12. Post your findings as one PR comment, and change nothing."
+  ```
+
+- **A PR merged:** the worker is finished. Start the next ready issue if there's a free slot.
+- **An issue opened:** decide whether it's ready for a worker, as in Start work.
+- **A heartbeat:** nothing to do. It keeps your cache warm. Never message a worker because of one.
+- **Limits:** past the plan limit, start nothing new. Workers finish their turn. After the reset, carry on.
+- **Budget reached:** stop starting work, and ask the owner how to continue.
+- **Polls failed:** tell the owner GitHub can't be read, with the error, once.
+
+A worker whose cache is cold re-reads its whole context on the next message, so `status` shows waking it as expensive. Gather everything for a cold worker into one message, rather than sending as each event arrives.
