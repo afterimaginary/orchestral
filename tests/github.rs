@@ -42,6 +42,7 @@ impl Repo {
                         worktree: PathBuf::from("/nowhere"),
                         branch: "issue-12".into(),
                         job_id: Some("a001".into()),
+                        review_of: None,
                         created_at: "2026-11-02T10:00:00Z".into(),
                     },
                 );
@@ -500,16 +501,16 @@ fn only_an_escalation_raised_during_the_run_counts() {
     };
     // #13 was already waiting on the owner before the run.
     repo.poll(&with(&[13]));
-    assert!(!github::has_escalation(&store));
+    assert!(!github::waits_on_owner(&store));
 
     repo.poll(&with(&[12, 13]));
     assert_eq!(repo.snapshot().escalations, [12].into());
-    assert!(github::has_escalation(&store));
+    assert!(github::waits_on_owner(&store));
     repo.poll(&with(&[12, 13]));
-    assert!(github::has_escalation(&store));
+    assert!(github::waits_on_owner(&store));
 
     repo.poll(&with(&[13]));
-    assert!(!github::has_escalation(&store));
+    assert!(!github::waits_on_owner(&store));
 }
 
 #[test]
@@ -548,4 +549,22 @@ fn untriaged_work_waits_until_the_owner_approves_it() {
             "issue #15 \"Export\" closed: no action needed",
         ]
     );
+}
+
+#[test]
+fn an_issue_blocked_during_the_run_waits_on_the_owner() {
+    let repo = Repo::new();
+    let store = repo.store();
+    let with = |labels: &[&str]| GitHub {
+        issues: vec![issue(12, "Add login", labels)],
+        ..GitHub::default()
+    };
+    repo.poll(&with(&[]));
+    assert!(!github::waits_on_owner(&store));
+
+    repo.poll(&with(&["blocked"]));
+    assert!(github::waits_on_owner(&store));
+
+    repo.poll(&with(&[]));
+    assert!(!github::waits_on_owner(&store));
 }

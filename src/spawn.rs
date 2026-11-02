@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::git::git;
 use crate::outcome::Failure;
 use crate::policy::{Policy, Settings};
-use crate::state::{Store, Worker};
+use crate::state::{State, Store, Worker};
 use crate::{gate, limits, sessions};
 
 /// Claude Code renames a session whose name is taken, and names longer than
@@ -31,6 +31,8 @@ pub struct Request {
     pub effort: Option<String>,
     /// What the worker is asked to do first.
     pub prompt: String,
+    /// For a reviewer, the PR it reviews.
+    pub review_of: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,6 +72,7 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
             fix: "choose another name".into(),
         });
     }
+    check_one_reviewer(&state, request.review_of)?;
     gate::check_capacity(&state, &policy.settings)?;
     let agents = match state.run_started_at {
         Some(_) => sessions::agents(Path::new("claude"))?,
@@ -144,6 +147,22 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
     })
 }
 
+/// Refuses a second reviewer for the same PR.
+fn check_one_reviewer(state: &State, review_of: Option<u64>) -> Result<(), Failure> {
+    if let Some(pr) = review_of
+        && let Some((other, _)) = state
+            .workers
+            .iter()
+            .find(|(_, worker)| worker.review_of == Some(pr))
+    {
+        return Err(Failure::Refused {
+            reason: format!("PR #{pr} already has a reviewer, {other}"),
+            fix: format!("wait for {other}'s verdict, or clean it up first"),
+        });
+    }
+    Ok(())
+}
+
 /// Whether a failed launch may have left a session running.
 enum Launched {
     No(Failure),
@@ -173,12 +192,23 @@ impl Launch<'_> {
             write(&settings, &settings_json(name, self.main, &plugin_ids()?)?)?;
             let exe = std::env::current_exe()
                 .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
-            write(&prompt, &worker_prompt(name, request.issue, &exe))?;
+            let text = match request.review_of {
+                Some(pr) => reviewer_prompt(
+                    name,
+                    request.issue,
+                    pr,
+                    self.settings.review_command.as_deref(),
+                    &exe,
+                ),
+                None => worker_prompt(name, request.issue, &exe),
+            };
+            write(&prompt, &text)?;
             // Recorded before launching, so a crash leaves a visible entry.
-            // Pause and the cap are checked again under the lock, so two
-            // spawns at once can't both take the last place.
+            // Pause, the cap and the PR's reviewer are checked again under
+            // the lock, so two spawns at once can't both take the last place.
             self.store.update(|state| {
                 gate::check_capacity(state, self.settings)?;
+                check_one_reviewer(state, request.review_of)?;
                 state.workers.insert(
                     name.clone(),
                     Worker {
@@ -189,6 +219,7 @@ impl Launch<'_> {
                         worktree: self.worktree.into(),
                         branch: name.clone(),
                         job_id: None,
+                        review_of: request.review_of,
                         created_at: jiff::Timestamp::now().to_string(),
                     },
                 );
@@ -411,6 +442,27 @@ fn worker_prompt(name: &str, issue: u64, orchestral: &Path) -> String {
     include_str!("prompts/worker.md")
         .replace("{{name}}", name)
         .replace("{{issue}}", &issue.to_string())
+        .replace(
+            "{{orchestral}}",
+            &shell_quote(&orchestral.display().to_string()),
+        )
+}
+
+fn reviewer_prompt(
+    name: &str,
+    issue: u64,
+    pr: u64,
+    review_command: Option<&str>,
+    orchestral: &Path,
+) -> String {
+    let review = review_command.unwrap_or(
+        "Check that the PR meets the issue's acceptance criteria and keeps to its non-goals.",
+    );
+    include_str!("prompts/reviewer.md")
+        .replace("{{name}}", name)
+        .replace("{{issue}}", &issue.to_string())
+        .replace("{{pr}}", &pr.to_string())
+        .replace("{{review}}", review)
         .replace(
             "{{orchestral}}",
             &shell_quote(&orchestral.display().to_string()),

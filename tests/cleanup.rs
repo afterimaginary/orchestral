@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use common::Stubs;
-use orchestral::state::{Store, Worker};
+use orchestral::state::{Review, Store, Worker};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -65,6 +65,7 @@ impl Repo {
                         worktree: worktree.clone(),
                         branch: "issue-12".into(),
                         job_id: Some(JOB.into()),
+                        review_of: None,
                         created_at: "2026-11-02T10:00:00Z".into(),
                     },
                 )
@@ -203,6 +204,31 @@ fn refuses_while_the_pr_is_open() {
 
     repo.assert_refused(&output, "PR #40 is still open");
     assert_eq!(repo.claude_calls(), Vec::<String>::new());
+}
+
+#[test]
+fn an_open_pr_that_failed_its_last_review_round_finishes_the_worker() {
+    let repo = Repo::new();
+    repo.lists("background");
+    repo.pr("OPEN");
+    Store::for_repo(&repo.main)
+        .unwrap()
+        .update(|state| {
+            state.reviews.insert(
+                40,
+                Review {
+                    sha: "2222222".into(),
+                    passed: false,
+                    failed: vec!["1111111".into(), "2222222".into()],
+                },
+            )
+        })
+        .unwrap();
+
+    let output = repo.run(&["cleanup", "issue-12"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(!repo.has_worker());
 }
 
 #[test]

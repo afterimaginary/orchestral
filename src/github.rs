@@ -22,6 +22,13 @@ use crate::state::{State, Store};
 /// Marks an issue waiting on the owner's decision.
 pub const ESCALATION: &str = "needs-discussion";
 
+/// Marks an issue the fleet gave up on after failed reviews, until the owner
+/// looks.
+pub const BLOCKED: &str = "blocked";
+
+/// Labels that leave an issue waiting on the owner.
+const WAITS_ON_OWNER: [&str; 2] = [ESCALATION, BLOCKED];
+
 /// Marks new work that waits for the owner's batch approval.
 pub const UNTRIAGED: &str = "untriaged";
 
@@ -54,7 +61,7 @@ pub struct Snapshot {
     pub failures: u32,
     /// While failing, no poll runs before this.
     pub retry_after: Option<Timestamp>,
-    /// Open issues that gained the escalation label during the run. A label
+    /// Open issues that gained an escalation or `blocked` label during the run. A label
     /// that was there at the first poll isn't the fleet's.
     #[serde(default)]
     pub escalations: BTreeSet<u64>,
@@ -139,22 +146,27 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     Ok(lines)
 }
 
-/// Whether an issue escalated during the run still waits on the owner's
-/// decision. An unreadable snapshot counts as none.
-pub fn has_escalation(store: &Store) -> bool {
+/// Whether an issue escalated or blocked during the run still waits on the
+/// owner. An unreadable snapshot counts as none.
+pub fn waits_on_owner(store: &Store) -> bool {
     read_snapshot(&store.dir().join("github.json"))
         .ok()
         .flatten()
         .is_some_and(|snapshot| !snapshot.escalations.is_empty())
 }
 
-/// The open issues in `new` with the escalation label that either had it
-/// counted already or gained it since `old`.
+/// The open issues in `new` waiting on the owner that either were counted
+/// already or started waiting since `old`.
 fn escalations(old: Option<&Snapshot>, new: &Snapshot) -> BTreeSet<u64> {
     let Some(old) = old.filter(|old| old.polled_at.is_some()) else {
         return BTreeSet::new();
     };
-    let escalated = |issue: &Issue| issue.labels.iter().any(|label| label == ESCALATION);
+    let escalated = |issue: &Issue| {
+        issue
+            .labels
+            .iter()
+            .any(|label| WAITS_ON_OWNER.contains(&label.as_str()))
+    };
     new.issues
         .iter()
         .filter(|(number, issue)| {
@@ -606,7 +618,11 @@ fn number_from_url(url: &str) -> Option<u64> {
     url.rsplit('/').next()?.parse().ok()
 }
 
-fn gh_json<T: DeserializeOwned>(gh: &Path, main: &Path, args: &[&str]) -> Result<T, Failure> {
+pub(crate) fn gh_json<T: DeserializeOwned>(
+    gh: &Path,
+    main: &Path,
+    args: &[&str],
+) -> Result<T, Failure> {
     let stdout = gh_output(gh, main, args)?;
     serde_json::from_slice(&stdout).map_err(|err| unexpected(args, err))
 }
@@ -622,7 +638,7 @@ fn gh_pages<T: DeserializeOwned>(gh: &Path, main: &Path, args: &[&str]) -> Resul
     Ok(items)
 }
 
-fn gh_output(gh: &Path, main: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
+pub(crate) fn gh_output(gh: &Path, main: &Path, args: &[&str]) -> Result<Vec<u8>, Failure> {
     let output = crate::deadline::output(
         Command::new(gh).args(args).current_dir(main),
         GH_DEADLINE,

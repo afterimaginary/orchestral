@@ -1,10 +1,10 @@
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use orchestral::outcome::{self, Failure};
 use orchestral::{
-    claim, cleanup, gate, guard, limits, setup, spawn, status, stop, supervisor, watch,
+    claim, cleanup, gate, guard, limits, review, setup, spawn, status, stop, supervisor, watch,
 };
 
 /// A small workflow layer for Claude Code.
@@ -13,6 +13,12 @@ use orchestral::{
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Role {
+    Worker,
+    Reviewer,
 }
 
 #[derive(Subcommand)]
@@ -27,9 +33,15 @@ enum Command {
     Spawn {
         /// Lowercase letters, digits and dashes. Also the branch name.
         name: String,
-        /// The issue the worker implements.
+        /// The issue the worker implements, or the reviewed PR is for.
         #[arg(long)]
         issue: u64,
+        /// A worker implements the issue; a reviewer reviews `--pr`.
+        #[arg(long, value_enum, default_value_t = Role::Worker)]
+        role: Role,
+        /// The PR a reviewer reviews.
+        #[arg(long, required_if_eq("role", "reviewer"))]
+        pr: Option<u64>,
         /// Overrides the policy's default model.
         #[arg(long)]
         model: Option<String>,
@@ -39,6 +51,22 @@ enum Command {
         /// The worker's first message.
         #[arg(long)]
         prompt: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a reviewer's verdict on a PR's head commit.
+    Review {
+        pr: u64,
+        /// The PR is fine to merge.
+        #[arg(long, conflicts_with = "fail", required_unless_present = "fail")]
+        pass: bool,
+        /// The author must fix something first.
+        #[arg(long)]
+        fail: bool,
+        /// The head commit the verdict is for.
+        #[arg(long)]
+        sha: String,
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -186,18 +214,38 @@ fn run(command: Command) -> Result<(), Failure> {
             model,
             effort,
             prompt,
+            role,
+            pr,
             json,
         } => {
             let cwd = current_dir()?;
+            let review_of = match role {
+                Role::Worker if pr.is_some() => {
+                    return Err(Failure::Refused {
+                        reason: "--pr is only for `--role reviewer`".into(),
+                        fix: "drop --pr, or add `--role reviewer`".into(),
+                    });
+                }
+                Role::Worker => None,
+                Role::Reviewer => pr,
+            };
             let request = spawn::Request {
                 name,
                 issue,
                 model,
                 effort,
                 prompt,
+                review_of,
             };
             outcome::print(&spawn::spawn(&cwd, request)?, json)
         }
+        Command::Review {
+            pr,
+            pass,
+            fail: _,
+            sha,
+            json,
+        } => outcome::print(&review::record(&current_dir()?, pr, pass, &sha)?, json),
         Command::Stop { name, json } => outcome::print(&stop::stop(&current_dir()?, &name)?, json),
         Command::Cleanup { name, force, json } => {
             outcome::print(&cleanup::cleanup(&current_dir()?, &name, force)?, json)

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 5;
+pub const SCHEMA: u32 = 6;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -35,6 +35,18 @@ pub struct State {
     /// What the supervisor last saw each worker's session doing: `busy`,
     /// `idle`, `waiting` or `exited`.
     pub observed: BTreeMap<String, crate::observe::Observed>,
+    /// The latest review verdict on each PR, by PR number.
+    pub reviews: BTreeMap<u64, Review>,
+}
+
+/// A reviewer's verdict on one commit of a PR.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Review {
+    /// The head commit the verdict is for.
+    pub sha: String,
+    pub passed: bool,
+    /// Commits of this PR that failed review, oldest first.
+    pub failed: Vec<String>,
 }
 
 /// The session acting as orchestrator.
@@ -55,6 +67,7 @@ impl Default for State {
             paused: false,
             run_started_at: None,
             observed: BTreeMap::new(),
+            reviews: BTreeMap::new(),
         }
     }
 }
@@ -71,6 +84,8 @@ pub struct Worker {
     pub branch: String,
     /// The id `claude --bg` printed, once the launch succeeded.
     pub job_id: Option<String>,
+    /// For a reviewer, the PR it reviews.
+    pub review_of: Option<u64>,
     /// RFC 3339, in UTC.
     pub created_at: String,
 }
