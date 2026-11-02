@@ -89,7 +89,7 @@ One view of the fleet: whether it's paused, the run's budget, the plan windows f
 
 For each worker it shows:
 
-- its issue, and the open PR whose head is the worker's branch,
+- its issue, and the open PR whose head is the worker's branch, marked `(draft)` while it is one,
 - its session: `running` when `claude agents --json --all` lists it with a pid, `stopped` when it's listed without one, or `unknown`,
 - what the session is doing, from `waitingFor` first, then `state`,
 - its context size and cache state, from its transcript (see [Claude Code internals](claude-code-internals.md)), and
