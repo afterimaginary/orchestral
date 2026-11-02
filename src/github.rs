@@ -155,6 +155,14 @@ pub fn waits_on_owner(store: &Store) -> bool {
         .is_some_and(|snapshot| !snapshot.escalations.is_empty())
 }
 
+/// The open PRs as of the last poll, or `None` when the last poll failed or
+/// none has run.
+pub fn open_prs(store: &Store) -> Result<Option<BTreeSet<u64>>, Failure> {
+    Ok(read_snapshot(&store.dir().join("github.json"))?
+        .filter(|snapshot| snapshot.polled_at.is_some() && snapshot.failures == 0)
+        .map(|snapshot| snapshot.prs.keys().copied().collect()))
+}
+
 /// The open issues in `new` waiting on the owner that either were counted
 /// already or started waiting since `old`.
 fn escalations(old: Option<&Snapshot>, new: &Snapshot) -> BTreeSet<u64> {

@@ -17,6 +17,7 @@ pub mod observe;
 pub mod outcome;
 pub mod pace;
 pub mod policy;
+pub mod preview;
 pub mod recover;
 pub mod review;
 pub mod sessions;

@@ -81,8 +81,9 @@ The supervisor:
     Examples: `pr #40 "Add login" (worker issue-12): CI failed: have issue-12 fix it`, `issue #13 "Fix typo": comment from someone: "Still happening on main": answer it if it needs you`. The first successful poll only takes the snapshot. Comments are read from 5 minutes before the last successful poll, and comment ids already seen aren't reported again. A comment created before that window and edited since isn't new. A CI result is reported when it changes, or when a new push gives the same result again. Each `gh` call has 60 seconds. A poll fails when any call fails, including reading whether a PR that left the open list merged, and it saves nothing, so the next poll reads it all again. A failed poll waits longer before the next, doubling from 2 minutes up to 16, and the fifth failure in a row records one `watcher: 5 polls failed: <error>` event. A success resets both.
   - also **every minute**, after the poll, it records a `heartbeat` event when a live session holds the claim and has had nothing for 55 minutes: no event recorded, no claim, and no request of its own, such as a conversation with the owner. A claim held by a session that has ended gets no heartbeats, so its successor doesn't receive a pile of them. Every event wakes the orchestrator, so the heartbeat only fills a 55-minute gap, which keeps its 1-hour prompt cache warm. It never needs action: `heartbeat: 2 workers open, your context 41%, budget about 1.2M of 3.0M; no action needed`. The context is the orchestrator's own, from its transcript, and the budget is this run's estimate against the policy's `fleet_token_budget`; either is left out when it can't be read. Heartbeats stop when the supervisor exits, after `--keepalive-hours` with no worker open,
   - **every 5 minutes**, it reads and logs the plan windows. When a window reaches `plan_limit_percent`, the fleet winds down: it records `limits: the session window is 87% used, past plan_limit_percent (85%): start nothing new until it resets at Nov 2 at 6:00pm PST, and let workers finish their turn`, naming the window that resets last, as spawn's refusal does. Running workers aren't stopped. If another window passes the limit meanwhile, the fleet stays wound down for that one. Once no window is at the limit, and a read shows the window below it or its reset time has passed, it records `limits: the session window has reset: start ready work again`. Each change is one event, recorded before the state is saved, so a crash between them repeats the event rather than losing it.
+  - **every 2 seconds**, on a thread of its own, it keeps the previews in line with what `orchestral try` asked for (see below), and **every minute**, after the poll, it stops the previews of PRs that merged or closed, as the poll's snapshot shows. A poll that failed stops nothing,
   - The minute and 5-minute ticks run on threads of their own, so a slow `claude` call never delays the 2-second tick. Each is skipped while its last run is still going,
-- every 2 seconds also checks whether it can exit, and exits once no worker is open, no open issue that gained the `needs-discussion` or `blocked` label during the run still has it, as the GitHub snapshot records (a label already there at the first poll doesn't count), and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since either was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
+- every 2 seconds also checks whether it can exit, and exits once no worker is open, no preview is wanted or running (a failed one doesn't count), no open issue that gained the `needs-discussion` or `blocked` label during the run still has it, as the GitHub snapshot records (a label already there at the first poll doesn't count), and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since either was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
 
 ### `orchestral status [--json]`
 
@@ -248,6 +249,46 @@ It can't merge yet: 1 condition failed.
 ```
 
 It exits `0` when every condition passes, and otherwise refuses, exiting `2`. `--json` prints `pr`, `head`, `route` (`human` or `supervisor`) and `conditions`, each with `name`, `passed` and `detail`, the reason it failed.
+
+### `orchestral try <pr> [--stop] [--json]` and `orchestral previews [--json]`
+
+`try` asks for a preview of open PR `<pr>`, so the owner can test it. It needs a `preview` section in the policy, and refuses without one, or when the PR isn't open.
+
+When the policy's `preview.url` is set, the host serves each PR, so nothing starts: `try` prints the link with `{pr}` and `{branch}` filled in.
+
+```text
+PR #42's preview is at https://add-login.example.dev
+```
+
+Otherwise it records the preview in the state, and the supervisor runs it. It refuses when no worker has the PR's branch checked out, since the preview runs in that worker's worktree and reloads as the worker changes it. Asking for a preview past `preview.max_running` stops the oldest one asked for. It says which, and that it's still listed by `previews` with how to restart it:
+
+```text
+Asked for a preview of PR #42. `orchestral previews` shows its link once it's running.
+Stopped PR #40's preview to make room; `orchestral try 40` restarts it.
+```
+
+When no supervisor is running, it adds that nothing starts the preview until `orchestral up`. `--json` prints `pr`, `url` (the hosted link, or null), `made_room` and `supervisor_running`.
+
+`try --stop <pr>` asks the supervisor to stop the PR's preview. It stays listed as stopped, so a later `try` doesn't run setup again. `--json` prints `pr` and `had_preview`.
+
+On every 2-second tick, the supervisor:
+
+- runs `preview.setup` in the worktree before a preview first starts, and again when a lockfile there changes (such as `package-lock.json`, `pnpm-lock.yaml` or `Cargo.lock`), stopping a running server first. A lockfile setup writes itself doesn't count as a change. Setup has 15 minutes, and its output goes straight to the log. If it fails, the preview isn't started and the supervisor records a `preview` event,
+- starts `preview.run` with `sh -c` in the worktree, with `PORT` set to a free local port, detached in its own process group, so the server outlives the supervisor. A restarted supervisor finds a running server by its pid and start time and leaves it alone,
+- restarts a server that exited once. If it exits again at the same commit, it records `PR #42's preview exited twice; see <log>` as a `preview` event, and waits for a new commit in the worktree to start it again. A crash before a reboot counts as one exit, so the server comes back after it,
+- stops a preview that's no longer wanted with SIGTERM to its process group, then SIGKILL if it's still running 5 seconds later,
+- stops trying a preview whose worktree can't be read, recording a `preview` event, or that the policy no longer runs, until a new commit or `try`. A problem with one preview is logged, and the others carry on.
+
+Setup and server output go to `.git/orchestral/logs/preview-<pr>.log`.
+
+`previews` lists each preview as `starting`, `running` with its link, `failed` with why, `stopping`, or `stopped` (stopped to make room, with how to restart it, or by `try --stop`), and its log:
+
+```text
+PR #40 stopped: stopped to make room; `orchestral try 40` restarts it (log .git/orchestral/logs/preview-40.log)
+PR #42 running at http://localhost:52114 (log .git/orchestral/logs/preview-42.log)
+```
+
+`--json` prints `previews`, each with `pr`, `status`, `url`, `detail` and `log`.
 
 ### `orchestral review <pr> --pass|--fail --sha <sha> [--json]`
 

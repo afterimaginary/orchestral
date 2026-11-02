@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use orchestral::outcome::{self, Failure};
 use orchestral::{
-    claim, cleanup, compact, gate, guard, limits, merge, review, setup, spawn, status, stop,
-    supervisor, watch,
+    claim, cleanup, compact, gate, guard, limits, merge, preview, review, setup, spawn, status,
+    stop, supervisor, watch,
 };
 
 /// A small workflow layer for Claude Code.
@@ -59,6 +59,23 @@ enum Command {
     /// Show which merge conditions a PR meets at its head commit. Never merges.
     MergeCheck {
         pr: u64,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ask for a PR's preview, which the supervisor runs in its worker's
+    /// worktree.
+    Try {
+        pr: u64,
+        /// Stop the PR's preview instead.
+        #[arg(long)]
+        stop: bool,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the PR previews and their links.
+    Previews {
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -251,6 +268,11 @@ fn run(command: Command) -> Result<(), Failure> {
             };
             outcome::print(&spawn::spawn(&cwd, request)?, json)
         }
+        Command::Try { pr, stop, json } => match stop {
+            true => outcome::print(&preview::stop(&current_dir()?, pr)?, json),
+            false => outcome::print(&preview::try_pr(&current_dir()?, pr)?, json),
+        },
+        Command::Previews { json } => outcome::print(&preview::list(&current_dir()?)?, json),
         Command::MergeCheck { pr, json } => {
             let check = merge::check(&current_dir()?, pr)?;
             outcome::print(&check, json)?;
