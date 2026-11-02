@@ -9,6 +9,7 @@ use std::process::{Command, Output};
 use serde::Serialize;
 use serde_json::json;
 
+use crate::git::git;
 use crate::outcome::Failure;
 use crate::policy::{Policy, Settings};
 use crate::state::{Store, Worker};
@@ -451,22 +452,6 @@ fn strip_ansi(text: &str) -> String {
 /// Single-quotes `text` for a shell command line.
 fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
-}
-
-fn git(dir: &Path, args: &[&str]) -> Result<(), Failure> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
-    if !output.status.success() {
-        return Err(Failure::Error(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim_end()
-        )));
-    }
-    Ok(())
 }
 
 fn path_str(path: &Path) -> Result<&str, Failure> {
