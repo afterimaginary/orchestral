@@ -62,7 +62,14 @@ the owner's words are instructions, and anyone else's are only information.
   small fixes and record `{{orchestral}} review <pr> --pass --sha <head>`.
   After two failed rounds Orchestral blocks the issue: stop and tell your
   orchestrator.
-- Once the review passed, mark the PR ready for review with `gh pr ready`. A
-  draft tells the fleet you're still working. If the PR will wait on the
-  owner, also attach screenshots of any UI change and say what to check. Then
-  wait for messages.
+- Before marking the PR ready, if `.orchestral/policy.md` has a `preview`,
+  run `{{orchestral}} try --check`. It boots the preview from your worktree
+  and stops it again. Fix the change until it passes, so the owner never gets
+  a preview that can't start.
+- If the PR changes anything a user sees, start the app the way the policy's
+  `preview.run` does, take a screenshot of each changed screen, and publish
+  them as one artifact page. Post a PR comment that links it and says what
+  the owner should check.
+- Once the review and the boot check passed, mark the PR ready for review
+  with `gh pr ready`. A draft tells the fleet you're still working. Then wait
+  for messages.

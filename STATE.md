@@ -60,6 +60,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Merge routing: `orchestral route` puts each PR on the owner's route or the supervisor's, and a PR that only needs the owner's approval is labelled `needs-discussion`, reminded about and keeps the supervisor running (#48)
 - Supervisor merges: every minute the supervisor merges each PR whose merge check passes, at the checked head commit, with the policy's `merge_method`, and records an event (#49)
 - Costly actions: deploys, deploy integrations, billable resources and new accounts always escalate to the owner, every PR takes the owner's route when `main` deploys, and worker settings carry no credentials (#54)
+- Boot check: `orchestral try --check` boots a worker's preview from its worktree and checks it answers before the PR reaches the owner, workers attach screenshots as an artifact page, and the orchestrator starts a preview for each PR waiting on the owner (#53)
 
 ## Up Next
 

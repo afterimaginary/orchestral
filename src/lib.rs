@@ -1,5 +1,6 @@
 //! The `orchestral` binary's library: everything except argument parsing.
 
+pub mod boot;
 pub mod budget;
 pub mod claim;
 pub mod cleanup;

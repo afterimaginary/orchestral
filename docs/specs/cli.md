@@ -177,7 +177,7 @@ The worker's settings apply to its process only:
 | `isolatePeerMachines` | `true` |
 | `worktree.bgIsolation` | `none`, since it already has a worktree |
 | `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), and the caller's `PATH`, and nothing else from the orchestrator's environment, so the settings carry no credentials |
-| `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone, to `origin <name>` (with `-u` or `--force-with-lease`) or to `origin HEAD` (with or without `-u`), `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *`, `gh issue edit <issue> --add-label needs-discussion`, and `'<this binary>' review *` to record its own review's verdict (ADR-0011), which the classifier denies as self-approval otherwise. For a reviewer, only `gh pr comment <pr> *` and `'<this binary>' review <pr> *`. Anything else still goes through auto mode. |
+| `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone, to `origin <name>` (with `-u` or `--force-with-lease`) or to `origin HEAD` (with or without `-u`), `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *`, `gh issue edit <issue> --add-label needs-discussion`, and `'<this binary>' review *` to record its own review's verdict (ADR-0011), which the classifier denies as self-approval otherwise, and `'<this binary>' try --check`, its boot check. For a reviewer, only `gh pr comment <pr> *` and `'<this binary>' review <pr> *`. Anything else still goes through auto mode. |
 | `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
 
@@ -328,6 +328,16 @@ PR #42 running at https://host.example.ts.net:8443 (log .git/orchestral/logs/pre
 ```
 
 `--json` prints `previews`, each with `pr`, `status`, `url`, `detail` and `log`.
+
+### `orchestral try --check [--json]`
+
+The boot check, which a worker runs from its worktree before its PR reaches the owner. It refuses outside a worker (no `ORCHESTRAL_WORKER`), without a `preview` in the policy, and when the policy's `preview.url` has the host serve previews, since nothing boots locally then. It reads the policy from `origin/main`, as everything else does, so a branch can't change what runs. It runs `preview.setup`, if any, then `preview.run` with `sh -c`, a free `$PORT`, from the top of the worktree, with both writing to a fresh log, `.git/orchestral/logs/boot-<worker>.log`. It passes once `GET /` on `127.0.0.1:$PORT` answers with a status below 500. It fails if setup fails or runs past 15 minutes, if the server exits first, or if nothing answers within 120 seconds. Either way it then stops the server's process group, with SIGTERM and then SIGKILL after 5 seconds.
+
+```text
+The preview booted: it answered 200 after 3s, and it's stopped again. Its log is /repo/.git/orchestral/logs/boot-issue-12.log.
+```
+
+A failure refuses, exiting `2`, with why and the log's last 20 lines. `--json` prints `status`, `seconds` and `log`.
 
 ### `orchestral review <pr> --pass|--fail --sha <sha> [--json]`
 

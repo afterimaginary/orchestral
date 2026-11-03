@@ -479,6 +479,7 @@ fn allow_rules(request: &Request, orchestral: &Path) -> Vec<String> {
                 format!("gh issue comment {issue} *"),
                 format!("gh issue edit {issue} --add-label needs-discussion"),
                 format!("{orchestral} review *"),
+                format!("{orchestral} try --check"),
             ]
         }
     };
