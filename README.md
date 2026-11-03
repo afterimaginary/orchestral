@@ -12,7 +12,7 @@ Claude decides and the binary enforces: the `orchestral` binary refuses anything
 
 ## Requirements
 
-- macOS or Linux, with Claude Code logged in (`claude auth status`)
+- macOS or Linux, with Claude Code logged in (`claude auth status`). Orchestral is tested on Claude Code 2.1.314, and `doctor` warns on other versions.
 - The GitHub CLI, logged in (`gh auth status`), and a project on GitHub
 - Rust 1.89 or later, to build the binary when the plugin is installed
 - Optional, for PR previews you can open from other devices: `portless` and Tailscale
@@ -41,7 +41,7 @@ claude --plugin-dir /path/to/orchestral
 ## Set up a project
 
 1. Open Claude Code in the project once and accept the trust prompt. Workers can't start in an untrusted folder.
-2. In that session, ask Claude to run `orchestral init`. It checks `claude`, `gh`, `git` and trust, creates `.orchestral/policy.md`, and installs a pre-push hook that stops workers pushing to `main`.
+2. In that session, ask Claude to run the plugin's `orchestral init` by its full path, `~/.claude/plugins/cache/afterimaginary/orchestral/<version>/bin/orchestral`, where `<version>` is the newest folder there. Use the full path because another `orchestral` on `PATH` could be found first, and `init` writes the path of the binary it ran into the hook. It checks `claude`, `gh`, `git` and trust, creates `.orchestral/policy.md`, and installs a pre-push hook that stops workers pushing to `main`.
 3. Edit `.orchestral/policy.md`. Set `fleet_token_budget`, the tokens the whole fleet may use in a run. Below the settings, write your rules for the project in plain words, such as "Ask me before changing auth or billing."
 4. Commit the policy and push it to `main`. Orchestral reads the policy from `origin/main`, so local edits don't count until they're pushed.
 
@@ -70,7 +70,7 @@ The orchestrator runs `doctor` first and stops if anything fails, telling you wh
 
 ## Your part
 
-The orchestrator asks you only for what's yours to decide. Each request comes as a message in the orchestrator session, and the issue or PR gets the `needs-discussion` label. If you don't answer, Orchestral sends you a Claude Code notification as a reminder, on the schedule set by `nag_minutes`.
+The orchestrator asks you only for what's yours to decide, in the orchestrator session. A question, a design proposal or a PR waiting for you to merge also gets the `needs-discussion` label, and while it waits Orchestral sends reminders as push notifications to the Claude app, through Remote Control, on the schedule set by `nag_minutes`. Plans, `untriaged` issues and `blocked` issues get no reminders: they wait until you act.
 
 | When | What you do |
 | --- | --- |
@@ -88,12 +88,12 @@ The supervisor merges a PR without your `/approve` only when the orchestrator ro
 
 ## Keep an eye on it
 
-Ask the orchestrator in plain words, or run the commands yourself in a session where the plugin is enabled:
+Ask the orchestrator in plain words, and it runs these by the plugin's full path. To run one yourself, use the full path from [Set up a project](#set-up-a-project).
 
 | Command | Does |
 | --- | --- |
 | `orchestral status` | Workers and their PRs, review verdicts, plan usage, budget used and whether the fleet is paused. |
-| `orchestral pause` / `unpause` | Stop starting new workers, and start again. Running workers finish what they're doing. |
+| `orchestral pause` / `unpause` | Stop starting new workers and merging PRs, and start again. Running workers finish what they're doing, and approved PRs merge after `unpause`. |
 | `orchestral stop <worker>` / `resume <worker>` | Stop a worker and keep its work, then pick it up again later. |
 | `orchestral previews` | The running PR previews and their links. |
 
