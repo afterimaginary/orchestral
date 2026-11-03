@@ -3,8 +3,9 @@
 //! window has passed.
 //!
 //! Every 2 seconds it checks the workers and records an event when one needs
-//! someone, and keeps the previews running; every minute it polls GitHub, logs the fleet's usage and writes
-//! a heartbeat when one is due, and every 5 minutes it logs the plan
+//! someone, and keeps the previews running; every minute it polls GitHub,
+//! logs the fleet's usage, reminds the owner about workers waiting on them,
+//! and writes a heartbeat when one is due, and every 5 minutes it logs the plan
 //! windows. It keeps the machine awake while the fleet has work.
 
 use std::fmt;
@@ -22,7 +23,7 @@ use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::state::Store;
 use crate::{
-    gate, github, heartbeat, limits, observe, pace, preview, recover, sessions, transcript,
+    gate, github, heartbeat, limits, nag, observe, pace, preview, recover, sessions, transcript,
 };
 
 /// How often the supervisor checks the workers and whether it can exit.
@@ -296,6 +297,15 @@ impl Ticks {
                         None
                     }
                 };
+                match nag::check(
+                    &store,
+                    Path::new("claude"),
+                    Path::new("gh"),
+                    jiff::Timestamp::now(),
+                ) {
+                    Ok(lines) => lines.iter().for_each(|line| log(line)),
+                    Err(err) => log(&format!("can't check reminders: {}", failure_text(&err))),
+                }
                 match beat(&store, used.as_ref()) {
                     Ok(Some(line)) => log(&line),
                     Ok(None) => {}

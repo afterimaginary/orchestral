@@ -35,6 +35,10 @@ pub const UNTRIAGED: &str = "untriaged";
 /// Marks Orchestral's own comments, which are never reported back.
 pub const MARKER: &str = "<!-- orchestral -->";
 
+/// What an escalation comment puts before its question, on the line after
+/// the marker. Reminders to the owner quote it.
+pub const QUESTION: &str = "Question for the owner:";
+
 /// Comments are read from this long before the last poll, so one that
 /// GitHub indexes late isn't missed. Ids already seen aren't reported twice.
 const OVERLAP: SignedDuration = SignedDuration::from_secs(300);
@@ -153,6 +157,32 @@ pub fn waits_on_owner(store: &Store) -> bool {
         .ok()
         .flatten()
         .is_some_and(|snapshot| !snapshot.escalations.is_empty())
+}
+
+/// The login `gh` is authenticated as: the owner, whose account posts
+/// Orchestral's comments.
+pub(crate) fn owner_login(gh: &Path, main: &Path) -> Result<String, Failure> {
+    let stdout = gh_output(gh, main, &["api", "user", "--jq", ".login"])?;
+    Ok(String::from_utf8_lossy(&stdout).trim().to_owned())
+}
+
+/// The issues escalated during the run with `needs-discussion` that still
+/// have it. An unreadable snapshot counts as none.
+pub fn escalated(store: &Store) -> BTreeSet<u64> {
+    let Ok(Some(snapshot)) = read_snapshot(&store.dir().join("github.json")) else {
+        return BTreeSet::new();
+    };
+    snapshot
+        .escalations
+        .iter()
+        .filter(|number| {
+            snapshot
+                .issues
+                .get(number)
+                .is_some_and(|issue| issue.labels.iter().any(|label| label == ESCALATION))
+        })
+        .copied()
+        .collect()
 }
 
 /// The open PRs as of the last poll, or `None` when the last poll failed or
