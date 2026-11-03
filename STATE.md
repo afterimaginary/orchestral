@@ -58,6 +58,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Self-review: each worker reviews its own PR with a fresh subagent and records the verdict, so reviews never need a worker slot, with its `review` command allowed so auto mode doesn't deny the verdict (#100, #115)
 - Design proposals: `spawn --proposal` starts a worker on its issue's design proposal, which it publishes and links on the issue for the owner to choose, and `status` shows what proposals spend (#45)
 - Merge routing: `orchestral route` puts each PR on the owner's route or the supervisor's, and a PR that only needs the owner's approval is labelled `needs-discussion`, reminded about and keeps the supervisor running (#48)
+- Costly actions: deploys, deploy integrations, billable resources and new accounts always escalate to the owner, every PR takes the owner's route when `main` deploys, and worker settings carry no credentials (#54)
 
 ## Up Next
 
