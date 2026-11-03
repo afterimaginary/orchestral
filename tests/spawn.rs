@@ -153,6 +153,53 @@ fn starts_a_worker_in_its_own_worktree() {
 
     let exclude = fs::read_to_string(repo.main.join(".git/info/exclude")).unwrap();
     assert!(exclude.lines().any(|line| line == "/.claude/worktrees/"));
+    assert!(exclude.lines().any(|line| line == "/.proposals/"));
+    assert!(state.proposals.is_empty());
+    // Only a proposal worker is told how to propose.
+    let prompt = repo.worker_file("issue-12", "prompt.md");
+    assert!(!prompt.contains("design proposal"), "{prompt}");
+}
+
+#[test]
+fn a_proposal_worker_is_recorded_and_told_how_to_propose() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&[
+        "issue-12",
+        "--issue",
+        "12",
+        "--proposal",
+        "--prompt",
+        "Propose.",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let state = repo.store().read().unwrap();
+    assert_eq!(
+        state.proposals.get("issue-12"),
+        Some(&state.workers["issue-12"].created_at)
+    );
+    let prompt = repo.worker_file("issue-12", "prompt.md");
+    let words = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The policy's default of 4 variants, and the excluded directory.
+    assert!(words.contains("canvas with 4 variants"), "{prompt}");
+    assert!(words.contains("under `.proposals/`"), "{prompt}");
+
+    let reviewer = repo.spawn(&[
+        "review-40",
+        "--issue",
+        "12",
+        "--role",
+        "reviewer",
+        "--pr",
+        "40",
+        "--proposal",
+        "--prompt",
+        "Review.",
+    ]);
+    assert_eq!(reviewer.status.code(), Some(2));
+    assert!(stderr(&reviewer).contains("--proposal is only for a worker"));
 }
 
 #[test]

@@ -115,6 +115,7 @@ pub fn cleanup(cwd: &Path, name: &str, force: bool) -> Result<CleanedUp, Failure
 
     store.update(|state| {
         state.workers.remove(name);
+        state.proposals.remove(name);
         state.observed.remove(name);
     })?;
     store.record("worker", &format!("{name} cleaned up"))?;

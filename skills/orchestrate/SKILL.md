@@ -47,7 +47,7 @@ A plan turns the owner's brief into milestones and issues. The owner approves it
 
 - Fill every free slot, and keep doing so as slots free. List the open issues with `gh issue list --state open --limit 1000 --json number,title,labels,milestone,body,closedByPullRequestsReferences`. An issue is ready when:
   - every issue its body lists after "Depends on" is closed as completed: `gh issue view <n> --json state,stateReason` gives `CLOSED` and `COMPLETED`. An open dependency with an unmerged PR doesn't count, so never start work on top of one.
-  - its design is decided: it has no `needs-discussion` label, and any design proposal it needs has the owner's choice recorded on it.
+  - its design is decided: it has no `needs-discussion` label, and any design proposal it needs has the owner's choice recorded on it. The exception is an issue whose design proposal hasn't started, with no label and no proposal, choice or rejection on it yet: it starts as a proposal, as in Design proposals.
   - it has no `untriaged` or `blocked` label, no worker, and no PR: `closedByPullRequestsReferences` is empty. An issue with a PR already has its work, even when that PR is waiting.
 - Start ready issues in this order: the open milestone with the lowest number first and issues with no milestone last, then `priority:urgent`, `priority:high`, no priority label, and `priority:low`, then the lowest issue number. This way the fleet finishes one milestone before it starts the next.
 - A PR waiting on review or on the owner holds only its own issue and the issues that depend on it. Keep starting other ready issues around it.
@@ -58,6 +58,12 @@ A plan turns the owner's brief into milestones and issues. The owner approves it
   ```
 
   Keep the second sentence. Workers run in auto mode, whose classifier can block a commit, push or `gh pr ready` that the first message didn't ask for.
+
+- For an issue that says `Needs a design proposal.` and has no choice recorded on it, start the worker on the proposal:
+
+  ```bash
+  ${CLAUDE_PLUGIN_ROOT}/bin/orchestral spawn issue-12 --issue 12 --proposal --prompt "Publish a design proposal for issue #12, link it on the issue, and stop. Build only once I tell you which design the owner chose."
+  ```
 
 - The prompt says what to work on, never how. Give the issue, plus only what the worker can't find for itself: a decision the owner made, a dependency that just merged, context from another issue. Don't tell it how to implement, structure or test the change.
 - Leave `--model` and `--effort` to the policy's defaults unless the issue clearly needs something else.
@@ -101,6 +107,16 @@ Each PR body ends with a `## Findings` section: `None`, or one `- [tag] text` li
 A bug is either a blocker that stops this milestone or its demo, which the worker fixes now; a real bug that can wait, filed with the `untriaged` and `bug` labels for a bug sprint the owner calls; or not worth tracking, and dropped with its reason. A feature that fails its acceptance criteria isn't a bug: its worker isn't finished.
 
 To record your decisions, rewrite each `[pending]` tag in the PR body while its worker is idle, so neither of you overwrites the other: read it with `gh pr view <n> --json body --jq .body` just before saving, change only the tags, and save it with `gh pr edit <n> --body-file <file>`. Then read it back to check every tag changed. Milestone and final summaries list every drop, as in Summaries.
+
+## Design proposals
+
+A user-visible feature's design is the owner's to pick before it's built. Its worker publishes a proposal (looks on a Claude Design canvas and behaviour as an interactive artifact, each with the policy's `design_variants` variants, and architecture as a page with one or two options and a recommendation), links it in a comment on the issue, adds `needs-discussion`, and tells you. Then:
+
+- Tell the owner once, with the issue's link, that a proposal waits for them. The label keeps the fleet's supervisor running meanwhile.
+- The owner answers on the issue, and each reply arrives as a comment event. Forward it to the worker, as in Events. Revisions and further rounds are fine: the worker publishes again, and you tell the owner again.
+- When the owner chooses a design, record the choice in words on the issue, since artifact links are private to the owner: `gh issue comment <n> --body-file <file>`, starting with `<!-- orchestral -->`, saying which design was chosen and what it is, in the owner's words where they gave them. Then run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral proposal-done <name>`, remove `needs-discussion`, and tell the worker which design to build.
+- When the owner rejects the proposal rather than choosing, record the rejection on the issue in a comment starting with `<!-- orchestral -->`, run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral proposal-done <name>`, then stop the worker and remove it with `cleanup`. Keep `needs-discussion` on the issue, adding it back if the owner removed it, so nothing restarts it. Issues that depend on this one stay unstarted. Replan: if the owner wants another round, remove the label and start a fresh proposal worker. If the rejection changes scope, such as dropping the feature or changing the issues that depend on it, ask the owner once what to do with them, and change nothing until they answer.
+- `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status` shows what each open proposal has spent and this run's total, since variants cost real tokens.
 
 ## Keep in touch
 

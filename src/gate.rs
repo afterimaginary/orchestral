@@ -12,7 +12,7 @@ use crate::limits::{self, Limits, Window};
 use crate::outcome::Failure;
 use crate::policy::Settings;
 use crate::sessions::Agent;
-use crate::state::{State, Store};
+use crate::state::{State, Store, Worker};
 use crate::transcript;
 
 /// Refuses while the fleet is paused or at its worker cap. Cheap enough to
@@ -107,23 +107,52 @@ pub fn fleet_usage(state: &State, main: &Path, agents: &[Agent]) -> Result<Estim
     let Some(projects) = transcript::projects_dir() else {
         return Ok(Estimate::default());
     };
-    let mut transcripts: Vec<PathBuf> = Vec::new();
-    for worker in state.workers.values() {
-        let session = agents
-            .iter()
-            .find(|agent| agent.id.is_some() && agent.id == worker.job_id);
-        if let Some(path) = session
-            .and_then(|agent| transcript::find(&projects, &worker.worktree, &agent.session_id))
-        {
-            transcripts.push(path);
-        }
-    }
+    let mut transcripts: Vec<PathBuf> = state
+        .workers
+        .values()
+        .filter_map(|worker| worker_transcript(&projects, worker, agents))
+        .collect();
     if let Some(orchestrator) = &state.orchestrator
         && let Some(path) = transcript::find(&projects, main, &orchestrator.session_id)
     {
         transcripts.push(path);
     }
     budget::fleet_usage(&transcripts, Some(started))
+}
+
+/// What worker `name` has used this run since its design proposal started,
+/// or `None` when it isn't on one or its transcript can't be found.
+pub fn proposal_usage(
+    state: &State,
+    name: &str,
+    agents: &[Agent],
+) -> Result<Option<Estimate>, Failure> {
+    let (Some(worker), Some(since)) = (state.workers.get(name), state.proposals.get(name)) else {
+        return Ok(None);
+    };
+    let since: jiff::Timestamp = since.parse().map_err(|err| {
+        Failure::Error(format!("{name}'s proposal start {since} is invalid: {err}"))
+    })?;
+    // Only this run counts, as for the fleet's usage.
+    let run: Option<jiff::Timestamp> = state
+        .run_started_at
+        .as_deref()
+        .and_then(|started| started.parse().ok());
+    let since = run.map_or(since, |run| run.max(since));
+    let Some(path) = transcript::projects_dir()
+        .and_then(|projects| worker_transcript(&projects, worker, agents))
+    else {
+        return Ok(None);
+    };
+    budget::fleet_usage(&[path], Some(since)).map(Some)
+}
+
+/// A worker's transcript, through its session in `agents`.
+fn worker_transcript(projects: &Path, worker: &Worker, agents: &[Agent]) -> Option<PathBuf> {
+    let agent = agents
+        .iter()
+        .find(|agent| agent.id.is_some() && agent.id == worker.job_id)?;
+    transcript::find(projects, &worker.worktree, &agent.session_id)
 }
 
 /// Whether the fleet is paused, after `pause` or `unpause`.

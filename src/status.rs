@@ -61,6 +61,10 @@ pub struct WorkerStatus {
     /// What the next message will cost: the context re-read from the cache
     /// when it's warm, or written to it again when it's cold.
     pub wake_cost: Option<Estimate>,
+    /// Whether it's still on its issue's design proposal.
+    pub proposing: bool,
+    /// What its proposal has used so far, when it's on one and that's known.
+    pub proposal_used: Option<Estimate>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +88,9 @@ pub struct Budget {
     pub used: Option<Estimate>,
     pub fleet_token_budget: u64,
     pub run_started_at: Option<String>,
+    /// What design proposals used this run: the finished ones and the open
+    /// ones so far. Null when an open one's usage couldn't be read.
+    pub proposals: Option<Estimate>,
 }
 
 pub fn status(cwd: &Path) -> Result<Status, Failure> {
@@ -109,16 +116,25 @@ pub fn status(cwd: &Path) -> Result<Status, Failure> {
     };
     let agents = agents.unwrap_or_default();
     let limits = limits::read();
+    let workers = workers(&state, &agents, &prs, Timestamp::now(), &mut warnings);
+    let proposals = workers
+        .iter()
+        .filter(|worker| worker.proposing)
+        .try_fold(state.proposal_tokens, |total, worker| {
+            Some(total + worker.proposal_used.as_ref()?.estimated_tokens)
+        })
+        .map(|estimated_tokens| Estimate { estimated_tokens });
 
     Ok(Status {
         paused: state.paused,
-        workers: workers(&state, &agents, &prs, Timestamp::now(), &mut warnings),
+        workers,
         worker_cap: policy.settings.workers,
         limits,
         budget: Budget {
             used,
             fleet_token_budget: policy.settings.fleet_token_budget,
             run_started_at: state.run_started_at.clone(),
+            proposals,
         },
         reviews: state
             .reviews
@@ -197,6 +213,16 @@ fn workers(
                 waiting_for,
                 wake_cost: context.as_ref().map(wake_cost),
                 context,
+                proposing: state.proposals.contains_key(name),
+                proposal_used: gate::proposal_usage(state, name, agents)
+                    .map_err(|err| {
+                        warnings.push(format!(
+                            "{name}'s proposal usage is unknown: {}",
+                            message(&err)
+                        ))
+                    })
+                    .ok()
+                    .flatten(),
             }
         })
         .collect()
@@ -297,6 +323,13 @@ impl fmt::Display for Status {
                 self.budget.fleet_token_budget
             )?,
         }
+        match &self.budget.proposals {
+            Some(used) if used.estimated_tokens > 0 => {
+                writeln!(f, "Design proposals: {used} this run")?
+            }
+            Some(_) => {}
+            None => writeln!(f, "Design proposals: usage unknown")?,
+        }
         if self.limits.available {
             writeln!(f, "Plan limits:")?;
             for line in self.limits.to_string().lines() {
@@ -345,6 +378,12 @@ impl fmt::Display for WorkerStatus {
             write!(f, " · PR #{pr}")?;
             if self.draft {
                 write!(f, " (draft)")?;
+            }
+        }
+        if self.proposing {
+            match &self.proposal_used {
+                Some(used) => write!(f, " · proposal, {used}")?,
+                None => write!(f, " · proposal")?,
             }
         }
         write!(f, " · {}", self.session)?;
