@@ -7,7 +7,7 @@
 use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -152,8 +152,11 @@ pub fn check(cwd: &Path) -> Result<Booted, Failure> {
 /// The status of a plain `GET /` on the port, or `None` while nothing
 /// answers.
 fn answer(port: u16) -> Option<u16> {
-    let address = ([127, 0, 0, 1], port).into();
-    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(1)).ok()?;
+    // A server bound to `localhost` may listen on IPv6 only.
+    let local: [IpAddr; 2] = [Ipv4Addr::LOCALHOST.into(), Ipv6Addr::LOCALHOST.into()];
+    let mut stream = local.into_iter().find_map(|ip| {
+        TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(1)).ok()
+    })?;
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     stream
         .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")

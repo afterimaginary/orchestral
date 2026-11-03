@@ -109,3 +109,30 @@ fn only_a_worker_runs_it() {
     assert_eq!(output.status.code(), Some(2));
     assert!(text(&output.stderr).contains("only a worker runs the boot check"));
 }
+
+#[test]
+fn the_policy_comes_from_origin_main_not_the_branch() {
+    // origin/main's policy runs a server; the branch's own copy exits.
+    let (_dir, main) = repo("exec python3 -m http.server $PORT --bind 127.0.0.1", None);
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(&main)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "policy"]);
+    git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    std::fs::write(
+        main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\npreview:\n  run: exit 7\n---\n",
+    )
+    .unwrap();
+
+    let output = check(&main, Some("issue-12"));
+
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+}

@@ -319,12 +319,16 @@ fn run(command: Command) -> Result<(), Failure> {
             stop,
             check,
             json,
-        } => match (pr, stop) {
-            _ if check => outcome::print(&boot::check(&current_dir()?)?, json),
-            (Some(pr), true) => outcome::print(&preview::stop(&current_dir()?, pr)?, json),
-            (Some(pr), false) => outcome::print(&preview::try_pr(&current_dir()?, pr)?, json),
-            (None, _) => unreachable!("clap requires a PR without --check"),
-        },
+        } => {
+            if check {
+                return outcome::print(&boot::check(&current_dir()?)?, json);
+            }
+            let pr = pr.expect("clap requires a PR without --check");
+            match stop {
+                true => outcome::print(&preview::stop(&current_dir()?, pr)?, json),
+                false => outcome::print(&preview::try_pr(&current_dir()?, pr)?, json),
+            }
+        }
         Command::Previews { json } => outcome::print(&preview::list(&current_dir()?)?, json),
         Command::ProposalDone { name, json } => {
             outcome::print(&proposal::done(&current_dir()?, &name)?, json)
