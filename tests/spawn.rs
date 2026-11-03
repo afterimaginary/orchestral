@@ -249,6 +249,8 @@ fn the_worker_gets_its_own_settings_and_prompt() {
             "Bash(gh issue edit 12 --add-label needs-discussion)",
             // It records its own review's verdict (ADR-0011).
             format!("Bash('{}' review *)", env!("CARGO_BIN_EXE_orchestral")),
+            // Its boot check before the PR reaches the owner.
+            format!("Bash('{}' try --check)", env!("CARGO_BIN_EXE_orchestral")),
         ])
     );
     let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
