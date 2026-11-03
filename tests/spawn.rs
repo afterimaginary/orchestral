@@ -716,3 +716,38 @@ fn a_reviewer_needs_a_pr_and_a_worker_takes_none() {
     assert_eq!(worker.status.code(), Some(2), "{}", stderr(&worker));
     assert!(stderr(&worker).contains("--pr is only for `--role reviewer`"));
 }
+
+#[test]
+fn worker_settings_carry_no_credentials_from_the_orchestrator() {
+    let repo = Repo::new();
+    repo.launches(STARTED, 0);
+    let secret = "prod-secret-4f2c9e1a";
+
+    let output = repo
+        .stubs
+        .orchestral()
+        .args(["spawn", "issue-12", "--issue", "12", "--prompt", "Go."])
+        .current_dir(&repo.main)
+        .env("CLAUDE_CONFIG_DIR", repo.config())
+        .env("CLAUDE_CODE_SESSION_ID", ORCHESTRATOR)
+        .env("AWS_SECRET_ACCESS_KEY", secret)
+        .env("VERCEL_TOKEN", secret)
+        .env(
+            "DATABASE_URL",
+            format!("postgres://app:{secret}@db.example.com/app"),
+        )
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = repo.worker_file("issue-12", "settings.json");
+    assert!(!text.contains(secret), "{text}");
+    let settings: Value = serde_json::from_str(&text).unwrap();
+    let keys: Vec<&str> = settings["env"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["ORCHESTRAL_REPO", "ORCHESTRAL_WORKER", "PATH"]);
+}
