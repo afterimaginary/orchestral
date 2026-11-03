@@ -22,7 +22,7 @@ use crate::policy::Policy;
 use crate::preview;
 use crate::sessions::{self, Activity, Agent};
 use crate::spawn::main_checkout;
-use crate::state::{State, Store, Want};
+use crate::state::{MergeRoute, State, Store, Want};
 use crate::transcript::{self, Context};
 
 #[derive(Debug, Serialize)]
@@ -49,6 +49,10 @@ pub struct WorkerStatus {
     pub pr: Option<u64>,
     /// Whether that PR is a draft.
     pub draft: bool,
+    /// Who merges that PR, once the orchestrator has routed it.
+    pub route: Option<MergeRoute>,
+    /// Whether the owner was asked to merge that PR.
+    pub asked_owner: bool,
     pub session_name: String,
     /// `running`, `stopped`, or `unknown` when `claude agents` doesn't list
     /// the session. `lost` when the supervisor found it can't be resumed.
@@ -202,6 +206,8 @@ fn workers(
                 issue: worker.issue,
                 pr: pr.map(|(_, number, _)| *number),
                 draft: pr.is_some_and(|(_, _, draft)| *draft),
+                route: pr.and_then(|(_, number, _)| Some(state.routes.get(number)?.to)),
+                asked_owner: pr.is_some_and(|(_, number, _)| state.asked.contains(number)),
                 session_name: worker.session_name.clone(),
                 session: match agent {
                     _ if state.observed.get(name) == Some(&Observed::Lost) => "lost",
@@ -378,6 +384,12 @@ impl fmt::Display for WorkerStatus {
             write!(f, " · PR #{pr}")?;
             if self.draft {
                 write!(f, " (draft)")?;
+            }
+            match self.route {
+                _ if self.asked_owner => write!(f, ", ready for you to merge")?,
+                Some(MergeRoute::Human) => write!(f, ", the owner merges")?,
+                Some(MergeRoute::Supervisor) => write!(f, ", the supervisor merges")?,
+                None => {}
             }
         }
         if self.proposing {

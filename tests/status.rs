@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use common::{Stubs, fixture};
-use orchestral::state::{Store, Worker};
+use orchestral::state::{MergeRoute, Route, Store, Worker};
 use orchestral::transcript::project_dir_name;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -509,4 +509,39 @@ fn shows_running_previews_with_branch_and_link() {
         json["previews"],
         json!([{"pr": 40, "branch": "issue-12", "url": "https://host.example.ts.net:8443"}])
     );
+}
+
+#[test]
+fn a_routed_pr_shows_who_merges_it_and_whether_the_owner_was_asked() {
+    let fleet = Fleet::new();
+    fleet.reads_everything();
+    let store = Store::for_repo(&fleet.main).unwrap();
+    store
+        .update(|state| {
+            state.routes.insert(
+                40,
+                Route {
+                    to: MergeRoute::Human,
+                    reason: "touches auth".into(),
+                },
+            )
+        })
+        .unwrap();
+
+    let text = stdout(&fleet.status(&[]));
+    assert!(
+        text.contains("PR #40 (draft), the owner merges ·"),
+        "{text}"
+    );
+
+    store.update(|state| state.asked.insert(40)).unwrap();
+    let text = stdout(&fleet.status(&[]));
+    assert!(
+        text.contains("PR #40 (draft), ready for you to merge ·"),
+        "{text}"
+    );
+    let status: Value =
+        serde_json::from_str(stdout(&fleet.status(&["--json"])).trim_end()).unwrap();
+    assert_eq!(status["workers"][0]["route"], "human");
+    assert_eq!(status["workers"][0]["asked_owner"], true);
 }

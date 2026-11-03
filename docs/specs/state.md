@@ -19,7 +19,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 
 ## `state.json`
 
-A JSON object with a `schema` version, currently `13`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
+A JSON object with a `schema` version, currently `14`. A file with any other version is an error, so an older or newer binary never misreads it. A missing file reads as the default state.
 
 | Field | Meaning |
 | --- | --- |
@@ -35,6 +35,7 @@ A JSON object with a `schema` version, currently `13`. A file with any other ver
 | `usage` | The run's fleet usage as the supervisor last read it: `estimated_tokens` and when, `at`. Null until the first read of a run. |
 | `budget_reached` | Whether this run's usage has reached `fleet_token_budget`. A new run clears it and `usage`. |
 | `routes` | Each PR's merge route, by PR number: `to` (`human` or `supervisor`) and `reason`. A PR without one is the owner's to merge. |
+| `asked` | The open PRs the supervisor asked the owner to merge, labelled `needs-discussion`. Such a PR can't be routed to the supervisor. A PR that's no longer open is removed. |
 | `approvals` | The head commit the owner approved on each PR, by PR number. |
 | `holds` | The PRs the owner put on hold. |
 | `proposals` | Workers on their issue's design proposal, by name, with when it started in RFC 3339 UTC. `orchestral proposal-done` and `cleanup` remove one. |
