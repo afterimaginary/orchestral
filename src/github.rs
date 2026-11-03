@@ -162,8 +162,9 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
                 .map(|(name, _)| name.as_str());
             pr_subject(number, pr, worker)
         };
-        // Applied with the rest of the poll's results: a crash before the
-        // snapshot is saved applies them again, which changes nothing.
+        // Applied with the rest of the poll's results. A crash before the
+        // snapshot is saved applies them again with their events, which
+        // never approves a commit the owner didn't see.
         lines.extend(store.update(|state| commands::apply(state, &requests, &polls, subject))?);
         let mut snapshot = fetched.snapshot;
         let worked: BTreeSet<u64> = state.workers.values().map(|worker| worker.issue).collect();

@@ -655,7 +655,7 @@ fn an_approve_while_the_head_moved_is_not_recorded() {
     assert_eq!(
         lines[1..],
         [
-            "pr #40 \"Add login\" (worker issue-12): the owner's /approve came as its head moved to def5678, so it isn't recorded: ask the owner to check the new commit and /approve again"
+            "pr #40 \"Add login\" (worker issue-12): the owner's /approve can't be tied to the head commit def5678, which may have changed since they looked, so it isn't recorded: ask the owner to check it and /approve again"
         ]
     );
     assert!(repo.store().read().unwrap().approvals.is_empty());

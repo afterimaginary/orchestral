@@ -1,6 +1,6 @@
 //! Hooks that stop a worker doing what only the owner or the supervisor
-//! should: merging, approving, pushing to `main`, and posting `/approve` or
-//! `/hold`.
+//! should: merging, approving, pushing to `main`, and posting `/approve`,
+//! `/hold` or `/unhold`.
 //!
 //! They stop accidents. They aren't a security boundary: they read command
 //! text, and a session that deliberately works around them can.
@@ -111,7 +111,9 @@ fn denial(command: &str, cwd: &Path) -> Option<&'static str> {
                     fs::read_to_string(cwd.join(file)).is_ok_and(|text| mentions_command(&text))
                 });
         if posts_command {
-            return Some("Posting /approve or /hold is denied, since the owner uses them.");
+            return Some(
+                "Posting /approve, /hold or /unhold is denied, since the owner uses them.",
+            );
         }
     }
     None
@@ -234,10 +236,10 @@ fn body_files(words: &[String]) -> Vec<&str> {
     files
 }
 
-/// Whether `text` has `/approve` or `/hold` as a word, as in
+/// Whether `text` has `/approve`, `/hold` or `/unhold` as a word, as in
 /// `/approve`, `body=/approve` or `"/hold."`, but not `src/hold`.
 fn mentions_command(text: &str) -> bool {
-    ["/approve", "/hold"].iter().any(|command| {
+    ["/approve", "/hold", "/unhold"].iter().any(|command| {
         text.match_indices(command).any(|(at, _)| {
             let before = text[..at].chars().next_back();
             let after = text[at + command.len()..].chars().next();
@@ -295,6 +297,7 @@ mod tests {
     fn denies_posting_approve_or_hold() {
         assert!(denied("gh pr comment 12 --body '/approve'"));
         assert!(denied("gh issue comment 12 -b \"/hold\""));
+        assert!(denied("gh pr comment 12 --body '/unhold'"));
         assert!(denied("gh pr review 12 --comment --body 'ok /approve'"));
         assert!(denied(
             "gh api repos/o/a/issues/12/comments -f body=/approve"

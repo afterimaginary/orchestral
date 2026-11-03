@@ -6,9 +6,11 @@
 //!
 //! An approval is for the head commit the owner saw. A poll runs up to a
 //! minute after the comment, so it's recorded only when the previous poll,
-//! from before the comment, already saw that head. Otherwise a push in
-//! between could move it to a commit the owner never saw. A new commit after
-//! an approval lapses it.
+//! from before the comment, already saw that head. That's stricter than
+//! knowing when the head last changed, which GitHub doesn't give reliably:
+//! a push any time since the previous poll, or a PR first seen in this poll,
+//! means the owner is asked to approve again, never that a commit they
+//! didn't see is approved. A new commit after an approval lapses it.
 
 use std::collections::BTreeMap;
 
@@ -87,7 +89,7 @@ pub fn apply(
                     ));
                 } else {
                     lines.push(format!(
-                        "{subject}: the owner's /approve came as its head moved to {}, so it isn't recorded: ask the owner to check the new commit and /approve again",
+                        "{subject}: the owner's /approve can't be tied to the head commit {}, which may have changed since they looked, so it isn't recorded: ask the owner to check it and /approve again",
                         short(&pr.head)
                     ));
                 }
