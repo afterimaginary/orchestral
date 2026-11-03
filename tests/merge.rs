@@ -493,3 +493,28 @@ fn a_refused_merge_is_logged_and_left_for_the_next_minute() {
         1
     );
 }
+
+#[test]
+fn a_held_pr_or_a_supervisor_pr_with_supervisor_merges_off_is_not_read() {
+    let (_dir, main) = repo(|state| {
+        state.holds.insert(42);
+    });
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+    assert!(stubs.calls("gh").is_empty());
+
+    let (_dir, main) = repo(|state| {
+        state.approvals.clear();
+        supervisor_route(state);
+    });
+    std::fs::write(
+        main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\nsupervisor_merges: false\n---\n",
+    )
+    .unwrap();
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+    assert!(stubs.calls("gh").is_empty());
+}

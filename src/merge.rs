@@ -225,6 +225,8 @@ pub fn merge_ready(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
         return Ok(Vec::new());
     };
     let state = store.read()?;
+    let main = main_checkout(store.dir())?;
+    let settings = Policy::load(&main)?.settings;
     let candidates: Vec<(u64, github::Pr)> = prs
         .into_iter()
         .filter(|(number, pr)| {
@@ -233,18 +235,16 @@ pub fn merge_ready(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
                 .get(number)
                 .is_some_and(|review| review.passed && review.sha == pr.head);
             let approved = state.approvals.get(number) == Some(&pr.head);
+            let supervised =
+                settings.supervisor_merges && route(&state, *number) == MergeRoute::Supervisor;
             !state.paused
+                && !state.holds.contains(number)
                 && !pr.draft
                 && pr.ci == Ci::Passed
                 && reviewed
-                && (approved || route(&state, *number) == MergeRoute::Supervisor)
+                && (approved || supervised)
         })
         .collect();
-    if candidates.is_empty() {
-        return Ok(Vec::new());
-    }
-    let main = main_checkout(store.dir())?;
-    let settings = Policy::load(&main)?.settings;
     let mut lines = Vec::new();
     for (number, snapshot_pr) in candidates {
         match merge_one(store, gh, &main, &settings, number) {
@@ -258,8 +258,16 @@ pub fn merge_ready(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
                 let subject = github::pr_subject(number, &snapshot_pr, worker);
                 let merged = format!("merged by the supervisor at {}", short(&head));
                 let line = github::merged_line(&subject, &merged, worker);
-                store.record("pr", &line)?;
-                github::forget_pr(store, number)?;
+                // It merged, so a failure here doesn't hold up the others.
+                if let Err(err) = store
+                    .record("pr", &line)
+                    .and_then(|_| github::forget_pr(store, number))
+                {
+                    lines.push(format!(
+                        "PR #{number} merged, but recording it failed: {}",
+                        crate::supervisor::failure_text(&err)
+                    ));
+                }
                 lines.push(line);
             }
             Err(err) => lines.push(format!(
