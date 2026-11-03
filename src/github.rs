@@ -16,6 +16,7 @@ use jiff::{SignedDuration, Timestamp};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::commands::{self, Polls, Request};
 use crate::outcome::Failure;
 use crate::state::{State, Store};
 
@@ -114,11 +115,57 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     let attempt = || -> Result<(Snapshot, Vec<String>), Failure> {
         let main = crate::spawn::main_checkout(store.dir())?;
         let state = store.read()?;
-        let fetched = fetch(gh, &main, old.as_ref(), now)?;
-        let lines = match old.as_ref().filter(|old| old.polled_at.is_some()) {
+        let mut fetched = fetch(gh, &main, old.as_ref(), now)?;
+        // The owner's commands are taken out of the comments, so they aren't
+        // passed on as feedback too. Anyone else's is only a comment.
+        let owner = match fetched
+            .comments
+            .iter()
+            .any(|comment| comment.command(&fetched.snapshot.prs).is_some())
+        {
+            true => Some(owner_login(gh, &main)?),
+            false => None,
+        };
+        let mut requests = Vec::new();
+        fetched.comments.retain(|comment| {
+            let command = comment
+                .command(&fetched.snapshot.prs)
+                .filter(|_| owner.as_deref() == Some(comment.author.as_str()));
+            match (command, comment.created_at) {
+                (Some(command), Some(created_at)) => {
+                    requests.push(Request {
+                        pr: comment.number,
+                        command,
+                        created_at,
+                    });
+                    false
+                }
+                _ => true,
+            }
+        });
+        let mut lines = match old.as_ref().filter(|old| old.polled_at.is_some()) {
             Some(old) => changes(old, &fetched, &state, gh, &main)?,
             None => Vec::new(),
         };
+        let empty = BTreeMap::new();
+        let polls = Polls {
+            before: old.as_ref().map_or(&empty, |old| &old.prs),
+            before_at: old.as_ref().and_then(|old| old.polled_at),
+            now: &fetched.snapshot.prs,
+        };
+        let subject = |number: u64| {
+            let pr = &fetched.snapshot.prs[&number];
+            let worker = state
+                .workers
+                .iter()
+                .find(|(_, worker)| worker.branch == pr.branch)
+                .map(|(name, _)| name.as_str());
+            pr_subject(number, pr, worker)
+        };
+        // Applied with the rest of the poll's results. A crash before the
+        // snapshot is saved applies them again with their events, which
+        // never approves a commit the owner didn't see.
+        lines.extend(store.update(|state| commands::apply(state, &requests, &polls, subject))?);
         let mut snapshot = fetched.snapshot;
         let worked: BTreeSet<u64> = state.workers.values().map(|worker| worker.issue).collect();
         snapshot.escalations = escalations(old.as_ref(), &snapshot, &worked);
@@ -259,6 +306,20 @@ struct Comment {
     author: String,
     body: String,
     kind: CommentKind,
+    /// When it was posted. Read for conversation comments only.
+    created_at: Option<Timestamp>,
+}
+
+impl Comment {
+    /// The command it carries: only a PR conversation comment can.
+    fn command(&self, prs: &BTreeMap<u64, Pr>) -> Option<commands::Command> {
+        match self.kind {
+            CommentKind::Conversation if prs.contains_key(&self.number) => {
+                commands::parse(&self.body)
+            }
+            _ => None,
+        }
+    }
 }
 
 enum CommentKind {
@@ -342,6 +403,7 @@ fn fetch(
                     kind: CommentKind::Review {
                         state: review.state,
                     },
+                    created_at: None,
                 });
             }
             reviews.insert(review.id);
@@ -428,6 +490,7 @@ fn fetch(
                 } else {
                     CommentKind::Conversation
                 },
+                created_at: Some(comment.created_at),
             });
         };
         for comment in conversation {

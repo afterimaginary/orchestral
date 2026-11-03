@@ -46,7 +46,8 @@ pub struct State {
     /// Each PR's merge route, by PR number. A PR without one goes to the
     /// owner.
     pub routes: BTreeMap<u64, Route>,
-    /// The head commit the owner approved on each PR.
+    /// The head commit the owner approved on each open PR with `/approve`.
+    /// A new head lapses it.
     pub approvals: BTreeMap<u64, String>,
     /// PRs the owner put on hold.
     pub holds: BTreeSet<u64>,

@@ -3,6 +3,7 @@
 pub mod budget;
 pub mod claim;
 pub mod cleanup;
+pub mod commands;
 pub mod compact;
 pub mod deadline;
 pub mod findings;
