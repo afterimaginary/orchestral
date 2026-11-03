@@ -110,6 +110,7 @@ impl GitHub {
             stubs.respond("gh", &[], "", 1);
             return stubs;
         }
+        stubs.respond("gh", &["api", "user"], "owner\n", 0);
         stubs.respond("gh", &["issue", "list"], &json!(self.issues).to_string(), 0);
         stubs.respond("gh", &["pr", "list"], &json!(self.prs).to_string(), 0);
         for (number, state) in &self.views {
@@ -585,4 +586,178 @@ fn an_issue_blocked_during_the_run_waits_on_the_owner() {
 
     repo.poll(&with(&[]));
     assert!(!github::waits_on_owner(&store));
+}
+
+/// Baseline with #40 out of draft and passing CI, then `comments`, with
+/// #40's head at `head`.
+fn with_comments(head: &str, comments: Vec<Value>) -> GitHub {
+    let mut github = baseline();
+    github.prs[0]["isDraft"] = json!(false);
+    github.prs[0]["statusCheckRollup"] = check("COMPLETED", "SUCCESS");
+    github.prs[0]["headRefOid"] = json!(head);
+    github.comments = comments;
+    github
+}
+
+#[test]
+fn the_owners_approve_is_recorded_at_the_head_it_saw_and_not_passed_on() {
+    let repo = Repo::new();
+    repo.poll(&with_comments("abc1234", vec![]));
+
+    let (lines, _) = repo.poll(&with_comments(
+        "abc1234",
+        vec![comment(1, 40, "owner", "/approve")],
+    ));
+
+    assert_eq!(
+        lines,
+        [
+            "pr #40 \"Add login\" (worker issue-12): approved by the owner at abc1234: no action needed"
+        ]
+    );
+    assert_eq!(repo.store().read().unwrap().approvals[&40], "abc1234");
+    assert_eq!(repo.events(), lines);
+}
+
+#[test]
+fn a_new_commit_lapses_the_approval() {
+    let repo = Repo::new();
+    repo.poll(&with_comments("abc1234", vec![]));
+    repo.poll(&with_comments(
+        "abc1234",
+        vec![comment(1, 40, "owner", "/approve")],
+    ));
+
+    let (lines, _) = repo.poll(&with_comments("def5678", vec![]));
+
+    // The push also reports CI again.
+    assert_eq!(
+        lines[1..],
+        [
+            "pr #40 \"Add login\" (worker issue-12): new commit def5678 since the owner's approval, so it needs /approve again: no action needed"
+        ]
+    );
+    assert!(repo.store().read().unwrap().approvals.is_empty());
+}
+
+#[test]
+fn an_approve_while_the_head_moved_is_not_recorded() {
+    let repo = Repo::new();
+    repo.poll(&with_comments("abc1234", vec![]));
+
+    // A push and the comment both came since the last poll.
+    let (lines, _) = repo.poll(&with_comments(
+        "def5678",
+        vec![comment(1, 40, "owner", "/approve")],
+    ));
+
+    // The push also reports CI again.
+    assert_eq!(
+        lines[1..],
+        [
+            "pr #40 \"Add login\" (worker issue-12): the owner's /approve can't be tied to the head commit def5678, which may have changed since they looked, so it isn't recorded: ask the owner to check it and /approve again"
+        ]
+    );
+    assert!(repo.store().read().unwrap().approvals.is_empty());
+}
+
+#[test]
+fn hold_and_unhold_set_and_clear_a_hold() {
+    let repo = Repo::new();
+    repo.poll(&with_comments("abc1234", vec![]));
+
+    let (held, _) = repo.poll(&with_comments(
+        "abc1234",
+        vec![comment(1, 40, "owner", "/hold\nLet me check the copy.")],
+    ));
+    assert_eq!(
+        held,
+        ["pr #40 \"Add login\" (worker issue-12): put on hold by the owner: no action needed"]
+    );
+    assert!(repo.store().read().unwrap().holds.contains(&40));
+
+    let (lifted, _) = repo.poll(&with_comments(
+        "abc1234",
+        vec![comment(2, 40, "owner", "/unhold")],
+    ));
+    assert_eq!(
+        lifted,
+        ["pr #40 \"Add login\" (worker issue-12): hold lifted by the owner: no action needed"]
+    );
+    assert!(repo.store().read().unwrap().holds.is_empty());
+}
+
+#[test]
+fn only_the_owners_unmarked_command_counts() {
+    let repo = Repo::new();
+    repo.poll(&with_comments("abc1234", vec![]));
+
+    let (lines, _) = repo.poll(&with_comments(
+        "abc1234",
+        vec![
+            comment(1, 40, "someone", "/approve"),
+            comment(2, 40, "owner", "<!-- orchestral -->\n/approve"),
+        ],
+    ));
+
+    // Someone else's is a comment like any other, and Orchestral's own is
+    // ignored.
+    assert_eq!(
+        lines,
+        [
+            "pr #40 \"Add login\" (worker issue-12): comment from someone: \"/approve\": pass it to issue-12"
+        ]
+    );
+    let state = repo.store().read().unwrap();
+    assert!(state.approvals.is_empty());
+}
+
+#[test]
+fn an_approve_leads_to_a_merge_of_that_commit() {
+    let repo = Repo::new();
+    let head = "4f2c9e1a0b5d3c1e6a2f4c8e9d7b1f2e3a4b5c6d";
+    fs::create_dir(repo.main.join(".orchestral")).unwrap();
+    fs::write(
+        repo.main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\n---\n",
+    )
+    .unwrap();
+    repo.store()
+        .update(|state| {
+            state.reviews.insert(
+                40,
+                orchestral::state::Review {
+                    sha: head.into(),
+                    passed: true,
+                    failed: Vec::new(),
+                },
+            );
+        })
+        .unwrap();
+    repo.poll(&with_comments(head, vec![]));
+    repo.poll(&with_comments(
+        head,
+        vec![comment(1, 40, "owner", "/approve")],
+    ));
+
+    let stubs = Stubs::new();
+    let view = json!({
+        "state": "OPEN", "isDraft": false, "baseRefName": "main",
+        "mergeable": "MERGEABLE", "headRefOid": head,
+        "body": "## Findings\n\nNone\n",
+        "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}]
+    });
+    stubs.respond("gh", &["pr", "view", "40"], &view.to_string(), 0);
+    stubs.respond("gh", &["pr", "merge", "40"], "", 0);
+    orchestral::merge::merge_ready(&repo.store(), &stubs.dir().join("gh")).unwrap();
+
+    let merges: Vec<Vec<String>> = stubs
+        .calls("gh")
+        .into_iter()
+        .filter(|call| call[..2] == ["pr", "merge"])
+        .collect();
+    assert_eq!(
+        merges,
+        [["pr", "merge", "40", "--squash", "--match-head-commit", head]]
+    );
 }
