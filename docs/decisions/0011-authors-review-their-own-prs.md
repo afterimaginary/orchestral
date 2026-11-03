@@ -18,6 +18,7 @@ The owner wants one worker to own its issue from start to merge, with the orches
 - Before marking its PR ready, a worker starts a fresh subagent with the Agent tool, not a fork, and gives it only the PR number, the issue number and what to check: the policy's `review_command`, or by default that the PR meets the issue's acceptance criteria and keeps to its non-goals. The subagent posts its report as one PR comment and doesn't edit code.
 - The worker fixes what holds up, lists the findings it declines as `[pending]`, and records the verdict on the reviewed commit with `orchestral review`. A failed round means a fix, then a fresh subagent on the new commit. Two failed rounds block the issue, as before.
 - `orchestral review` accepts the PR's author as well as a reviewer. `merge-check` still requires a passed review at the head commit.
+- An author's settings allow its `orchestral review` command (ADR-0010's narrow rules). In a sandbox run, auto mode denied an author's verdict as self-approval without one, although self-approval with a fresh subagent's review is what this decision intends.
 - The orchestrate skill stops starting reviewers. `spawn --role reviewer` stays, unused by the skill, until #48 decides whether PRs the supervisor merges need an independent reviewer.
 
 ## Consequences

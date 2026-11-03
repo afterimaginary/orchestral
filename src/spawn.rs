@@ -190,12 +190,12 @@ impl Launch<'_> {
             fs::create_dir_all(&dir).map_err(|err| io_error(&dir, err))?;
             let settings = dir.join("settings.json");
             let prompt = dir.join("prompt.md");
-            write(
-                &settings,
-                &settings_json(name, self.main, &allow_rules(request), &plugin_ids()?)?,
-            )?;
             let exe = std::env::current_exe()
                 .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
+            write(
+                &settings,
+                &settings_json(name, self.main, &allow_rules(request, &exe), &plugin_ids()?)?,
+            )?;
             let text = match request.review_of {
                 Some(pr) => reviewer_prompt(
                     name,
@@ -428,10 +428,17 @@ fn settings_json(
 /// Auto mode only counts the first message as the owner's request, so it
 /// would deny these, and narrow allow rules skip its classifier (ADR-0010).
 /// Each is the exact form the worker needs; anything else still goes through
-/// auto mode, and the worker guard and pre-push hook still apply.
-fn allow_rules(request: &Request) -> Vec<String> {
+/// auto mode, and the worker guard and pre-push hook still apply. Recording
+/// a review verdict is one of them: an author records its own (ADR-0011),
+/// which the classifier would otherwise deny as self-approval.
+fn allow_rules(request: &Request, orchestral: &Path) -> Vec<String> {
+    // The prompt gives the binary's path quoted, so the rule matches it so.
+    let orchestral = shell_quote(&orchestral.display().to_string());
     let rules = match request.review_of {
-        Some(pr) => vec![format!("gh pr comment {pr} *")],
+        Some(pr) => vec![
+            format!("gh pr comment {pr} *"),
+            format!("{orchestral} review {pr} *"),
+        ],
         None => {
             let branch = &request.name;
             let issue = request.issue;
@@ -451,6 +458,7 @@ fn allow_rules(request: &Request) -> Vec<String> {
                 "gh pr edit * --body-file *".into(),
                 format!("gh issue comment {issue} *"),
                 format!("gh issue edit {issue} --add-label needs-discussion"),
+                format!("{orchestral} review *"),
             ]
         }
     };
