@@ -65,8 +65,9 @@ pub struct Snapshot {
     pub failures: u32,
     /// While failing, no poll runs before this.
     pub retry_after: Option<Timestamp>,
-    /// Open issues that gained an escalation or `blocked` label during the run. A label
-    /// that was there at the first poll isn't the fleet's.
+    /// Open issues that gained an escalation or `blocked` label during the run.
+    /// A label that was there at the first poll counts only on an issue a
+    /// worker is on; otherwise it isn't the fleet's.
     #[serde(default)]
     pub escalations: BTreeSet<u64>,
 }

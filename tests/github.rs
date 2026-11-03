@@ -495,6 +495,8 @@ fn at_the_first_poll_an_escalated_issue_with_a_worker_counts() {
 
     assert_eq!(repo.snapshot().escalations, [12].into());
     assert!(github::waits_on_owner(&repo.store()));
+    // Reminders read this.
+    assert_eq!(github::escalated(&repo.store()), [12].into());
 }
 
 #[test]
