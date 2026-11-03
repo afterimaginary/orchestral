@@ -94,7 +94,7 @@ A record may be half-written when read, so one that doesn't parse is skipped.
 
 ## `claude agents --json`
 
-`claude agents --json --all` prints a JSON array of sessions, including finished and stopped ones. The list comes from `~/.claude/jobs/<id>/state.json`, so it survives a reboot: on 2.1.316, sessions from weeks before the machine's last boot were still listed, as `failed` or `blocked`. Each entry has `id`, the short job id `claude --bg` printed, and `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
+`claude agents --json --all` prints a JSON array of sessions, including finished and stopped ones. The list comes from `~/.claude/jobs/<id>/state.json`, so it survives a reboot: on 2.1.316, sessions from weeks before the machine's last boot were still listed, as `failed` or `blocked`. The same `state.json` has `detail`, the session's own one-line account of what it's doing or waiting for, such as `#94 commit/push/PR blocked by classifier; awaiting your call`, and, while it's blocked, `needs`, such as `rate limited — wait and retry · You've hit your session limit · resets 11:30pm (America/Los_Angeles)`. Each entry has `id`, the short job id `claude --bg` printed, and `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
 
 | Field | Meaning |
 | --- | --- |
@@ -133,3 +133,7 @@ Current week (all models): 26% used · resets Nov 4 at 12:59pm (America/Los_Ange
 ```
 
 The label is `session` or `week (<models>)`. The reset time has no year, drops `:00` on the hour, and is in the IANA time zone in parentheses. Reset times drift by a minute between reads of the same window, so a reset is confirmed as ADR-0008 describes, not by a changed time. A breakdown of what used the plan follows the windows.
+
+## Push notifications
+
+`PushNotification` checks whether the user is present before sending, and a new `claude --bg` session always counts as present: its result is "Not sent — this terminal is active", and no banner arrives. With `CLAUDE_CODE_DISABLE_NOTIFICATION_PRESENCE_CHECK=1` in the session's settings `env`, the result is "Terminal notification sent. Mobile push requested.", and the banner reaches the Mac and the phone through Remote Control (ADR-0009). Seen on 2.1.316.

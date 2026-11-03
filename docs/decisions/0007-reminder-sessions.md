@@ -1,6 +1,7 @@
 ---
 description: Each reminder comes from a new one-shot background session with Remote Control left on and no other notification settings.
-status: accepted
+status: superseded
+superseded-by: ADR-0009
 ---
 
 # ADR-0007: One-shot reminder sessions

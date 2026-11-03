@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 12;
+pub const SCHEMA: u32 = 13;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -57,6 +57,30 @@ pub struct State {
     pub proposals: BTreeMap<String, String>,
     /// Weighted tokens this run's finished proposals used.
     pub proposal_tokens: u64,
+    /// Reminders to the owner, by the worker waiting on them.
+    pub nags: BTreeMap<String, Nag>,
+    /// Reminder sessions that haven't been stopped yet.
+    pub nag_sessions: Vec<NagSession>,
+    /// The number in the next reminder session's name.
+    pub next_nag: u64,
+}
+
+/// A worker waiting on the owner, and the reminders sent about it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Nag {
+    /// When the worker started waiting, in RFC 3339 UTC.
+    pub since: String,
+    pub sent: u32,
+    /// RFC 3339, in UTC.
+    pub last_sent_at: Option<String>,
+}
+
+/// A one-shot reminder session, stopped once it has sent its notification.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NagSession {
+    pub job_id: String,
+    /// RFC 3339, in UTC.
+    pub started_at: String,
 }
 
 /// A PR's preview: what's wanted, from `try`, and the server the supervisor
@@ -193,6 +217,9 @@ impl Default for State {
             previews: BTreeMap::new(),
             proposals: BTreeMap::new(),
             proposal_tokens: 0,
+            nags: BTreeMap::new(),
+            nag_sessions: Vec::new(),
+            next_nag: 1,
         }
     }
 }

@@ -199,7 +199,10 @@ impl Launch<'_> {
             fs::create_dir_all(&dir).map_err(|err| io_error(&dir, err))?;
             let settings = dir.join("settings.json");
             let prompt = dir.join("prompt.md");
-            write(&settings, &settings_json(name, self.main, &plugin_ids()?)?)?;
+            write(
+                &settings,
+                &settings_json(name, self.main, &allow_rules(request), &plugin_ids()?)?,
+            )?;
             let exe = std::env::current_exe()
                 .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
             let text = match request.review_of {
@@ -214,6 +217,7 @@ impl Launch<'_> {
                     name,
                     request.issue,
                     request.proposal.then_some(self.settings.design_variants),
+                    self.settings.review_command.as_deref(),
                     &exe,
                 ),
             };
@@ -408,7 +412,12 @@ fn exclude_worktrees(store: &Path) -> Result<(), Failure> {
 
 /// The worker's settings. Hooks use the binary's absolute path and `PATH` is
 /// set, since a background session doesn't inherit the launching shell's.
-fn settings_json(name: &str, main: &Path, plugin_ids: &[String]) -> Result<String, Failure> {
+fn settings_json(
+    name: &str,
+    main: &Path,
+    allow: &[String],
+    plugin_ids: &[String],
+) -> Result<String, Failure> {
     let exe = std::env::current_exe()
         .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
     let enabled_plugins: serde_json::Map<String, serde_json::Value> = plugin_ids
@@ -424,6 +433,7 @@ fn settings_json(name: &str, main: &Path, plugin_ids: &[String]) -> Result<Strin
             "ORCHESTRAL_REPO": main.display().to_string(),
             "PATH": std::env::var("PATH").unwrap_or_default(),
         },
+        "permissions": {"allow": allow},
         "hooks": {"PreToolUse": [{
             "matcher": "Bash",
             "hooks": [{"type": "command", "command": format!("{} hook worker-guard", shell_quote(&exe.display().to_string()))}],
@@ -432,6 +442,42 @@ fn settings_json(name: &str, main: &Path, plugin_ids: &[String]) -> Result<Strin
         "enabledPlugins": enabled_plugins,
     });
     Ok(serde_json::to_string_pretty(&settings).expect("settings always serialize"))
+}
+
+/// The commands a worker runs when its orchestrator asks, later in the run.
+/// Auto mode only counts the first message as the owner's request, so it
+/// would deny these, and narrow allow rules skip its classifier (ADR-0010).
+/// Each is the exact form the worker needs; anything else still goes through
+/// auto mode, and the worker guard and pre-push hook still apply.
+fn allow_rules(request: &Request) -> Vec<String> {
+    let rules = match request.review_of {
+        Some(pr) => vec![format!("gh pr comment {pr} *")],
+        None => {
+            let branch = &request.name;
+            let issue = request.issue;
+            vec![
+                "git commit *".into(),
+                "git push".into(),
+                format!("git push origin {branch}"),
+                format!("git push -u origin {branch}"),
+                "git push origin HEAD".into(),
+                "git push -u origin HEAD".into(),
+                "git push --force-with-lease".into(),
+                format!("git push --force-with-lease origin {branch}"),
+                "gh pr create *".into(),
+                "gh pr ready".into(),
+                "gh pr ready *".into(),
+                "gh pr comment *".into(),
+                "gh pr edit * --body-file *".into(),
+                format!("gh issue comment {issue} *"),
+                format!("gh issue edit {issue} --add-label needs-discussion"),
+            ]
+        }
+    };
+    rules
+        .into_iter()
+        .map(|rule| format!("Bash({rule})"))
+        .collect()
 }
 
 /// Every installed ID of the Orchestral plugin, such as
@@ -461,13 +507,24 @@ fn plugin_ids() -> Result<Vec<String>, Failure> {
         .collect())
 }
 
+/// What a review checks when the policy has no `review_command`.
+const DEFAULT_REVIEW: &str =
+    "Check that the PR meets the issue's acceptance criteria and keeps to its non-goals.";
+
 /// The worker's prompt. `proposal` is the policy's `design_variants` for a
 /// worker starting on a design proposal, which adds how to make one.
-fn worker_prompt(name: &str, issue: u64, proposal: Option<u32>, orchestral: &Path) -> String {
+fn worker_prompt(
+    name: &str,
+    issue: u64,
+    proposal: Option<u32>,
+    review_command: Option<&str>,
+    orchestral: &Path,
+) -> String {
     // A worker runs with the plugin turned off, so it calls this binary by
     // its path (ADR-0001).
     let mut prompt = include_str!("prompts/worker.md")
         .replace("{{name}}", name)
+        .replace("{{review}}", review_command.unwrap_or(DEFAULT_REVIEW))
         .replace("{{issue}}", &issue.to_string())
         .replace(
             "{{orchestral}}",
@@ -490,9 +547,7 @@ fn reviewer_prompt(
     review_command: Option<&str>,
     orchestral: &Path,
 ) -> String {
-    let review = review_command.unwrap_or(
-        "Check that the PR meets the issue's acceptance criteria and keeps to its non-goals.",
-    );
+    let review = review_command.unwrap_or(DEFAULT_REVIEW);
     include_str!("prompts/reviewer.md")
         .replace("{{name}}", name)
         .replace("{{issue}}", &issue.to_string())
@@ -602,7 +657,7 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_worker_and_its_issue() {
-        let prompt = worker_prompt("issue-12", 12, None, Path::new("/opt/orchestral"));
+        let prompt = worker_prompt("issue-12", 12, None, None, Path::new("/opt/orchestral"));
 
         assert!(prompt.starts_with("You are worker issue-12 on issue #12."));
         assert!(prompt.contains("`'/opt/orchestral' resolve orchestrator`"));

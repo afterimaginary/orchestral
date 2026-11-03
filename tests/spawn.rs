@@ -228,6 +228,27 @@ fn the_worker_gets_its_own_settings_and_prompt() {
             .unwrap()
             .contains(repo.stubs.dir().to_str().unwrap())
     );
+    // Only the exact forms it needs, for its own branch and issue.
+    assert_eq!(
+        settings["permissions"]["allow"],
+        json!([
+            "Bash(git commit *)",
+            "Bash(git push)",
+            "Bash(git push origin issue-12)",
+            "Bash(git push -u origin issue-12)",
+            "Bash(git push origin HEAD)",
+            "Bash(git push -u origin HEAD)",
+            "Bash(git push --force-with-lease)",
+            "Bash(git push --force-with-lease origin issue-12)",
+            "Bash(gh pr create *)",
+            "Bash(gh pr ready)",
+            "Bash(gh pr ready *)",
+            "Bash(gh pr comment *)",
+            "Bash(gh pr edit * --body-file *)",
+            "Bash(gh issue comment 12 *)",
+            "Bash(gh issue edit 12 --add-label needs-discussion)",
+        ])
+    );
     let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         .as_str()
         .unwrap();
@@ -243,6 +264,15 @@ fn the_worker_gets_its_own_settings_and_prompt() {
         env!("CARGO_BIN_EXE_orchestral")
     );
     assert!(prompt.contains(&resolve), "{prompt}");
+    // It reviews its own PR with a fresh subagent and records the verdict.
+    assert!(
+        prompt.contains("meets the issue's acceptance criteria"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("' review <pr> --pass --sha <head>`"),
+        "{prompt}"
+    );
 }
 
 #[test]
@@ -574,6 +604,25 @@ fn a_run_over_its_fleet_budget_is_refused() {
 }
 
 #[test]
+fn a_worker_s_review_subagent_gets_the_policy_s_review_command() {
+    let repo = Repo::new();
+    fs::write(
+        repo.main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\nreview_command: Run /refine on the PR.\n---\nRules.\n",
+    )
+    .unwrap();
+    git(&repo.main, &["commit", "-q", "-am", "review command"]);
+    git(&repo.main, &["push", "-q", "origin", "main"]);
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let prompt = repo.worker_file("issue-12", "prompt.md");
+    assert!(prompt.contains("\"Run /refine on the PR. Flag"), "{prompt}");
+}
+
+#[test]
 fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
     let repo = Repo::new();
     fs::write(
@@ -605,6 +654,13 @@ fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
     );
     assert!(prompt.contains("- Run /refine on the PR.\n"), "{prompt}");
     assert!(prompt.contains("review 40 --pass --sha <head>"), "{prompt}");
+    // A reviewer may comment on its PR, and push nothing.
+    let settings: Value =
+        serde_json::from_str(&repo.worker_file("review-40", "settings.json")).unwrap();
+    assert_eq!(
+        settings["permissions"]["allow"],
+        json!(["Bash(gh pr comment 40 *)"])
+    );
     let state = repo.store().read().unwrap();
     assert_eq!(state.workers["review-40"].review_of, Some(40));
 }

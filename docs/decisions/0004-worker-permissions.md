@@ -1,6 +1,7 @@
 ---
 description: Workers launch with `--permission-mode auto`, which didn't stall or block them, and the worker guard and pre-push hooks from #23 must stop merges and pushes to main, because auto mode let both through.
-status: accepted
+status: superseded
+superseded-by: ADR-0010
 ---
 
 # ADR-0004: Worker permissions

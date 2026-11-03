@@ -20,20 +20,20 @@ Always ask me before changing auth, payments or migrations.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `fleet_token_budget` | none, required | Tokens the whole fleet may use in a run. A whole number above 0. |
-| `workers` | `3` | Most workers and reviewers the fleet may have at once. Every recorded worker counts, stopped or not, until it's cleaned up, since a stopped one can be resumed. |
+| `workers` | `3` | Most workers the fleet may have at once, reviewers started with `--role reviewer` included. Every recorded worker counts, stopped or not, until it's cleaned up, since a stopped one can be resumed. |
 | `plan_limit_percent` | `85` | Plan usage, in percent, at or past which no new session starts. Any window counts. |
 | `default_model` | `claude-opus-5-5` | Model for a session that doesn't name one. |
 | `default_effort` | `high` | Effort for a session that doesn't name one. |
 | `merge_method` | `squash` | `squash`, `merge` or `rebase`. |
 | `supervisor_merges` | `true`, or `false` when the repository has a `CONTRIBUTING.md` | Whether the supervisor may merge PRs routed to it. An explicit value always wins. |
 | `design_variants` | `4` | How many variants a design proposal shows. |
-| `nag_minutes` | `[15, 30, 60, 120, 240]` | Minutes after a question starts waiting at which the owner is reminded. |
+| `nag_minutes` | `[15, 30, 60, 120, 240]` | Gaps, in minutes, between reminders to the owner about a worker waiting on them: the first after it starts waiting, each later one after the reminder before. The last gap repeats. An empty list sends none. |
 | `preview` | none | How PR previews run. Without it, there are no previews. |
 | `preview.setup` | none | Command run once in a fresh worktree before the preview starts. |
 | `preview.run` | none | Command that serves the preview. |
 | `preview.url` | none | Used instead of `run` when the host gives each PR a URL. `{pr}` and `{branch}` are filled in. |
 | `preview.max_running` | `3` | Most previews running at once. |
-| `review_command` | none | What a reviewer checks, inserted verbatim into the reviewer prompt, such as `Run /refine on the PR.` None uses the built-in check against the issue's acceptance criteria and non-goals. |
+| `review_command` | none | What a PR's review checks, inserted verbatim into the instructions a worker gives its review subagent (and into the reviewer prompt), such as `Run /refine on the PR.` None uses the built-in check against the issue's acceptance criteria and non-goals. |
 
 ## Rejected files
 

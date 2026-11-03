@@ -245,9 +245,9 @@ fn issues_and_prs_produce_one_event_per_change() {
     let expected = [
         "issue #14 \"Dark mode\" opened [enhancement]: decide whether it's ready for a worker",
         "issue #13 \"Fix typo\" closed: check whether any approved work is left",
-        "pr #40 \"Add login\" (worker issue-12): ready for review: route it for review",
+        "pr #40 \"Add login\" (worker issue-12): ready for review: its worker reviewed it",
         "pr #40 \"Add login\" (worker issue-12): CI failed: have issue-12 fix it",
-        "pr #42 \"Docs\" (branch docs): opened, ready for review: route it for review",
+        "pr #42 \"Docs\" (branch docs): opened, ready for review: decide what to do with it",
         "pr #42 \"Docs\" (branch docs): CI passed: no action needed",
         "pr #41 \"Bump deps\" (branch deps): merged: start any work it unblocks",
     ];
