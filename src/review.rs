@@ -1,4 +1,5 @@
-//! `orchestral review`: a reviewer's verdict on one commit of a PR.
+//! `orchestral review`: the verdict of a PR's review on one commit, recorded
+//! by the author after its own review subagent, or by a separate reviewer.
 //!
 //! A verdict holds only for the commit it names. After two failed rounds,
 //! on two different commits, the PR's issue gets `blocked` and the fleet
@@ -84,22 +85,30 @@ pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, 
         });
     }
     let state = store.read()?;
-    let Some((reviewer, issue)) = state
+    let reviewer = state
         .workers
         .iter()
         .find(|(_, worker)| worker.review_of == Some(pr))
-        .map(|(name, worker)| (name.clone(), worker.issue))
-    else {
-        return Err(Failure::Refused {
-            reason: format!("PR #{pr} has no reviewer in this fleet"),
-            fix: format!("start one with `orchestral spawn <name> --role reviewer --pr {pr}`"),
-        });
-    };
+        .map(|(name, worker)| (name.clone(), worker.issue));
     let author = state
         .workers
         .iter()
         .find(|(_, worker)| worker.branch == view.head_ref_name && worker.review_of.is_none())
-        .map(|(name, _)| name.clone());
+        .map(|(name, worker)| (name.clone(), worker.issue));
+    // Authors review their own PRs (ADR-0011); a separate reviewer, when
+    // there is one, gives the verdict instead.
+    let Some(issue) = reviewer
+        .as_ref()
+        .or(author.as_ref())
+        .map(|(_, issue)| *issue)
+    else {
+        return Err(Failure::Refused {
+            reason: format!("PR #{pr} has no worker in this fleet"),
+            fix: "only the PR's author or its reviewer records a verdict".into(),
+        });
+    };
+    let reviewer = reviewer.map(|(name, _)| name);
+    let author = author.map(|(name, _)| name);
 
     // A second verdict on the same commit isn't another round.
     let mut failed = state.reviews.get(&pr).cloned().unwrap_or_default().failed;
@@ -133,16 +142,23 @@ pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, 
         None => format!("pr #{pr}"),
     };
     let at = short(&head);
-    let line = if passed {
-        format!("{subject}: review passed at {at}: clean up {reviewer}")
-    } else if blocked {
-        format!(
+    let line = match (&reviewer, passed, blocked) {
+        (Some(reviewer), true, _) => {
+            format!("{subject}: review passed at {at}: clean up {reviewer}")
+        }
+        (Some(reviewer), false, true) => format!(
             "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): issue #{issue} is now blocked, so clean up {reviewer} and {fixer}, and move on"
-        )
-    } else {
-        format!(
+        ),
+        (Some(reviewer), false, false) => format!(
             "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): clean up {reviewer}, and have {fixer} fix it"
-        )
+        ),
+        (None, true, _) => format!("{subject}: review passed at {at}: decide its findings"),
+        (None, false, true) => format!(
+            "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): issue #{issue} is now blocked, so clean up {fixer} and move on"
+        ),
+        (None, false, false) => format!(
+            "{subject}: review failed at {at} (round {rounds} of {ROUNDS}): {fixer} is fixing it"
+        ),
     };
     store.record("pr", &line)?;
     Ok(Reviewed {

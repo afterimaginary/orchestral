@@ -217,6 +217,15 @@ fn the_worker_gets_its_own_settings_and_prompt() {
         env!("CARGO_BIN_EXE_orchestral")
     );
     assert!(prompt.contains(&resolve), "{prompt}");
+    // It reviews its own PR with a fresh subagent and records the verdict.
+    assert!(
+        prompt.contains("meets the issue's acceptance criteria"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("' review <pr> --pass --sha <head>`"),
+        "{prompt}"
+    );
 }
 
 #[test]
@@ -545,6 +554,25 @@ fn a_run_over_its_fleet_budget_is_refused() {
         "ask the owner to raise fleet_token_budget in .orchestral/policy.md",
     );
     assert!(repo.bg_calls().is_empty());
+}
+
+#[test]
+fn a_worker_s_review_subagent_gets_the_policy_s_review_command() {
+    let repo = Repo::new();
+    fs::write(
+        repo.main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\nreview_command: Run /refine on the PR.\n---\nRules.\n",
+    )
+    .unwrap();
+    git(&repo.main, &["commit", "-q", "-am", "review command"]);
+    git(&repo.main, &["push", "-q", "origin", "main"]);
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let prompt = repo.worker_file("issue-12", "prompt.md");
+    assert!(prompt.contains("\"Run /refine on the PR. Flag"), "{prompt}");
 }
 
 #[test]

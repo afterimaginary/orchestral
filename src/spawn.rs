@@ -204,7 +204,12 @@ impl Launch<'_> {
                     self.settings.review_command.as_deref(),
                     &exe,
                 ),
-                None => worker_prompt(name, request.issue, &exe),
+                None => worker_prompt(
+                    name,
+                    request.issue,
+                    self.settings.review_command.as_deref(),
+                    &exe,
+                ),
             };
             write(&prompt, &text)?;
             // Recorded before launching, so a crash leaves a visible entry.
@@ -482,11 +487,21 @@ fn plugin_ids() -> Result<Vec<String>, Failure> {
         .collect())
 }
 
-fn worker_prompt(name: &str, issue: u64, orchestral: &Path) -> String {
+/// What a review checks when the policy has no `review_command`.
+const DEFAULT_REVIEW: &str =
+    "Check that the PR meets the issue's acceptance criteria and keeps to its non-goals.";
+
+fn worker_prompt(
+    name: &str,
+    issue: u64,
+    review_command: Option<&str>,
+    orchestral: &Path,
+) -> String {
     // A worker runs with the plugin turned off, so it calls this binary by
     // its path (ADR-0001).
     include_str!("prompts/worker.md")
         .replace("{{name}}", name)
+        .replace("{{review}}", review_command.unwrap_or(DEFAULT_REVIEW))
         .replace("{{issue}}", &issue.to_string())
         .replace(
             "{{orchestral}}",
@@ -501,9 +516,7 @@ fn reviewer_prompt(
     review_command: Option<&str>,
     orchestral: &Path,
 ) -> String {
-    let review = review_command.unwrap_or(
-        "Check that the PR meets the issue's acceptance criteria and keeps to its non-goals.",
-    );
+    let review = review_command.unwrap_or(DEFAULT_REVIEW);
     include_str!("prompts/reviewer.md")
         .replace("{{name}}", name)
         .replace("{{issue}}", &issue.to_string())
@@ -613,7 +626,7 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_worker_and_its_issue() {
-        let prompt = worker_prompt("issue-12", 12, Path::new("/opt/orchestral"));
+        let prompt = worker_prompt("issue-12", 12, None, Path::new("/opt/orchestral"));
 
         assert!(prompt.starts_with("You are worker issue-12 on issue #12."));
         assert!(prompt.contains("`'/opt/orchestral' resolve orchestrator`"));

@@ -485,10 +485,18 @@ fn changes(
             lines.push(match (pr.draft, worker) {
                 (true, Some(_)) => format!("{subject}: opened as a draft: no action needed"),
                 (true, None) => format!("{subject}: opened as a draft: decide what to do with it"),
-                (false, _) => format!("{subject}: opened, ready for review: route it for review"),
+                (false, Some(_)) => {
+                    format!("{subject}: opened, ready for review: its worker reviewed it")
+                }
+                (false, None) => {
+                    format!("{subject}: opened, ready for review: decide what to do with it")
+                }
             });
         } else if before.is_some_and(|before| before.draft) && !pr.draft {
-            lines.push(format!("{subject}: ready for review: route it for review"));
+            lines.push(match worker {
+                Some(_) => format!("{subject}: ready for review: its worker reviewed it"),
+                None => format!("{subject}: ready for review: decide what to do with it"),
+            });
         }
         // A result is new when it changed, or came from a new push.
         let ci_before = before.map_or(Ci::None, |before| before.ci);
