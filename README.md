@@ -2,28 +2,104 @@
 
 A small workflow layer for Claude Code, as a plugin plus a Rust binary. Give it a brief, and it plans the work, runs a fleet of worker sessions, respects your budget, and brings you in for the designs and decisions that are yours.
 
-**Status:** early development. A fleet can be started and watched, but it doesn't yet react to events, review or merge; see [`STATE.md`](STATE.md).
+**Status:** early. Every part runs end to end on a test repository, from planning through review to merge. Long unattended runs, such as a fleet idling overnight, are still being tested, so stay within reach on a first run. Progress is in [`STATE.md`](STATE.md).
 
-## Trying it
+## How it works
 
-Orchestral needs a Rust toolchain (1.89 or later). Install it from this repository's marketplace, in the terminal or in Claude Code Desktop:
+You talk to one Claude Code session, the **orchestrator**. It turns a brief into milestones and GitHub issues, starts a **worker** session for each issue it can work on, and passes messages between you and the workers. Each worker works in its own git worktree, opens a PR, has it reviewed by a fresh subagent, and marks it ready. A background **supervisor** process watches the workers and GitHub, wakes the orchestrator when something happens, and merges PRs once they've been approved and every check passes.
+
+Claude decides and the binary enforces: the `orchestral` binary refuses anything that breaks your policy, such as going past the worker cap, the plan's usage limit or the fleet's token budget, and workers can't merge, approve or push to `main`.
+
+## Requirements
+
+- macOS or Linux, with Claude Code logged in (`claude auth status`)
+- The GitHub CLI, logged in (`gh auth status`), and a project on GitHub
+- Rust 1.89 or later, to build the binary when the plugin is installed
+- Optional, for PR previews you can open from other devices: `portless` and Tailscale
+
+## Install
+
+Add this repository as a plugin marketplace, then install the plugin in each project you want to run it in:
 
 ```bash
 claude plugin marketplace add afterimaginary/orchestral
 ```
 
 ```bash
-claude plugin install orchestral@afterimaginary
+claude plugin install orchestral@afterimaginary --scope project
 ```
 
-The first session after installing builds the binary, which can take a minute. Or build a checkout and load it directly:
+Run the install from inside the project. In Claude Code Desktop, use the plugin settings while a session in that project is open: Desktop installs into the project of the session you're viewing. The first session after an install or update builds the binary, which can take a minute.
+
+To work on Orchestral itself, build a checkout and load it directly instead:
 
 ```bash
 cargo build --release
 claude --plugin-dir /path/to/orchestral
 ```
 
-In the project, run `orchestral init` once (as `/path/to/orchestral/bin/orchestral init`), set `fleet_token_budget` in `.orchestral/policy.md`, and push the policy to `main`. Then `/orchestral:orchestrate` checks the setup, claims the project, starts the supervisor and hands issues to workers. Give it a brief, as in `/orchestral:orchestrate plan from docs/brief.md`, and it first drafts milestones and issues for you to approve, and files them once you do. The plugin's `bin/orchestral` runs the build from this checkout, and the skill calls it by that path, so another `orchestral` on `PATH` doesn't get in the way.
+## Set up a project
+
+1. Open Claude Code in the project once and accept the trust prompt. Workers can't start in an untrusted folder.
+2. In that session, ask Claude to run `orchestral init`. It checks `claude`, `gh`, `git` and trust, creates `.orchestral/policy.md`, and installs a pre-push hook that stops workers pushing to `main`.
+3. Edit `.orchestral/policy.md`. Set `fleet_token_budget`, the tokens the whole fleet may use in a run. Below the settings, write your rules for the project in plain words, such as "Ask me before changing auth or billing."
+4. Commit the policy and push it to `main`. Orchestral reads the policy from `origin/main`, so local edits don't count until they're pushed.
+
+A policy for a first run:
+
+```markdown
+---
+workers: 2
+fleet_token_budget: 3000000
+supervisor_merges: false
+---
+Propose a design first for anything a user sees.
+Ask me before changing auth, payments or data migrations.
+```
+
+Every setting, and its default, is in [`docs/specs/policy.md`](docs/specs/policy.md).
+
+## Run it
+
+In a Claude Code session in the project, start the orchestrator:
+
+- **From a brief:** `/orchestral:orchestrate plan from docs/brief.md`. It drafts milestones and issues and publishes the plan for you to review. Nothing is filed until you approve it in the session.
+- **From open issues:** `/orchestral:orchestrate`. It works through the open issues, lowest milestone first. Issues with clear acceptance criteria and non-goals get the best results, since each PR is reviewed against them.
+
+The orchestrator runs `doctor` first and stops if anything fails, telling you what to fix. Then it claims the project (one orchestrator per repository), starts the supervisor, and starts workers up to the policy's `workers` limit. Keep that session open: it's how the fleet reaches you.
+
+## Your part
+
+The orchestrator asks you only for what's yours to decide. Each request comes as a message in the orchestrator session, and the issue or PR gets the `needs-discussion` label. If you don't answer, Orchestral sends you a Claude Code notification as a reminder, on the schedule set by `nag_minutes`.
+
+| When | What you do |
+| --- | --- |
+| A plan is ready | Review the published plan, and approve it or say what to change, in the session. |
+| A design proposal is ready | Open the link on the issue, pick a variant or ask for changes, by replying in the session or on the issue. |
+| A worker has a question | Answer on the issue, or in the session. |
+| A PR is ready for you to merge | Check it, using the preview link if the policy has a `preview`, then comment `/approve` on the PR. The supervisor merges it once every check passes. |
+| You want a PR to wait | Comment `/hold`, and `/unhold` to lift it. |
+| A worker found other work | It's filed as an `untriaged` issue. Remove the label to approve it, or close the issue to decline. |
+| An issue is `blocked` | Its PR failed review twice. Decide what happens next: fix it yourself, rewrite the issue, or close it. |
+
+Each command goes alone on the first line of a PR comment. An `/approve` covers the commit you saw: a new commit needs a new `/approve`. Deploys, deploy setup, paid services and new accounts always come to you, even when an issue seems to allow them.
+
+The supervisor merges a PR without your `/approve` only when the orchestrator routes it there, which needs `supervisor_merges: true` in the policy and a change you wouldn't need to see, such as an internal refactor. Changes to `.orchestral/` or `.github/` always come to you. When the repository has a `CONTRIBUTING.md`, `supervisor_merges` defaults to off.
+
+## Keep an eye on it
+
+Ask the orchestrator in plain words, or run the commands yourself in a session where the plugin is enabled:
+
+| Command | Does |
+| --- | --- |
+| `orchestral status` | Workers and their PRs, review verdicts, plan usage, budget used and whether the fleet is paused. |
+| `orchestral pause` / `unpause` | Stop starting new workers, and start again. Running workers finish what they're doing. |
+| `orchestral stop <worker>` / `resume <worker>` | Stop a worker and keep its work, then pick it up again later. |
+| `orchestral previews` | The running PR previews and their links. |
+
+The fleet stops starting work at the plan's usage limit (`plan_limit_percent`) and resumes after the window resets. At the token budget it stops and asks you how to continue. The run ends when every approved issue is closed: the orchestrator publishes a summary of what merged and what's left. The supervisor exits by itself once nothing is left to watch.
+
+Every command, with its output, is in [`docs/specs/cli.md`](docs/specs/cli.md).
 
 ## Development
 
