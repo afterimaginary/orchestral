@@ -132,7 +132,7 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 
 ### `orchestral spawn <name> --issue <n> [--role worker|reviewer] [--pr <n>] --prompt <text> [--model <m>] [--effort <e>] [--json]`
 
-Starts a worker on an issue as a background Claude Code session. With `--role reviewer --pr <n>`, it starts a reviewer of that PR instead: the same kind of session, with the reviewer prompt below. `--pr` is required for a reviewer and refused for a worker. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
+Starts a worker on an issue as a background Claude Code session. With `--role reviewer --pr <n>`, it starts a reviewer of that PR instead: the same kind of session, with the reviewer prompt below. The orchestrate skill doesn't start reviewers, since authors review their own PRs (ADR-0011). `--pr` is required for a reviewer and refused for a worker. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
 
 It refuses, exiting `2`, when:
 
@@ -175,7 +175,7 @@ The worker's settings apply to its process only:
 | `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
 
-The prompt names the worker and its issue, tells it to find its orchestrator's SendMessage address with `<this binary's path> resolve orchestrator` (and that messages from that address are its orchestrator's), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`.
+The prompt names the worker and its issue, tells it to find its orchestrator's SendMessage address with `<this binary's path> resolve orchestrator` (and that messages from that address are its orchestrator's), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`. Before marking its PR ready, it has the PR reviewed by a fresh subagent given only the PR, the issue and the policy's `review_command` (or, without one, that the PR meets the issue's acceptance criteria and keeps to its non-goals), fixes what holds up, and records the verdict with `orchestral review`.
 
 A reviewer's prompt names the PR and its issue. It says what to check: the policy's `review_command` verbatim when set, or else that the PR meets the issue's acceptance criteria and keeps to its non-goals. It asks for realistic failures in normal use rather than speculative hardening. The reviewer posts one PR comment, then records its verdict on the head commit it reviewed with `orchestral review`, and never edits code.
 
@@ -299,14 +299,22 @@ PR #42 running at https://host.example.ts.net:8443 (log .git/orchestral/logs/pre
 
 ### `orchestral review <pr> --pass|--fail --sha <sha> [--json]`
 
-Records a reviewer's verdict on PR `<pr>`'s head commit, in the state's `reviews`. It refuses, exiting `2`, when the PR isn't open, when `<sha>` (at least 7 characters) isn't the PR's current head, or when the fleet has no reviewer for the PR. A verdict holds only for the commit it names.
+Records the verdict of PR `<pr>`'s review on its head commit, in the state's `reviews`. The PR's author records it after reviewing the PR with a fresh subagent (ADR-0011), or a reviewer started with `--role reviewer` does when the PR has one. It refuses, exiting `2`, when the PR isn't open, when `<sha>` (at least 7 characters) isn't the PR's current head, or when the fleet has neither a worker on the PR's branch nor a reviewer for it. A verdict holds only for the commit it names.
 
-A failed verdict on a commit that hasn't failed before is a round. On the second round, it adds the `blocked` label to the issue the reviewer was started for, creating the label if the repository lacks it, and the fleet moves on. The label is added before anything is recorded, so when it fails the verdict can be recorded again. It records one `pr` event:
+A failed verdict on a commit that hasn't failed before is a round. On the second round, it adds the `blocked` label to the PR's issue, creating the label if the repository lacks it, and the fleet moves on. The label is added before anything is recorded, so when it fails the verdict can be recorded again. It records one `pr` event:
 
 ```text
 pr #40 (worker issue-12): review passed at 1111111: clean up review-40
 pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): clean up review-40, and have issue-12 fix it
 pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so clean up review-40 and issue-12, and move on
+```
+
+Without a reviewer, the author recorded it:
+
+```text
+pr #40 (worker issue-12): review passed at 2222222: decide its findings
+pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): issue-12 is fixing it
+pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so clean up issue-12 and move on
 ```
 
 ### `orchestral stop <name> [--json]`

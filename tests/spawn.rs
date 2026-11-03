@@ -196,6 +196,15 @@ fn the_worker_gets_its_own_settings_and_prompt() {
         env!("CARGO_BIN_EXE_orchestral")
     );
     assert!(prompt.contains(&resolve), "{prompt}");
+    // It reviews its own PR with a fresh subagent and records the verdict.
+    assert!(
+        prompt.contains("meets the issue's acceptance criteria"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("' review <pr> --pass --sha <head>`"),
+        "{prompt}"
+    );
 }
 
 #[test]

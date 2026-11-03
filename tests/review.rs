@@ -158,18 +158,64 @@ fn two_failed_rounds_block_the_issue() {
 }
 
 #[test]
-fn a_closed_pr_or_one_without_a_reviewer_is_refused() {
+fn the_author_records_its_own_review_without_a_reviewer() {
+    let repo = Repo::new();
+    repo.store()
+        .update(|state| state.workers.remove("review-40"))
+        .unwrap();
+
+    let (failed, _) = repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
+    assert_eq!(failed.status.code(), Some(0), "{}", stderr(&failed));
+    let (passed, _) = repo.review(&["40", "--pass", "--sha", SECOND], SECOND, "OPEN");
+    assert_eq!(passed.status.code(), Some(0), "{}", stderr(&passed));
+
+    let review = &repo.store().read().unwrap().reviews[&40];
+    assert_eq!(review.sha, SECOND);
+    assert!(review.passed);
+    assert_eq!(
+        repo.events(),
+        [
+            "pr #40 (worker issue-12): review failed at 1111111 (round 1 of 2): issue-12 is fixing it",
+            "pr #40 (worker issue-12): review passed at 2222222: decide its findings",
+        ]
+    );
+}
+
+#[test]
+fn the_author_s_second_failed_round_blocks_the_issue() {
+    let repo = Repo::new();
+    repo.store()
+        .update(|state| state.workers.remove("review-40"))
+        .unwrap();
+
+    repo.review(&["40", "--fail", "--sha", FIRST], FIRST, "OPEN");
+    let (second, stubs) = repo.review(&["40", "--fail", "--sha", SECOND], SECOND, "OPEN");
+
+    assert_eq!(second.status.code(), Some(0), "{}", stderr(&second));
+    assert!(
+        stubs.calls("gh").contains(
+            &["issue", "edit", "12", "--add-label", "blocked"]
+                .map(String::from)
+                .to_vec()
+        )
+    );
+    assert_eq!(
+        repo.events().last().unwrap(),
+        "pr #40 (worker issue-12): review failed at 2222222 (round 2 of 2): issue #12 is now blocked, so clean up issue-12 and move on"
+    );
+}
+
+#[test]
+fn a_closed_pr_or_one_without_a_worker_is_refused() {
     let repo = Repo::new();
     let (closed, _) = repo.review(&["40", "--pass", "--sha", FIRST], FIRST, "MERGED");
     assert_eq!(closed.status.code(), Some(2));
     assert!(stderr(&closed).contains("PR #40 is merged"));
 
-    repo.store()
-        .update(|state| state.workers.remove("review-40"))
-        .unwrap();
-    let (unreviewed, _) = repo.review(&["40", "--pass", "--sha", FIRST], FIRST, "OPEN");
-    assert_eq!(unreviewed.status.code(), Some(2));
-    assert!(stderr(&unreviewed).contains("PR #40 has no reviewer in this fleet"));
+    repo.store().update(|state| state.workers.clear()).unwrap();
+    let (unowned, _) = repo.review(&["40", "--pass", "--sha", FIRST], FIRST, "OPEN");
+    assert_eq!(unowned.status.code(), Some(2));
+    assert!(stderr(&unowned).contains("PR #40 has no worker in this fleet"));
 }
 
 #[test]
