@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::findings;
 use crate::github::{self, Ci, GhCheck, gh_json, gh_output};
 use crate::outcome::Failure;
-use crate::policy::{Policy, Settings};
+use crate::policy::{MergeMethod, Policy, Settings};
 use crate::review::short;
 use crate::spawn::main_checkout;
 use crate::state::{MergeRoute, State, Store};
@@ -213,6 +213,108 @@ pub fn route(state: &State, pr: u64) -> MergeRoute {
         .routes
         .get(&pr)
         .map_or(MergeRoute::Human, |route| route.to)
+}
+
+/// From the supervisor's minute tick, after the poll: merges each open PR
+/// whose merge check passes, at the head commit it passed for (ADR-0003).
+/// The snapshot rules out PRs that can't pass before GitHub is asked about
+/// them. A refused merge is checked again from scratch next minute. Returns
+/// lines for the log.
+pub fn merge_ready(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
+    let Some(prs) = github::open_pr_snapshot(store)? else {
+        return Ok(Vec::new());
+    };
+    let state = store.read()?;
+    let main = main_checkout(store.dir())?;
+    let settings = Policy::load(&main)?.settings;
+    let candidates: Vec<(u64, github::Pr)> = prs
+        .into_iter()
+        .filter(|(number, pr)| {
+            let reviewed = state
+                .reviews
+                .get(number)
+                .is_some_and(|review| review.passed && review.sha == pr.head);
+            let approved = state.approvals.get(number) == Some(&pr.head);
+            let supervised =
+                settings.supervisor_merges && route(&state, *number) == MergeRoute::Supervisor;
+            !state.paused
+                && !state.holds.contains(number)
+                && !pr.draft
+                && pr.ci == Ci::Passed
+                && reviewed
+                && (approved || supervised)
+        })
+        .collect();
+    let mut lines = Vec::new();
+    for (number, snapshot_pr) in candidates {
+        match merge_one(store, gh, &main, &settings, number) {
+            Ok(None) => {}
+            Ok(Some(head)) => {
+                let worker = state
+                    .workers
+                    .iter()
+                    .find(|(_, worker)| worker.branch == snapshot_pr.branch)
+                    .map(|(name, _)| name.as_str());
+                let subject = github::pr_subject(number, &snapshot_pr, worker);
+                let merged = format!("merged by the supervisor at {}", short(&head));
+                let line = github::merged_line(&subject, &merged, worker);
+                // It merged, so a failure here doesn't hold up the others.
+                if let Err(err) = store
+                    .record("pr", &line)
+                    .and_then(|_| github::forget_pr(store, number))
+                {
+                    lines.push(format!(
+                        "PR #{number} merged, but recording it failed: {}",
+                        crate::supervisor::failure_text(&err)
+                    ));
+                }
+                lines.push(line);
+            }
+            Err(err) => lines.push(format!(
+                "can't merge PR #{number}: {}",
+                crate::supervisor::failure_text(&err)
+            )),
+        }
+    }
+    Ok(lines)
+}
+
+/// Runs the merge check on one PR and merges it if it passes. Returns the
+/// head commit it merged.
+fn merge_one(
+    store: &Store,
+    gh: &Path,
+    main: &Path,
+    settings: &Settings,
+    number: u64,
+) -> Result<Option<String>, Failure> {
+    // Read again, so a hold or pause from a moment ago counts.
+    let state = store.read()?;
+    let mut pr = read_pr(gh, main, number)?;
+    if route(&state, number) == MergeRoute::Supervisor {
+        pr.files = changed_files(gh, main, number)?;
+    }
+    if !evaluate(&pr, &state, settings).mergeable() {
+        return Ok(None);
+    }
+    let method = match settings.merge_method {
+        MergeMethod::Squash => "--squash",
+        MergeMethod::Merge => "--merge",
+        MergeMethod::Rebase => "--rebase",
+    };
+    gh_output(
+        gh,
+        main,
+        &[
+            "pr",
+            "merge",
+            &number.to_string(),
+            method,
+            "--match-head-commit",
+            &pr.head,
+        ],
+    )?;
+    Ok(Some(pr.head))
 }
 
 /// `orchestral merge-check <pr>`.
