@@ -175,7 +175,7 @@ The worker's settings apply to its process only:
 | `crossSessionInbound` | `accept`, so the orchestrator can message it |
 | `isolatePeerMachines` | `true` |
 | `worktree.bgIsolation` | `none`, since it already has a worktree |
-| `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), and the caller's `PATH` |
+| `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), and the caller's `PATH`, and nothing else, so no credential in the orchestrator's environment reaches a worker |
 | `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone, to `origin <name>` (with `-u` or `--force-with-lease`) or to `origin HEAD` (with or without `-u`), `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *`, `gh issue edit <issue> --add-label needs-discussion`, and `'<this binary>' review *` to record its own review's verdict (ADR-0011), which the classifier denies as self-approval otherwise. For a reviewer, only `gh pr comment <pr> *` and `'<this binary>' review <pr> *`. Anything else still goes through auto mode. |
 | `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
