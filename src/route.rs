@@ -33,6 +33,13 @@ impl fmt::Display for Routed {
     }
 }
 
+fn asked_already(pr: u64) -> Failure {
+    Failure::Refused {
+        reason: format!("the owner has already been asked to merge PR #{pr}"),
+        fix: "leave it on the owner's route".into(),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct PrState {
     state: String,
@@ -72,10 +79,7 @@ pub fn route(cwd: &Path, pr: u64, to: MergeRoute, reason: &str) -> Result<Routed
     }
     if to == MergeRoute::Supervisor {
         if state.asked.contains(&pr) {
-            return Err(Failure::Refused {
-                reason: format!("the owner has already been asked to merge PR #{pr}"),
-                fix: "leave it on the owner's route".into(),
-            });
+            return Err(asked_already(pr));
         }
         if !Policy::load(cwd)?.settings.supervisor_merges {
             return Err(Failure::Refused {
@@ -97,7 +101,12 @@ pub fn route(cwd: &Path, pr: u64, to: MergeRoute, reason: &str) -> Result<Routed
             });
         }
     }
-    store.update(|state| {
+    // Checked again under the lock, in case the supervisor asked the owner
+    // meanwhile.
+    let recorded = store.update(|state| {
+        if to == MergeRoute::Supervisor && state.asked.contains(&pr) {
+            return false;
+        }
         state.routes.insert(
             pr,
             Route {
@@ -105,7 +114,11 @@ pub fn route(cwd: &Path, pr: u64, to: MergeRoute, reason: &str) -> Result<Routed
                 reason: reason.to_owned(),
             },
         );
+        true
     })?;
+    if !recorded {
+        return Err(asked_already(pr));
+    }
     Ok(Routed {
         pr,
         to,
@@ -115,7 +128,9 @@ pub fn route(cwd: &Path, pr: u64, to: MergeRoute, reason: &str) -> Result<Routed
 
 /// From the supervisor's minute tick, after the poll: labels each open PR on
 /// the owner's route that only needs their approval with `needs-discussion`,
-/// records that they were asked, and records an event, once per PR. Forgets
+/// records that they were asked, and records an event, once per PR. A PR that
+/// was asked about and no longer looks ready, after a push, a failed check or
+/// a return to draft, loses the label and is no longer asked about. Forgets
 /// PRs that are no longer open. Returns lines for the log.
 pub fn ask_owner(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     let Some(prs) = github::open_pr_snapshot(store)? else {
@@ -123,43 +138,75 @@ pub fn ask_owner(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     };
     let main = main_checkout(store.dir())?;
     let state = store.read()?;
+    // What the snapshot shows without asking GitHub again.
+    let ready = |number: u64, pr: &github::Pr| {
+        !pr.draft
+            && pr.ci == Ci::Passed
+            && merge::route(&state, number) == MergeRoute::Human
+            && state
+                .reviews
+                .get(&number)
+                .is_some_and(|review| review.passed && review.sha == pr.head)
+    };
     let candidates: Vec<u64> = prs
         .iter()
-        .filter(|(number, pr)| {
-            !pr.draft
-                && pr.ci == Ci::Passed
-                && !state.asked.contains(number)
-                && merge::route(&state, **number) == MergeRoute::Human
-                && state
-                    .reviews
-                    .get(number)
-                    .is_some_and(|review| review.passed && review.sha == pr.head)
-        })
+        .filter(|&(number, pr)| !state.asked.contains(number) && ready(*number, pr))
         .map(|(number, _)| *number)
         .collect();
+    let lapsed: Vec<u64> = prs
+        .iter()
+        .filter(|&(number, pr)| state.asked.contains(number) && !ready(*number, pr))
+        .map(|(number, _)| *number)
+        .collect();
+    let mut lines = Vec::new();
     let mut asked = Vec::new();
     if !candidates.is_empty() {
         let settings = Policy::load(&main)?.settings;
         for number in candidates {
-            let pr = merge::read_pr(gh, &main, number)?;
-            if !merge::evaluate(&pr, &state, &settings).waits_on_owner() {
-                continue;
+            let labelled = merge::read_pr(gh, &main, number).and_then(|pr| {
+                if !merge::evaluate(&pr, &state, &settings).waits_on_owner() {
+                    return Ok(false);
+                }
+                // A new repository may not have the label yet. Creating one
+                // that exists fails, and the edit below reports anything else.
+                let _ = gh_output(gh, &main, &["label", "create", ESCALATION]);
+                let n = number.to_string();
+                gh_output(gh, &main, &["pr", "edit", &n, "--add-label", ESCALATION])?;
+                Ok(true)
+            });
+            match labelled {
+                Ok(true) => asked.push(number),
+                Ok(false) => {}
+                // Tried again next minute.
+                Err(err) => lines.push(format!(
+                    "can't ask the owner to merge PR #{number}: {}",
+                    crate::supervisor::failure_text(&err)
+                )),
             }
-            // A new repository may not have the label yet. Creating one that
-            // exists fails, and the edit below reports anything else.
-            let _ = gh_output(gh, &main, &["label", "create", ESCALATION]);
-            gh_output(
-                gh,
-                &main,
-                &["pr", "edit", &number.to_string(), "--add-label", ESCALATION],
-            )?;
-            asked.push(number);
         }
     }
-    let mut lines = Vec::new();
-    store.update(|state| {
-        state.asked.retain(|number| prs.contains_key(number));
+    let mut withdrawn = Vec::new();
+    for number in lapsed {
+        let n = number.to_string();
+        match gh_output(gh, &main, &["pr", "edit", &n, "--remove-label", ESCALATION]) {
+            Ok(_) => withdrawn.push(number),
+            Err(err) => lines.push(format!(
+                "can't remove {ESCALATION} from PR #{number}: {}",
+                crate::supervisor::failure_text(&err)
+            )),
+        }
+    }
+    // A PR routed to the supervisor meanwhile isn't asked about.
+    let asked = store.update(|state| {
+        state
+            .asked
+            .retain(|number| prs.contains_key(number) && !withdrawn.contains(number));
+        let asked: Vec<u64> = asked
+            .into_iter()
+            .filter(|&number| merge::route(state, number) == MergeRoute::Human)
+            .collect();
         state.asked.extend(asked.iter().copied());
+        asked
     })?;
     for number in asked {
         let line = format!(
@@ -167,6 +214,11 @@ pub fn ask_owner(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
         );
         store.record("pr", &line)?;
         lines.push(line);
+    }
+    for number in withdrawn {
+        lines.push(format!(
+            "PR #{number} is no longer ready for the owner to merge, so {ESCALATION} was removed"
+        ));
     }
     Ok(lines)
 }

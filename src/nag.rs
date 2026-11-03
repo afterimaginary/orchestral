@@ -70,10 +70,15 @@ pub fn waiting(
         .filter_map(|(name, worker)| {
             // A reviewer shares its issue, so only the implementer is
             // reminded about the escalation.
+            let session = || {
+                (state.observed.get(name) == Some(&Observed::Waiting))
+                    .then(|| question(worker))
+                    .flatten()
+            };
             let why = if escalated.contains(&worker.issue) && worker.review_of.is_none() {
                 Why::Escalated
-            } else if state.observed.get(name) == Some(&Observed::Waiting) {
-                Why::Session(question(worker)?)
+            } else if let Some(question) = session() {
+                Why::Session(question)
             } else if let Some(&pr) = merging.get(name) {
                 Why::Merge(pr)
             } else {

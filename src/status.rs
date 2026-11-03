@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::budget::Estimate;
 use crate::gate;
 use crate::limits::{self, Limits};
+use crate::merge;
 use crate::observe::Observed;
 use crate::outcome::Failure;
 use crate::policy::Policy;
@@ -49,7 +50,7 @@ pub struct WorkerStatus {
     pub pr: Option<u64>,
     /// Whether that PR is a draft.
     pub draft: bool,
-    /// Who merges that PR, once the orchestrator has routed it.
+    /// Who merges that PR: the owner's until it's routed elsewhere.
     pub route: Option<MergeRoute>,
     /// Whether the owner was asked to merge that PR.
     pub asked_owner: bool,
@@ -206,7 +207,7 @@ fn workers(
                 issue: worker.issue,
                 pr: pr.map(|(_, number, _)| *number),
                 draft: pr.is_some_and(|(_, _, draft)| *draft),
-                route: pr.and_then(|(_, number, _)| Some(state.routes.get(number)?.to)),
+                route: pr.map(|(_, number, _)| merge::route(state, *number)),
                 asked_owner: pr.is_some_and(|(_, number, _)| state.asked.contains(number)),
                 session_name: worker.session_name.clone(),
                 session: match agent {
@@ -387,9 +388,8 @@ impl fmt::Display for WorkerStatus {
             }
             match self.route {
                 _ if self.asked_owner => write!(f, ", ready for you to merge")?,
-                Some(MergeRoute::Human) => write!(f, ", the owner merges")?,
                 Some(MergeRoute::Supervisor) => write!(f, ", the supervisor merges")?,
-                None => {}
+                _ => write!(f, ", the owner merges")?,
             }
         }
         if self.proposing {

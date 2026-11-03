@@ -96,6 +96,28 @@ fn the_orchestrator_records_a_route() {
 }
 
 #[test]
+fn an_empty_reason_is_refused() {
+    let (_dir, main) = repo(true);
+    let stubs = Stubs::new();
+
+    let output = stubs
+        .orchestral()
+        .args(["route", "42", "human", "--reason", "  "])
+        .current_dir(&main)
+        .env("CLAUDE_CODE_SESSION_ID", SESSION)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("the reason is empty"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(store(&main).read().unwrap().routes.is_empty());
+}
+
+#[test]
 fn only_the_orchestrator_routes() {
     let (_dir, main) = repo(true);
 
@@ -295,4 +317,72 @@ fn the_owner_is_asked_once_when_only_their_approval_is_missing() {
     snapshot(&main, &[(43, true, "passed")]);
     route::ask_owner(&store, &gh).unwrap();
     assert!(store.read().unwrap().asked.is_empty());
+}
+
+#[test]
+fn a_pr_that_stops_being_ready_loses_the_label() {
+    let (_dir, main) = repo(true);
+    let store = store(&main);
+    store
+        .update(|state| {
+            passed(state, 42);
+            state.asked.insert(42);
+        })
+        .unwrap();
+    // A new push is waiting on CI.
+    snapshot(&main, &[(42, false, "pending")]);
+    let stubs = Stubs::new();
+    stubs.respond("gh", &["pr", "edit"], "", 0);
+
+    let lines = route::ask_owner(&store, &stubs.dir().join("gh")).unwrap();
+
+    assert_eq!(
+        edits(&stubs),
+        [["pr", "edit", "42", "--remove-label", "needs-discussion"]]
+    );
+    assert!(store.read().unwrap().asked.is_empty());
+    assert_eq!(
+        lines,
+        ["PR #42 is no longer ready for the owner to merge, so needs-discussion was removed"]
+    );
+}
+
+#[test]
+fn one_failing_pr_does_not_hold_up_the_others() {
+    let (_dir, main) = repo(true);
+    let store = store(&main);
+    store
+        .update(|state| {
+            passed(state, 42);
+            passed(state, 43);
+        })
+        .unwrap();
+    snapshot(&main, &[(42, false, "passed"), (43, false, "passed")]);
+    let stubs = Stubs::new();
+    stubs.respond("gh", &["pr", "view", "42"], "", 1);
+    stubs.respond(
+        "gh",
+        &["pr", "view", "43"],
+        &view("## Findings\n\nNone\n"),
+        0,
+    );
+    stubs.respond("gh", &["label", "create"], "", 1);
+    stubs.respond("gh", &["pr", "edit"], "", 0);
+
+    let lines = route::ask_owner(&store, &stubs.dir().join("gh")).unwrap();
+
+    assert!(
+        lines[0].starts_with("can't ask the owner to merge PR #42"),
+        "{lines:?}"
+    );
+    assert_eq!(
+        store
+            .read()
+            .unwrap()
+            .asked
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [43]
+    );
 }
