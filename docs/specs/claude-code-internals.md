@@ -133,3 +133,7 @@ Current week (all models): 26% used · resets Nov 4 at 12:59pm (America/Los_Ange
 ```
 
 The label is `session` or `week (<models>)`. The reset time has no year, drops `:00` on the hour, and is in the IANA time zone in parentheses. Reset times drift by a minute between reads of the same window, so a reset is confirmed as ADR-0008 describes, not by a changed time. A breakdown of what used the plan follows the windows.
+
+## Push notifications
+
+`PushNotification` checks whether the user is present before sending, and a new `claude --bg` session always counts as present: its result is "Not sent — this terminal is active", and no banner arrives. With `CLAUDE_CODE_DISABLE_NOTIFICATION_PRESENCE_CHECK=1` in the session's settings `env`, the result is "Terminal notification sent. Mobile push requested.", and the banner reaches the Mac and the phone through Remote Control (ADR-0009). Seen on 2.1.316.

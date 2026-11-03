@@ -242,6 +242,10 @@ fn a_due_reminder_starts_a_one_shot_haiku_session_and_stops_it_afterwards() {
     assert_eq!(arg_after(call, "--effort"), Some("low"));
     assert_eq!(arg_after(call, "--permission-mode"), Some("default"));
     assert_eq!(arg_after(call, "--remote-control"), Some("app-nag-1"));
+    assert_eq!(
+        arg_after(call, "--settings"),
+        Some(r#"{"env":{"CLAUDE_CODE_DISABLE_NOTIFICATION_PRESENCE_CHECK":"1"}}"#)
+    );
     let prompt = call.last().unwrap();
     assert!(prompt.starts_with("Load the PushNotification tool with ToolSearch"));
     // Only the owner's newest Orchestral comment is quoted.

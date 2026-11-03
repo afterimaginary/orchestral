@@ -154,6 +154,6 @@ pub fn record(cwd: &Path, pr: u64, passed: bool, sha: &str) -> Result<Reviewed, 
     })
 }
 
-fn short(sha: &str) -> &str {
+pub(crate) fn short(sha: &str) -> &str {
     &sha[..sha.len().min(7)]
 }

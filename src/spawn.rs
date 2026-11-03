@@ -354,7 +354,7 @@ pub(crate) fn main_checkout(store: &Path) -> Result<PathBuf, Failure> {
 }
 
 /// The main checkout's directory name.
-fn repo_slug(main: &Path) -> String {
+pub(crate) fn repo_slug(main: &Path) -> String {
     main.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "repo".into())

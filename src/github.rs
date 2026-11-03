@@ -185,6 +185,14 @@ pub fn escalated(store: &Store) -> BTreeSet<u64> {
         .collect()
 }
 
+/// The open PRs as of the last poll, or `None` when the last poll failed or
+/// none has run.
+pub fn open_prs(store: &Store) -> Result<Option<BTreeSet<u64>>, Failure> {
+    Ok(read_snapshot(&store.dir().join("github.json"))?
+        .filter(|snapshot| snapshot.polled_at.is_some() && snapshot.failures == 0)
+        .map(|snapshot| snapshot.prs.keys().copied().collect()))
+}
+
 /// The open issues in `new` waiting on the owner that either were counted
 /// already or started waiting since `old`.
 fn escalations(old: Option<&Snapshot>, new: &Snapshot) -> BTreeSet<u64> {
@@ -591,7 +599,7 @@ fn pr_subject(number: u64, pr: &Pr, worker: Option<&str>) -> String {
 }
 
 /// The CI result for a PR's head, from its status check rollup.
-fn ci(checks: &[GhCheck]) -> Ci {
+pub(crate) fn ci(checks: &[GhCheck]) -> Ci {
     if checks.is_empty() {
         return Ci::None;
     }
@@ -620,6 +628,14 @@ fn ci(checks: &[GhCheck]) -> Ci {
         pending |= !complete;
     }
     if pending { Ci::Pending } else { Ci::Passed }
+}
+
+/// Whether any check succeeded, so a rollup of only skipped or neutral
+/// checks doesn't count as passing.
+pub(crate) fn succeeded(checks: &[GhCheck]) -> bool {
+    checks
+        .iter()
+        .any(|check| check.conclusion.as_deref().or(check.state.as_deref()) == Some("SUCCESS"))
 }
 
 fn is_ours(body: &str) -> bool {
@@ -737,7 +753,7 @@ struct GhPr {
 }
 
 #[derive(Deserialize)]
-struct GhCheck {
+pub(crate) struct GhCheck {
     status: Option<String>,
     conclusion: Option<String>,
     state: Option<String>,

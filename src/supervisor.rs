@@ -1,11 +1,11 @@
 //! The supervisor's lifecycle: `orchestral up` starts it detached, and it
-//! runs until no worker or escalation is open and the keepalive window has
-//! passed.
+//! runs until no worker, escalation or preview is open and the keepalive
+//! window has passed.
 //!
 //! Every 2 seconds it checks the workers and records an event when one needs
-//! someone; every minute it polls GitHub, logs the fleet's usage, reminds the
-//! owner about workers waiting on them, and writes a heartbeat when one is
-//! due, and every 5 minutes it logs the plan
+//! someone, and keeps the previews running; every minute it polls GitHub,
+//! logs the fleet's usage, reminds the owner about workers waiting on them,
+//! and writes a heartbeat when one is due, and every 5 minutes it logs the plan
 //! windows. It keeps the machine awake while the fleet has work.
 
 use std::fmt;
@@ -22,7 +22,9 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::state::Store;
-use crate::{gate, github, heartbeat, limits, nag, observe, pace, recover, sessions, transcript};
+use crate::{
+    gate, github, heartbeat, limits, nag, observe, pace, preview, recover, sessions, transcript,
+};
 
 /// How often the supervisor checks the workers and whether it can exit.
 const TICK: Duration = Duration::from_secs(2);
@@ -185,7 +187,11 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         ticks.run(&store);
         // An open escalation keeps the run going while the owner decides.
         let open = match store.read() {
-            Ok(state) => !state.workers.is_empty() || github::waits_on_owner(&store),
+            Ok(state) => {
+                !state.workers.is_empty()
+                    || github::waits_on_owner(&store)
+                    || preview::wanted(&state)
+            }
             Err(err) => {
                 log(&format!("can't read the state: {}", failure_text(&err)));
                 true
@@ -201,7 +207,8 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         // Checked again under the lock, so a worker spawned just now isn't
         // left without a supervisor.
         let exited = store.update(|state| {
-            if !state.workers.is_empty() || github::waits_on_owner(&store) {
+            if !state.workers.is_empty() || github::waits_on_owner(&store) || preview::wanted(state)
+            {
                 return false;
             }
             if read_pid(&pid_path).is_some_and(|record| record.pid == pid) {
@@ -210,7 +217,9 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
             true
         })?;
         if exited {
-            log("no worker or escalation is open and the keepalive window has passed; exiting");
+            log(
+                "no worker, escalation or preview is open and the keepalive window has passed; exiting",
+            );
             return Ok(());
         }
         idle_since = jiff::Timestamp::now();
@@ -227,6 +236,7 @@ struct Ticks {
     last_five_minutes: Option<jiff::Timestamp>,
     minute: Option<thread::JoinHandle<()>>,
     five_minutes: Option<thread::JoinHandle<()>>,
+    previews: Option<thread::JoinHandle<()>>,
 }
 
 impl Ticks {
@@ -240,6 +250,17 @@ impl Ticks {
             }
             Err(err) => log(&format!("can't check the workers: {}", failure_text(&err))),
         }
+        // Every tick, on its own thread since a setup can take minutes:
+        // previews.
+        if finished(&self.previews) {
+            let store = store.clone();
+            self.previews = Some(thread::spawn(move || {
+                match preview::reconcile(&store, &preview::Tools::default()) {
+                    Ok(lines) => lines.iter().for_each(|line| log(line)),
+                    Err(err) => log(&format!("can't check the previews: {}", failure_text(&err))),
+                }
+            }));
+        }
         let now = jiff::Timestamp::now();
         if due(self.last_minute, now, MINUTE) && finished(&self.minute) {
             self.last_minute = Some(now);
@@ -251,6 +272,13 @@ impl Ticks {
                 match github::poll(&store, Path::new("gh")) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!("can't poll GitHub: {}", failure_text(&err))),
+                }
+                match preview::stop_closed(&store) {
+                    Ok(lines) => lines.iter().for_each(|line| log(line)),
+                    Err(err) => log(&format!(
+                        "can't stop closed PRs' previews: {}",
+                        failure_text(&err)
+                    )),
                 }
                 let used = match fleet_usage(&store) {
                     Ok(used) => {
@@ -379,7 +407,7 @@ fn beat(store: &Store, used: Option<&crate::budget::Estimate>) -> Result<Option<
 }
 
 /// The running supervisor's pid, if there is one.
-fn running(store: &Store) -> Result<Option<u32>, Failure> {
+pub(crate) fn running(store: &Store) -> Result<Option<u32>, Failure> {
     Ok(read_pid(&pid_path(store))
         .filter(is_alive)
         .map(|record| record.pid))

@@ -5,7 +5,7 @@
 //! replaced atomically through a temp file and rename, so a reader never sees
 //! a partial write and doesn't need the lock.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 9;
+pub const SCHEMA: u32 = 12;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -43,6 +43,15 @@ pub struct State {
     pub usage: Option<Usage>,
     /// Whether this run has reached its `fleet_token_budget`.
     pub budget_reached: bool,
+    /// Each PR's merge route, by PR number. A PR without one goes to the
+    /// owner.
+    pub routes: BTreeMap<u64, Route>,
+    /// The head commit the owner approved on each PR.
+    pub approvals: BTreeMap<u64, String>,
+    /// PRs the owner put on hold.
+    pub holds: BTreeSet<u64>,
+    /// PR previews, by PR number.
+    pub previews: BTreeMap<u64, Preview>,
     /// Reminders to the owner, by the worker waiting on them.
     pub nags: BTreeMap<String, Nag>,
     /// Reminder sessions that haven't been stopped yet.
@@ -67,6 +76,86 @@ pub struct NagSession {
     pub job_id: String,
     /// RFC 3339, in UTC.
     pub started_at: String,
+}
+
+/// A PR's preview: what's wanted, from `try`, and the server the supervisor
+/// runs for it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Preview {
+    pub want: Want,
+    /// When `try` last asked for it, in RFC 3339 UTC. The oldest is stopped
+    /// first to stay within `max_running`.
+    pub requested_at: String,
+    /// The worker worktree it runs in.
+    pub worktree: PathBuf,
+    /// The PR's branch.
+    pub branch: String,
+    pub server: Option<Server>,
+    /// The lockfile hash `preview.setup` last ran for.
+    pub set_up_for: Option<String>,
+    /// Restarts since it last started cleanly at its commit.
+    pub restarts: u32,
+    /// Why it stopped trying. It stays down until a new commit or `try`.
+    pub failure: Option<PreviewFailure>,
+    /// The PR comment holding its tailnet link, updated on each start.
+    pub comment: Option<u64>,
+}
+
+/// A preview that stopped trying.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreviewFailure {
+    /// The worktree's commit then, empty when it couldn't be read.
+    pub at: String,
+    pub why: String,
+}
+
+/// Whether a preview should run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Want {
+    Running,
+    /// Stopped for a newer preview past `max_running`.
+    MadeRoom,
+    /// Stopped by `try --stop`.
+    Off,
+    /// Its PR merged or closed. Forgotten once its server is gone.
+    Closed,
+}
+
+/// A running preview server.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Server {
+    /// The server's pid, or under portless, the pid `portless list` shows
+    /// for its route.
+    pub pid: u32,
+    /// Its process group, which a stop signals.
+    pub group: u32,
+    /// Its start time from `ps`, telling it apart from a reused pid.
+    pub started: String,
+    pub port: u16,
+    /// The worktree's commit when it started.
+    pub head: String,
+    /// Whether portless runs it, so a stop sends SIGINT to `pid`.
+    pub portless: bool,
+    /// Its link from `portless list`: the tailnet one when it has one.
+    pub url: Option<String>,
+}
+
+/// Who merges a PR.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeRoute {
+    /// The owner, after approving its head commit.
+    Human,
+    /// The supervisor, once every check passes.
+    Supervisor,
+}
+
+/// A PR's merge route, and why the orchestrator chose it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Route {
+    pub to: MergeRoute,
+    pub reason: String,
 }
 
 /// A plan window past `plan_limit_percent`.
@@ -117,6 +206,10 @@ impl Default for State {
             wound_down: None,
             usage: None,
             budget_reached: false,
+            routes: BTreeMap::new(),
+            approvals: BTreeMap::new(),
+            holds: BTreeSet::new(),
+            previews: BTreeMap::new(),
             nags: BTreeMap::new(),
             nag_sessions: Vec::new(),
             next_nag: 1,

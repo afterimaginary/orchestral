@@ -79,11 +79,12 @@ The supervisor:
     - a new comment, inline comment or review, quoting its first line. Comments starting with `<!-- orchestral -->` are Orchestral's own, and are ignored, so workers' comments don't come back as events.
 
     Examples: `pr #40 "Add login" (worker issue-12): CI failed: have issue-12 fix it`, `issue #13 "Fix typo": comment from someone: "Still happening on main": answer it if it needs you`. The first successful poll only takes the snapshot. Comments are read from 5 minutes before the last successful poll, and comment ids already seen aren't reported again. A comment created before that window and edited since isn't new. A CI result is reported when it changes, or when a new push gives the same result again. Each `gh` call has 60 seconds. A poll fails when any call fails, including reading whether a PR that left the open list merged, and it saves nothing, so the next poll reads it all again. A failed poll waits longer before the next, doubling from 2 minutes up to 16, and the fifth failure in a row records one `watcher: 5 polls failed: <error>` event. A success resets both.
-  - also **every minute**, after the poll, it reminds the owner about each worker waiting on them: one whose issue gained `needs-discussion` during the run, as the GitHub snapshot records, or one whose session is observed `waiting`. A session blocked by a rate limit, whose job record's `needs` starts with `rate limited`, waits on the plan rather than the owner, and is left out. The first reminder goes out after the first of the policy's `nag_minutes`, and each later one after the next gap from the one before. Past the end of the list, the last gap repeats. A worker that stops waiting, because the label was removed or its session moved on, loses its count, so waiting again starts from the first gap. A reviewer shares its issue, so only the implementer is reminded about an escalation. Each reminder is a new one-shot session, `claude --bg --name <slug>-nag-<n> --remote-control <slug>-nag-<n> --permission-mode default --model claude-haiku-5-5 --effort low`, run from the main checkout. Remote Control is what delivers the banner. The session is told to load `PushNotification` with `ToolSearch` and send exactly one notification, with status proactive (ADR-0007). The text comes after the instructions, marked as data to send rather than instructions to follow, since it can quote GitHub. The text names the worker, its session, the question and the issue's link: `issue-12 (app-issue-12) is waiting on you: Should sign-up need an email? https://github.com/o/app/issues/12`. A period is added only when the question doesn't already end in punctuation. For an escalation, the question is the line after `Question for the owner:` in the newest Orchestral comment on the issue posted by the account `gh` is authenticated as, which is the owner's. When that comment has no question, or there's no such comment, it's `a decision on "<title>"`. For a blocked session, it's the `detail` from the job record. A reminder session is stopped with `claude stop` once it's no longer `working`, or after 5 minutes. A launch that fails is logged and tried again the next minute. A launch that succeeds counts as sent even if `claude --bg` printed no job id. That session can't be tracked, so the log says it won't be stopped. A failure to stop sessions is logged and doesn't hold up the reminders due. Reminders are logged rather than recorded as events, since the orchestrator has nothing to do about them,
+  - also **every minute**, after the poll, it reminds the owner about each worker waiting on them: one whose issue gained `needs-discussion` during the run, as the GitHub snapshot records, or one whose session is observed `waiting`. A session blocked by a rate limit, whose job record's `needs` starts with `rate limited`, waits on the plan rather than the owner, and is left out. The first reminder goes out after the first of the policy's `nag_minutes`, and each later one after the next gap from the one before. Past the end of the list, the last gap repeats. A worker that stops waiting, because the label was removed or its session moved on, loses its count, so waiting again starts from the first gap. A reviewer shares its issue, so only the implementer is reminded about an escalation. Each reminder is a new one-shot session, `claude --bg --name <slug>-nag-<n> --remote-control <slug>-nag-<n> --settings '{"env":{"CLAUDE_CODE_DISABLE_NOTIFICATION_PRESENCE_CHECK":"1"}}' --permission-mode default --model claude-haiku-5-5 --effort low`, run from the main checkout. Remote Control is what delivers the banner, and the presence check is off because a new background session always counts its terminal as active, so with it on nothing is sent. The session is told to load `PushNotification` with `ToolSearch` and send exactly one notification, with status proactive (ADR-0009). The text comes after the instructions, marked as data to send rather than instructions to follow, since it can quote GitHub. The text names the worker, its session, the question and the issue's link: `issue-12 (app-issue-12) is waiting on you: Should sign-up need an email? https://github.com/o/app/issues/12`. A period is added only when the question doesn't already end in punctuation. For an escalation, the question is the line after `Question for the owner:` in the newest Orchestral comment on the issue posted by the account `gh` is authenticated as, which is the owner's. When that comment has no question, or there's no such comment, it's `a decision on "<title>"`. For a blocked session, it's the `detail` from the job record. A reminder session is stopped with `claude stop` once it's no longer `working`, or after 5 minutes. A launch that fails is logged and tried again the next minute. A launch that succeeds counts as sent even if `claude --bg` printed no job id. That session can't be tracked, so the log says it won't be stopped. A failure to stop sessions is logged and doesn't hold up the reminders due. Reminders are logged rather than recorded as events, since the orchestrator has nothing to do about them,
   - also **every minute**, after the poll, it records a `heartbeat` event when a live session holds the claim and has had nothing for 55 minutes: no event recorded, no claim, and no request of its own, such as a conversation with the owner. A claim held by a session that has ended gets no heartbeats, so its successor doesn't receive a pile of them. Every event wakes the orchestrator, so the heartbeat only fills a 55-minute gap, which keeps its 1-hour prompt cache warm. It never needs action: `heartbeat: 2 workers open, your context 41%, budget about 1.2M of 3.0M; no action needed`. The context is the orchestrator's own, from its transcript, and the budget is this run's estimate against the policy's `fleet_token_budget`; either is left out when it can't be read. Heartbeats stop when the supervisor exits, after `--keepalive-hours` with no worker open,
   - **every 5 minutes**, it reads and logs the plan windows. When a window reaches `plan_limit_percent`, the fleet winds down: it records `limits: the session window is 87% used, past plan_limit_percent (85%): start nothing new until it resets at Nov 2 at 6:00pm PST, and let workers finish their turn`, naming the window that resets last, as spawn's refusal does. Running workers aren't stopped. If another window passes the limit meanwhile, the fleet stays wound down for that one. Once no window is at the limit, and a read shows the window below it or its reset time has passed, it records `limits: the session window has reset: start ready work again`. Each change is one event, recorded before the state is saved, so a crash between them repeats the event rather than losing it.
+  - **every 2 seconds**, on a thread of its own, it keeps the previews in line with what `orchestral try` asked for (see below), and **every minute**, after the poll, it stops the previews of PRs that merged or closed, as the poll's snapshot shows. A poll that failed stops nothing,
   - The minute and 5-minute ticks run on threads of their own, so a slow `claude` call never delays the 2-second tick. Each is skipped while its last run is still going,
-- every 2 seconds also checks whether it can exit, and exits once no worker is open, no open issue that gained the `needs-discussion` or `blocked` label during the run still has it, as the GitHub snapshot records (a label already there at the first poll doesn't count), and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since either was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
+- every 2 seconds also checks whether it can exit, and exits once no worker is open, no preview is wanted or running (a failed one doesn't count), no open issue that gained the `needs-discussion` or `blocked` label during the run still has it, as the GitHub snapshot records (a label already there at the first poll doesn't count), and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since either was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
 
 ### `orchestral status [--json]`
 
@@ -108,10 +109,12 @@ Workers: 2 of 3
   issue-13 · issue #13 · unknown
 Reviews:
   PR #38 passed at 4f2c9e1
+Previews:
+  PR #40 (issue-12) at https://host.example.ts.net:8443
 warning: PRs are unknown: gh pr list failed: …
 ```
 
-Before a run has started, the budget line reads `Budget: no run has started; <n> tokens per run`. Reviews lists the latest verdict recorded with `orchestral review` on each open PR, at the head commit it was for, and is left out when there's none.
+Before a run has started, the budget line reads `Budget: no run has started; <n> tokens per run`. Reviews lists the latest verdict recorded with `orchestral review` on each open PR, at the head commit it was for, and is left out when there's none. Previews lists each preview that's wanted, running and hasn't failed, with its branch and link, and is left out when there's none.
 
 `--json` carries the same data, and is the shape later interfaces read. Fields are only ever added:
 
@@ -124,6 +127,7 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 | `limits` | The output of `orchestral limits --json`. |
 | `budget` | `used` (`{"estimated_tokens": n}`, or null when it can't be read), `fleet_token_budget` and `run_started_at`. |
 | `reviews[]` | `pr`, `sha` (the head commit the verdict is for) and `passed`, for each open PR with a recorded verdict. |
+| `previews[]` | `pr`, `branch` and `url`, for each preview that's wanted, running and hasn't failed. |
 | `warnings` | Each part that couldn't be read, and why. |
 
 ### `orchestral spawn <name> --issue <n> [--role worker|reviewer] [--pr <n>] --prompt <text> [--model <m>] [--effort <e>] [--json]`
@@ -216,6 +220,82 @@ The plugin's `hooks/hooks.json` runs both, so the orchestrator carries on correc
 
 - `hook pre-compact` is the `PreCompact` hook. It saves the fleet's status, as `orchestral status` prints it, to `orchestrator/before-compact.txt` in the store.
 - `hook session-compact` is the `SessionStart` hook for the `compact` source. Its `additionalContext` tells the orchestrator that it was compacted. It points to the orchestrate skill and the binary under `CLAUDE_PLUGIN_ROOT`, and gives the status saved before compaction and the status now. Then it deletes the saved status, so a later compaction never shows a stale one. A status that can't be read is replaced by a line saying why.
+
+### `orchestral merge-check <pr> [--json]`
+
+Shows whether PR `<pr>` could merge at its head commit, condition by condition, and never merges. It reads the PR with `gh pr view`, then checks:
+
+- the fleet isn't paused,
+- the PR is open, isn't a draft, targets `main`, and GitHub reports it `MERGEABLE`; an `UNKNOWN` answer fails until GitHub has worked it out,
+- the owner hasn't put it on hold (the state's `holds`),
+- CI passed: at least one check on the head commit succeeded and none failed, so checks that were all skipped or neutral don't count,
+- a review passed at the head commit (the state's `reviews`),
+- every finding is decided (see [Findings](findings.md)).
+
+Then the route, from the state's `routes`, where no record means the owner's:
+
+- **the owner's:** the owner approved the head commit (the state's `approvals`). An approval of an earlier commit doesn't count.
+- **the supervisor's:** the policy's `supervisor_merges` is on, and the PR changes nothing under `.orchestral/` or `.github/`, which are the owner's to review. It reads the changed paths from the GitHub API only on this route, and a rename counts as changing both its old and new path.
+
+```text
+PR #42 at 4f2c9e1, merged by the owner:
+  pass  not paused
+  pass  open
+  pass  not a draft
+  pass  targets main
+  pass  no merge conflict
+  pass  not held
+  FAIL  CI passed: checks are still running
+  pass  review passed
+  pass  findings decided
+  pass  approved by the owner
+It can't merge yet: 1 condition failed.
+```
+
+It exits `0` when every condition passes, and otherwise refuses, exiting `2`. `--json` prints `pr`, `head`, `route` (`human` or `supervisor`) and `conditions`, each with `name`, `passed` and `detail`, the reason it failed.
+
+### `orchestral try <pr> [--stop] [--json]` and `orchestral previews [--json]`
+
+`try` asks for a preview of open PR `<pr>`, so the owner can test it. It needs a `preview` section in the policy, and refuses without one, or when the PR isn't open.
+
+When the policy's `preview.url` is set, the host serves each PR, so nothing starts: `try` prints the link with `{pr}` and `{branch}` filled in.
+
+```text
+PR #42's preview is at https://add-login.example.dev
+```
+
+Otherwise it records the preview in the state, and the supervisor runs it. It refuses when no worker has the PR's branch checked out, since the preview runs in that worker's worktree and reloads as the worker changes it. Asking for a preview past `preview.max_running` stops the oldest one asked for. It says which, and that it's still listed by `previews` with how to restart it:
+
+```text
+Asked for a preview of PR #42. `orchestral previews` shows its link once it's running.
+Stopped PR #40's preview to make room; `orchestral try 40` restarts it.
+```
+
+When no supervisor is running, it adds that nothing starts the preview until `orchestral up`. `--json` prints `pr`, `url` (the hosted link, or null), `made_room` and `supervisor_running`.
+
+`try --stop <pr>` asks the supervisor to stop the PR's preview. It stays listed as stopped, so a later `try` doesn't run setup again. `--json` prints `pr` and `had_preview`.
+
+On every 2-second tick, the supervisor:
+
+- runs `preview.setup` in the worktree before a preview first starts, and again when a lockfile there changes (such as `package-lock.json`, `pnpm-lock.yaml` or `Cargo.lock`), stopping a running server first. A lockfile setup writes itself doesn't count as a change. Setup has 15 minutes, and its output goes straight to the log. If it fails, the preview isn't started and the supervisor records a `preview` event,
+- starts `preview.run` with `sh -c` in the worktree, detached in its own process group, so the server outlives the supervisor. A restarted supervisor finds a running server by its pid and start time and leaves it alone,
+- where `portless --version` runs, starts it as `portless <repo slug>-pr-<n> --force sh -c <run>`, which sets `PORT` itself (ADR-0006). The slug is the main checkout's directory name, lowercased, with anything but letters and digits as `-`. `PORTLESS_TAILSCALE=1` is set when `tailscale status` succeeds, and removed otherwise. After each start, it waits up to 15 seconds for the route in `portless list` (and its `tailscale:` or `funnel:` link, when Tailscale is on), and keeps the route's pid, port and link: the tailnet link when there is one, or else the route's `https://<name>.localhost` link. When the route doesn't show up, or portless exits first, it stops what it started, logs that, and falls back as if portless weren't installed. Without portless, `PORT` is set to a free local port and the link is `http://localhost:<port>`,
+- before a start with Tailscale on, removes stale `tailscale serve` entries: an HTTPS entry whose only handler is a `/` proxy to `127.0.0.1` or `localhost` on a port from 4000 to 4999, where nothing listens (on `127.0.0.1` or `::1`) and no portless route uses that port. When `portless list` can't be read, it removes nothing. It removes each with `tailscale serve --https=<port> off`, never `tailscale serve reset`, and leaves every other entry alone,
+- after a start with a tailnet link, posts the link on the PR as one comment starting `<!-- orchestral -->`, and edits that comment on later starts, so the link stays right after a restart. A later start without a tailnet link edits it to say there's no link for now, since the old one could reach another preview. A failure to post is logged, and the preview keeps running,
+- restarts a server that exited once. If it exits again at the same commit, it records `PR #42's preview exited twice; see <log>` as a `preview` event, and waits for a new commit in the worktree to start it again. A crash before a reboot counts as one exit, so the server comes back after it,
+- stops a preview that's no longer wanted with SIGTERM to its process group, then SIGKILL if it's still running 5 seconds later. Under portless, it first sends SIGINT to the pid `portless list` showed for the route, not to any wrapper above it, and gives portless 12 seconds, longer than its own 10 before it kills the app, to remove its route and `tailscale serve` entry,
+- stops trying a preview whose worktree can't be read, recording a `preview` event, or that the policy no longer runs, until a new commit or `try`. A problem with one preview is logged, and the others carry on.
+
+Setup and server output go to `.git/orchestral/logs/preview-<pr>.log`.
+
+`previews` lists each preview as `starting`, `running` with its link, `failed` with why, `stopping`, or `stopped` (stopped to make room, with how to restart it, or by `try --stop`), and its log:
+
+```text
+PR #40 stopped: stopped to make room; `orchestral try 40` restarts it (log .git/orchestral/logs/preview-40.log)
+PR #42 running at https://host.example.ts.net:8443 (log .git/orchestral/logs/preview-42.log)
+```
+
+`--json` prints `previews`, each with `pr`, `status`, `url`, `detail` and `log`.
 
 ### `orchestral review <pr> --pass|--fail --sha <sha> [--json]`
 

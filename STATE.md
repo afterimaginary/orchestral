@@ -49,17 +49,21 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Pacing: the supervisor winds the fleet down past `plan_limit_percent` and back up after the reset, saves the run's usage every minute, and reports the budget once (#38)
 - Compaction: plugin hooks save the fleet's status before the orchestrator compacts, and put its instructions and status back after (#39)
 - Recovery: a restarted supervisor reports workers that can't be resumed as lost, once, and an orchestrator taking over checks every open PR once (#40)
+- Findings: workers end each PR body with a `## Findings` section, the orchestrator decides each finding, and `src/findings.rs` checks every one is decided, for the merge check to use (#46)
+- Merge check: `orchestral merge-check <pr>` shows each merge condition at the head commit, for the owner's route or the supervisor's, and never merges (#47)
+- Previews: `orchestral try <pr>` asks for a PR's preview, which the supervisor runs in its worker's worktree on `$PORT`, restarting it once, rerunning setup on a lockfile change, keeping within `max_running` and stopping it on merge or close (#51)
+- Tailnet links: where portless is installed, previews run under `portless <repo>-pr-<n>`, registered with Tailscale while it runs; the link goes in a PR comment that's edited on each restart, `status` lists running previews, and stale `tailscale serve` entries from crashed previews are removed (#52)
 - Reminders: a worker waiting on the owner, by escalation or a blocked session, gets one-shot notification sessions at the policy's `nag_minutes` gaps (#41)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop): a long-idle run (#44). #93 and #100 need the owner's decision.
+2. Milestone 3 (Autonomous loop): the long-idle run (#44) is deferred. #93 (worker permissions) and #100 (self-review) are decided and next.
+3. Milestone 4 (User decision points): merge routing (#48) can start, and supervisor merges (#49) need #48. Design proposals (#45, PR #109) wait on #93.
 
 ## Needs Your Decision
 
-- #93: auto mode blocks workers from acting on the orchestrator's messages (pushes, `gh pr ready`). Pick how workers get those permissions.
-- #100: ready PRs can fill the worker cap so no reviewer can start. Pick how reviewers get a slot.
+None.
 
 ## Notes
 

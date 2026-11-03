@@ -220,6 +220,20 @@ impl Fleet {
         .unwrap_or_default()
     }
 
+    /// Waits until the supervisor has saved `observed` for issue-12, which
+    /// it does just after recording the event, so a stop can't land between.
+    fn wait_for_observation(&self, observed: Observed) {
+        let store = Store::for_repo(&self.repo).unwrap();
+        let start = Instant::now();
+        while store.read().unwrap().observed.get("issue-12") != Some(&observed) {
+            assert!(
+                start.elapsed() < Duration::from_secs(15),
+                "issue-12 was never saved as {observed:?}"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     fn wait_for_event(&self, text: &str) {
         let start = Instant::now();
         while !self.events().contains(text) {
@@ -251,6 +265,7 @@ fn the_supervisor_records_worker_events_and_carries_on_after_a_restart() {
 
     fleet.session("idle");
     fleet.wait_for_event("issue-12 is idle");
+    fleet.wait_for_observation(Observed::Idle);
 
     // A restarted supervisor reads the last observation from the state, so
     // it doesn't report the same idle again.

@@ -3,7 +3,7 @@
 //! escalated with `needs-discussion`, or while its session is blocked on
 //! input. Repeat notifications from one session are silent, so each reminder
 //! comes from a new one-shot session, which is stopped once it has sent it
-//! (ADR-0007).
+//! (ADR-0009).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -22,6 +22,10 @@ use crate::state::{Nag, NagSession, State, Store, Worker};
 
 /// Reminder sessions run on Haiku at low effort, and not in auto mode.
 const MODEL: &str = "claude-haiku-5-5";
+
+/// A new background session counts its terminal as active, so with the
+/// presence check on, `PushNotification` never sends (ADR-0009).
+const SETTINGS: &str = r#"{"env":{"CLAUDE_CODE_DISABLE_NOTIFICATION_PRESENCE_CHECK":"1"}}"#;
 
 /// A reminder session still running after this long is stopped anyway.
 const STOP_AFTER: SignedDuration = SignedDuration::from_secs(300);
@@ -267,9 +271,12 @@ fn launch(claude: &Path, main: &Path, name: &str, text: &str) -> Result<Option<S
             "--bg",
             "--name",
             name,
-            // Remote Control delivers the banner (ADR-0007).
+            // Remote Control delivers the banner, and without the presence
+            // check a new session sends it (ADR-0009).
             "--remote-control",
             name,
+            "--settings",
+            SETTINGS,
             "--permission-mode",
             "default",
             "--model",

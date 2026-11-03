@@ -56,6 +56,10 @@ pub fn lost(state: &State, agents: &[Agent], now: Timestamp) -> Vec<(String, &'s
 /// can't be read, one event says so, since lost workers would otherwise be
 /// reported as exited.
 pub fn reconcile(store: &Store) -> Result<Vec<String>, Failure> {
+    // With no worker, there's nothing to lose, and no need for `claude`.
+    if store.read()?.workers.is_empty() {
+        return Ok(Vec::new());
+    }
     match sessions::agents(Path::new("claude")) {
         Ok(agents) => report(store, &agents, Timestamp::now()),
         Err(err) => {
