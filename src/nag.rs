@@ -1,7 +1,8 @@
 //! Reminders to the owner about a worker waiting on them, from the
 //! supervisor's minute tick. A worker waits on the owner while its issue is
 //! escalated with `needs-discussion`, while its session is blocked on
-//! input, or while its PR waits for the owner to merge it. Repeat notifications from one session are silent, so each reminder
+//! input, or while its PR waits for the owner to merge it. A PR the owner
+//! was asked to merge keeps waiting on them after its worker is removed. Repeat notifications from one session are silent, so each reminder
 //! comes from a new one-shot session, which is stopped once it has sent it
 //! (ADR-0009).
 
