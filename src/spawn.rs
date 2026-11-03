@@ -199,12 +199,12 @@ impl Launch<'_> {
             fs::create_dir_all(&dir).map_err(|err| io_error(&dir, err))?;
             let settings = dir.join("settings.json");
             let prompt = dir.join("prompt.md");
-            write(
-                &settings,
-                &settings_json(name, self.main, &allow_rules(request), &plugin_ids()?)?,
-            )?;
             let exe = std::env::current_exe()
                 .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
+            write(
+                &settings,
+                &settings_json(name, self.main, &allow_rules(request, &exe), &plugin_ids()?)?,
+            )?;
             let text = match request.review_of {
                 Some(pr) => reviewer_prompt(
                     name,
@@ -444,14 +444,21 @@ fn settings_json(
     Ok(serde_json::to_string_pretty(&settings).expect("settings always serialize"))
 }
 
-/// The commands a worker runs when its orchestrator asks, later in the run.
-/// Auto mode only counts the first message as the owner's request, so it
-/// would deny these, and narrow allow rules skip its classifier (ADR-0010).
-/// Each is the exact form the worker needs; anything else still goes through
-/// auto mode, and the worker guard and pre-push hook still apply.
-fn allow_rules(request: &Request) -> Vec<String> {
+/// The commands a worker runs that auto mode would deny: ones its
+/// orchestrator asks for later in the run, since auto mode only counts the
+/// first message as the owner's request, and recording its own review's
+/// verdict, which it treats as self-approval (ADR-0011). Narrow allow rules
+/// skip its classifier (ADR-0010). Each is the exact form the worker needs;
+/// anything else still goes through auto mode, and the worker guard and
+/// pre-push hook still apply.
+fn allow_rules(request: &Request, orchestral: &Path) -> Vec<String> {
+    // The prompt gives the binary's path quoted, so the rule matches it so.
+    let orchestral = shell_quote(&orchestral.display().to_string());
     let rules = match request.review_of {
-        Some(pr) => vec![format!("gh pr comment {pr} *")],
+        Some(pr) => vec![
+            format!("gh pr comment {pr} *"),
+            format!("{orchestral} review {pr} *"),
+        ],
         None => {
             let branch = &request.name;
             let issue = request.issue;
@@ -471,6 +478,7 @@ fn allow_rules(request: &Request) -> Vec<String> {
                 "gh pr edit * --body-file *".into(),
                 format!("gh issue comment {issue} *"),
                 format!("gh issue edit {issue} --add-label needs-discussion"),
+                format!("{orchestral} review *"),
             ]
         }
     };

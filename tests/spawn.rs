@@ -247,6 +247,8 @@ fn the_worker_gets_its_own_settings_and_prompt() {
             "Bash(gh pr edit * --body-file *)",
             "Bash(gh issue comment 12 *)",
             "Bash(gh issue edit 12 --add-label needs-discussion)",
+            // It records its own review's verdict (ADR-0011).
+            format!("Bash('{}' review *)", env!("CARGO_BIN_EXE_orchestral")),
         ])
     );
     let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
@@ -659,7 +661,10 @@ fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
         serde_json::from_str(&repo.worker_file("review-40", "settings.json")).unwrap();
     assert_eq!(
         settings["permissions"]["allow"],
-        json!(["Bash(gh pr comment 40 *)"])
+        json!([
+            "Bash(gh pr comment 40 *)",
+            format!("Bash('{}' review 40 *)", env!("CARGO_BIN_EXE_orchestral")),
+        ])
     );
     let state = repo.store().read().unwrap();
     assert_eq!(state.workers["review-40"].review_of, Some(40));
