@@ -58,12 +58,13 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Self-review: each worker reviews its own PR with a fresh subagent and records the verdict, so reviews never need a worker slot, with its `review` command allowed so auto mode doesn't deny the verdict (#100, #115)
 - Design proposals: `spawn --proposal` starts a worker on its issue's design proposal, which it publishes and links on the issue for the owner to choose, and `status` shows what proposals spend (#45)
 - Merge routing: `orchestral route` puts each PR on the owner's route or the supervisor's, and a PR that only needs the owner's approval is labelled `needs-discussion`, reminded about and keeps the supervisor running (#48)
+- Supervisor merges: every minute the supervisor merges each PR whose merge check passes, at the checked head commit, with the policy's `merge_method`, and records an event (#49)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
 2. Milestone 3 (Autonomous loop): the long-idle run (#44) is deferred.
-3. Milestone 4 (User decision points): supervisor merges (#49) can start now that #48 is done.
+3. Milestone 4 (User decision points): comment commands (#50), the boot check (#53) and escalating costly actions (#54) are next.
 
 ## Needs Your Decision
 

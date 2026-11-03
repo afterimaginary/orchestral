@@ -23,7 +23,7 @@ use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::state::Store;
 use crate::{
-    gate, github, heartbeat, limits, nag, observe, pace, preview, recover, route, sessions,
+    gate, github, heartbeat, limits, merge, nag, observe, pace, preview, recover, route, sessions,
     transcript,
 };
 
@@ -279,6 +279,12 @@ impl Ticks {
                 match github::poll(&store, Path::new("gh")) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!("can't poll GitHub: {}", failure_text(&err))),
+                }
+                // Before asking the owner, so a PR that merges isn't asked
+                // about.
+                match merge::merge_ready(&store, Path::new("gh")) {
+                    Ok(lines) => lines.iter().for_each(|line| log(line)),
+                    Err(err) => log(&format!("can't merge ready PRs: {}", failure_text(&err))),
                 }
                 match route::ask_owner(&store, Path::new("gh")) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),

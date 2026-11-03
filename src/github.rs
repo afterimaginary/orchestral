@@ -195,6 +195,19 @@ pub fn open_pr_snapshot(store: &Store) -> Result<Option<BTreeMap<u64, Pr>>, Fail
         .map(|snapshot| snapshot.prs))
 }
 
+/// Drops a PR the supervisor just merged from the snapshot, so the next poll
+/// doesn't report the merge again.
+pub(crate) fn forget_pr(store: &Store, number: u64) -> Result<(), Failure> {
+    let path = store.dir().join("github.json");
+    let Some(mut snapshot) = read_snapshot(&path)? else {
+        return Ok(());
+    };
+    if snapshot.prs.remove(&number).is_some() {
+        write_snapshot(&path, &snapshot)?;
+    }
+    Ok(())
+}
+
 /// The open PRs as of the last poll, or `None` when the last poll failed or
 /// none has run.
 pub fn open_prs(store: &Store) -> Result<Option<BTreeSet<u64>>, Failure> {
@@ -545,10 +558,7 @@ fn changes(
         .state
             == "MERGED";
         lines.push(match (merged, worker) {
-            (true, Some(worker)) => {
-                format!("{subject}: merged: clean up {worker}, and start any work it unblocks")
-            }
-            (true, None) => format!("{subject}: merged: start any work it unblocks"),
+            (true, worker) => merged_line(&subject, "merged", worker),
             (false, Some(worker)) => {
                 format!("{subject}: closed without merging: stop {worker} if it's still on it")
             }
@@ -615,7 +625,18 @@ fn changes(
     Ok(lines)
 }
 
-fn pr_subject(number: u64, pr: &Pr, worker: Option<&str>) -> String {
+/// The event for a merged PR, from the poll or the supervisor's merge:
+/// `merged`, or how it was.
+pub(crate) fn merged_line(subject: &str, merged: &str, worker: Option<&str>) -> String {
+    match worker {
+        Some(worker) => {
+            format!("{subject}: {merged}: clean up {worker}, and start any work it unblocks")
+        }
+        None => format!("{subject}: {merged}: start any work it unblocks"),
+    }
+}
+
+pub(crate) fn pr_subject(number: u64, pr: &Pr, worker: Option<&str>) -> String {
     match worker {
         Some(worker) => format!("pr #{number} \"{}\" (worker {worker})", pr.title),
         None => format!("pr #{number} \"{}\" (branch {})", pr.title, pr.branch),

@@ -327,3 +327,169 @@ fn the_supervisor_route_reads_renames_out_of_a_checked_directory() {
         .unwrap();
     assert!(api.contains(&"--paginate".to_string()), "{api:?}");
 }
+
+/// The poll's snapshot, with PR #42 at `head` on branch `issue-12`.
+fn snapshot(main: &std::path::Path, head: &str) {
+    let snapshot = json!({
+        "issues": {},
+        "prs": {"42": {
+            "title": "Add login", "draft": false, "branch": "issue-12",
+            "head": head, "ci": "passed", "reviews": []
+        }},
+        "polled_at": "2026-11-02T12:00:00Z",
+        "seen_comments": [], "failures": 0, "retry_after": null, "escalations": []
+    });
+    std::fs::write(
+        main.join(".git/orchestral/github.json"),
+        snapshot.to_string(),
+    )
+    .unwrap();
+}
+
+fn passing() -> Value {
+    json!([{"status": "COMPLETED", "conclusion": "SUCCESS"}])
+}
+
+fn merges(stubs: &Stubs) -> Vec<Vec<String>> {
+    stubs
+        .calls("gh")
+        .into_iter()
+        .filter(|call| call[..2] == ["pr", "merge"])
+        .collect()
+}
+
+fn events(main: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(main.join(".git/orchestral/events.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line).unwrap()["text"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn the_supervisor_merges_an_approved_pr_at_its_checked_head() {
+    let (_dir, main) = repo(|_| {});
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    stubs.respond("gh", &["pr", "view", "42"], &view(passing()), 0);
+    stubs.respond("gh", &["pr", "merge", "42"], "", 0);
+    let store = Store::for_repo(&main).unwrap();
+
+    let lines = merge::merge_ready(&store, &stubs.dir().join("gh")).unwrap();
+
+    assert_eq!(
+        merges(&stubs),
+        [["pr", "merge", "42", "--squash", "--match-head-commit", HEAD]]
+    );
+    let event = "pr #42 \"Add login\" (branch issue-12): merged by the supervisor at 4f2c9e1: start any work it unblocks";
+    assert_eq!(lines, [event]);
+    assert_eq!(events(&main), [event]);
+    // The next poll doesn't report it again.
+    assert!(
+        orchestral::github::open_pr_snapshot(&store)
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_supervisor_route_merges_without_an_approval_by_the_policy_method() {
+    let (_dir, main) = repo(|state| {
+        state.approvals.clear();
+        supervisor_route(state);
+    });
+    std::fs::write(
+        main.join(".orchestral/policy.md"),
+        "---\nfleet_token_budget: 1000\nsupervisor_merges: true\nmerge_method: rebase\n---\n",
+    )
+    .unwrap();
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    stubs.respond("gh", &["pr", "view", "42"], &view(passing()), 0);
+    stubs.respond(
+        "gh",
+        &["api", "repos/{owner}/{repo}/pulls/42/files"],
+        "src/app.rs\n",
+        0,
+    );
+    stubs.respond("gh", &["pr", "merge", "42"], "", 0);
+
+    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+
+    assert_eq!(
+        merges(&stubs),
+        [["pr", "merge", "42", "--rebase", "--match-head-commit", HEAD]]
+    );
+}
+
+#[test]
+fn nothing_merges_without_the_owners_approval_or_with_a_failed_condition() {
+    // No approval on the owner's route: not even read.
+    let (_dir, main) = repo(|state| state.approvals.clear());
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    assert!(
+        merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh"))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(stubs.calls("gh").is_empty());
+
+    // Approved, but a finding is still pending.
+    let (_dir, main) = repo(|_| {});
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    let body = json!({
+        "state": "OPEN", "isDraft": false, "baseRefName": "main",
+        "mergeable": "MERGEABLE", "headRefOid": HEAD,
+        "body": "## Findings\n\n- [pending] A typo\n", "statusCheckRollup": passing()
+    });
+    stubs.respond("gh", &["pr", "view", "42"], &body.to_string(), 0);
+    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+    assert!(merges(&stubs).is_empty());
+    assert!(events(&main).is_empty());
+}
+
+#[test]
+fn a_moved_head_is_not_merged() {
+    // The poll saw the approved head, but a commit was pushed since.
+    let (_dir, main) = repo(|_| {});
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    let moved = view(passing()).replace(HEAD, "9999999aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    stubs.respond("gh", &["pr", "view", "42"], &moved, 0);
+
+    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+
+    assert!(merges(&stubs).is_empty());
+}
+
+#[test]
+fn a_refused_merge_is_logged_and_left_for_the_next_minute() {
+    let (_dir, main) = repo(|_| {});
+    snapshot(&main, HEAD);
+    let stubs = Stubs::new();
+    stubs.respond("gh", &["pr", "view", "42"], &view(passing()), 0);
+    // GitHub refuses, as when the head moved after the check.
+    stubs.respond("gh", &["pr", "merge", "42"], "", 1);
+    let store = Store::for_repo(&main).unwrap();
+
+    let lines = merge::merge_ready(&store, &stubs.dir().join("gh")).unwrap();
+
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].starts_with("can't merge PR #42: "), "{lines:?}");
+    assert!(events(&main).is_empty());
+    assert_eq!(
+        orchestral::github::open_pr_snapshot(&store)
+            .unwrap()
+            .unwrap()
+            .len(),
+        1
+    );
+}
