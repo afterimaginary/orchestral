@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 13;
+pub const SCHEMA: u32 = 14;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -50,6 +50,9 @@ pub struct State {
     pub approvals: BTreeMap<u64, String>,
     /// PRs the owner put on hold.
     pub holds: BTreeSet<u64>,
+    /// Open PRs on the owner's route that were ready for them to merge, and
+    /// were labelled for them. Such a PR can't be routed to the supervisor.
+    pub asked: BTreeSet<u64>,
     /// PR previews, by PR number.
     pub previews: BTreeMap<u64, Preview>,
     /// Workers still on their issue's design proposal, by name, with when
@@ -214,6 +217,7 @@ impl Default for State {
             routes: BTreeMap::new(),
             approvals: BTreeMap::new(),
             holds: BTreeSet::new(),
+            asked: BTreeSet::new(),
             previews: BTreeMap::new(),
             proposals: BTreeMap::new(),
             proposal_tokens: 0,

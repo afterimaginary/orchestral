@@ -22,7 +22,10 @@ use crate::spawn::main_checkout;
 use crate::state::{MergeRoute, State, Store};
 
 /// Paths a supervisor merge may not change.
-const HARD_CHECKED: [&str; 2] = [".orchestral/", ".github/"];
+pub(crate) const HARD_CHECKED: [&str; 2] = [".orchestral/", ".github/"];
+
+/// The owner's route's own condition.
+const APPROVED: &str = "approved by the owner";
 
 /// What the check reads about a PR from GitHub.
 #[derive(Debug, Clone)]
@@ -62,6 +65,15 @@ pub struct MergeCheck {
 impl MergeCheck {
     pub fn mergeable(&self) -> bool {
         self.conditions.iter().all(|condition| condition.passed)
+    }
+
+    /// Whether only the owner's approval is missing, so the PR waits on them.
+    pub fn waits_on_owner(&self) -> bool {
+        self.route == MergeRoute::Human
+            && self
+                .conditions
+                .iter()
+                .all(|condition| condition.passed || condition.name == APPROVED)
     }
 
     fn failed(&self) -> usize {
@@ -162,7 +174,7 @@ pub fn evaluate(pr: &Pr, state: &State, settings: &Settings) -> MergeCheck {
     let route = route(state, pr.number);
     match route {
         MergeRoute::Human => add(
-            "approved by the owner",
+            APPROVED,
             match state.approvals.get(&pr.number) {
                 Some(sha) if *sha == pr.head => None,
                 Some(_) => Some("the approval was for an earlier commit".into()),
@@ -262,7 +274,7 @@ pub fn read_pr(gh: &Path, main: &Path, number: u64) -> Result<Pr, Failure> {
 
 /// The paths a PR changes, and the old path of each rename, so moving a
 /// file out of a checked directory still counts as changing it.
-fn changed_files(gh: &Path, main: &Path, number: u64) -> Result<Vec<String>, Failure> {
+pub(crate) fn changed_files(gh: &Path, main: &Path, number: u64) -> Result<Vec<String>, Failure> {
     let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{number}/files");
     let output = gh_output(
         gh,

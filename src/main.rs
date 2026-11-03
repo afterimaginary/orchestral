@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use orchestral::outcome::{self, Failure};
 use orchestral::{
-    claim, cleanup, compact, gate, guard, limits, merge, preview, proposal, review, setup, spawn,
-    status, stop, supervisor, watch,
+    claim, cleanup, compact, gate, guard, limits, merge, preview, proposal, review, route, setup,
+    spawn, status, stop, supervisor, watch,
 };
 
 /// A small workflow layer for Claude Code.
@@ -20,6 +20,15 @@ struct Cli {
 enum Role {
     Worker,
     Reviewer,
+}
+
+/// Who merges a PR.
+#[derive(Clone, Copy, ValueEnum)]
+enum MergeTo {
+    /// The owner, after approving it.
+    Human,
+    /// The supervisor, once every check passes.
+    Supervisor,
 }
 
 #[derive(Subcommand)]
@@ -92,7 +101,19 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Record a reviewer's verdict on a PR's head commit.
+    /// Route a PR to the owner or the supervisor to merge. For the
+    /// orchestrator only.
+    Route {
+        pr: u64,
+        to: MergeTo,
+        /// Why this route.
+        #[arg(long)]
+        reason: String,
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a review's verdict on a PR's head commit.
     Review {
         pr: u64,
         /// The PR is fine to merge.
@@ -306,6 +327,18 @@ fn run(command: Command) -> Result<(), Failure> {
                     fix: "meet the failed conditions above".into(),
                 }),
             }
+        }
+        Command::Route {
+            pr,
+            to,
+            reason,
+            json,
+        } => {
+            let to = match to {
+                MergeTo::Human => orchestral::state::MergeRoute::Human,
+                MergeTo::Supervisor => orchestral::state::MergeRoute::Supervisor,
+            };
+            outcome::print(&route::route(&current_dir()?, pr, to, &reason)?, json)
         }
         Command::Review {
             pr,

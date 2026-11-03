@@ -187,11 +187,19 @@ pub fn escalated(store: &Store) -> BTreeSet<u64> {
         .collect()
 }
 
+/// The open PRs as of the last successful poll, by number, or `None` before
+/// one. A failed poll saves nothing, so this is never a partial read.
+pub fn open_pr_snapshot(store: &Store) -> Result<Option<BTreeMap<u64, Pr>>, Failure> {
+    Ok(read_snapshot(&store.dir().join("github.json"))?
+        .filter(|snapshot| snapshot.polled_at.is_some())
+        .map(|snapshot| snapshot.prs))
+}
+
 /// The open PRs as of the last poll, or `None` when the last poll failed or
 /// none has run.
 pub fn open_prs(store: &Store) -> Result<Option<BTreeSet<u64>>, Failure> {
     Ok(read_snapshot(&store.dir().join("github.json"))?
-        .filter(|snapshot| snapshot.polled_at.is_some() && snapshot.failures == 0)
+        .filter(|snapshot| snapshot.polled_at.is_some())
         .map(|snapshot| snapshot.prs.keys().copied().collect()))
 }
 

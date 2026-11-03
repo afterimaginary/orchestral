@@ -16,13 +16,14 @@ use serde_json::Value;
 use crate::budget::Estimate;
 use crate::gate;
 use crate::limits::{self, Limits};
+use crate::merge;
 use crate::observe::Observed;
 use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::preview;
 use crate::sessions::{self, Activity, Agent};
 use crate::spawn::main_checkout;
-use crate::state::{State, Store, Want};
+use crate::state::{MergeRoute, State, Store, Want};
 use crate::transcript::{self, Context};
 
 #[derive(Debug, Serialize)]
@@ -49,6 +50,10 @@ pub struct WorkerStatus {
     pub pr: Option<u64>,
     /// Whether that PR is a draft.
     pub draft: bool,
+    /// Who merges that PR: the owner's until it's routed elsewhere.
+    pub route: Option<MergeRoute>,
+    /// Whether the owner was asked to merge that PR.
+    pub asked_owner: bool,
     pub session_name: String,
     /// `running`, `stopped`, or `unknown` when `claude agents` doesn't list
     /// the session. `lost` when the supervisor found it can't be resumed.
@@ -202,6 +207,8 @@ fn workers(
                 issue: worker.issue,
                 pr: pr.map(|(_, number, _)| *number),
                 draft: pr.is_some_and(|(_, _, draft)| *draft),
+                route: pr.map(|(_, number, _)| merge::route(state, *number)),
+                asked_owner: pr.is_some_and(|(_, number, _)| state.asked.contains(number)),
                 session_name: worker.session_name.clone(),
                 session: match agent {
                     _ if state.observed.get(name) == Some(&Observed::Lost) => "lost",
@@ -378,6 +385,11 @@ impl fmt::Display for WorkerStatus {
             write!(f, " · PR #{pr}")?;
             if self.draft {
                 write!(f, " (draft)")?;
+            }
+            match self.route {
+                _ if self.asked_owner => write!(f, ", ready for you to merge")?,
+                Some(MergeRoute::Supervisor) => write!(f, ", the supervisor merges")?,
+                _ => write!(f, ", the owner merges")?,
             }
         }
         if self.proposing {

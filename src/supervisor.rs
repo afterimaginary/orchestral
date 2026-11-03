@@ -23,7 +23,8 @@ use crate::outcome::Failure;
 use crate::policy::Policy;
 use crate::state::Store;
 use crate::{
-    gate, github, heartbeat, limits, nag, observe, pace, preview, recover, sessions, transcript,
+    gate, github, heartbeat, limits, nag, observe, pace, preview, recover, route, sessions,
+    transcript,
 };
 
 /// How often the supervisor checks the workers and whether it can exit.
@@ -186,10 +187,12 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
             return Ok(());
         }
         ticks.run(&store);
-        // An open escalation keeps the run going while the owner decides.
+        // An open escalation, or a PR waiting for the owner to merge it, keeps the
+        // run going while the owner decides.
         let open = match store.read() {
             Ok(state) => {
                 !state.workers.is_empty()
+                    || !state.asked.is_empty()
                     || github::waits_on_owner(&store)
                     || preview::wanted(&state)
             }
@@ -208,7 +211,10 @@ pub fn supervise(cwd: &Path, keepalive_hours: f64) -> Result<(), Failure> {
         // Checked again under the lock, so a worker spawned just now isn't
         // left without a supervisor.
         let exited = store.update(|state| {
-            if !state.workers.is_empty() || github::waits_on_owner(&store) || preview::wanted(state)
+            if !state.workers.is_empty()
+                || !state.asked.is_empty()
+                || github::waits_on_owner(&store)
+                || preview::wanted(state)
             {
                 return false;
             }
@@ -273,6 +279,13 @@ impl Ticks {
                 match github::poll(&store, Path::new("gh")) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!("can't poll GitHub: {}", failure_text(&err))),
+                }
+                match route::ask_owner(&store, Path::new("gh")) {
+                    Ok(lines) => lines.iter().for_each(|line| log(line)),
+                    Err(err) => log(&format!(
+                        "can't ask the owner to merge: {}",
+                        failure_text(&err)
+                    )),
                 }
                 match preview::stop_closed(&store) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),

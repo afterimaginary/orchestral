@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use common::{Stubs, fixture};
-use orchestral::state::{Store, Worker};
+use orchestral::state::{MergeRoute, Route, Store, Worker};
 use orchestral::transcript::project_dir_name;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -173,7 +173,7 @@ fn shows_workers_limits_budget_and_pause() {
     // so waking rewrites it at 2 per token.
     assert_eq!(
         lines[7],
-        "  issue-12 · issue #12 · PR #40 (draft) · running, done · context 20505 tokens (2%) · cache cold · wake about 41010 tokens (estimate)"
+        "  issue-12 · issue #12 · PR #40 (draft), the owner merges · running, done · context 20505 tokens (2%) · cache cold · wake about 41010 tokens (estimate)"
     );
     assert_eq!(lines[8], "  issue-13 · issue #13 · unknown");
     assert_eq!(lines.len(), 9, "{text}");
@@ -394,7 +394,7 @@ fn proposals_show_their_spend_until_done() {
     );
     assert!(
         text.contains(&format!(
-            "  issue-12 · issue #12 · PR #40 (draft) · proposal, about {open} tokens (estimate) · "
+            "  issue-12 · issue #12 · PR #40 (draft), the owner merges · proposal, about {open} tokens (estimate) · "
         )),
         "{text}"
     );
@@ -509,4 +509,47 @@ fn shows_running_previews_with_branch_and_link() {
         json["previews"],
         json!([{"pr": 40, "branch": "issue-12", "url": "https://host.example.ts.net:8443"}])
     );
+}
+
+#[test]
+fn a_routed_pr_shows_who_merges_it_and_whether_the_owner_was_asked() {
+    let fleet = Fleet::new();
+    fleet.reads_everything();
+    let store = Store::for_repo(&fleet.main).unwrap();
+    store
+        .update(|state| {
+            state.routes.insert(
+                40,
+                Route {
+                    to: MergeRoute::Human,
+                    reason: "touches auth".into(),
+                },
+            )
+        })
+        .unwrap();
+
+    let text = stdout(&fleet.status(&[]));
+    assert!(
+        text.contains("PR #40 (draft), the owner merges ·"),
+        "{text}"
+    );
+    store
+        .update(|state| state.routes.get_mut(&40).unwrap().to = MergeRoute::Supervisor)
+        .unwrap();
+    let text = stdout(&fleet.status(&[]));
+    assert!(
+        text.contains("PR #40 (draft), the supervisor merges ·"),
+        "{text}"
+    );
+
+    store.update(|state| state.asked.insert(40)).unwrap();
+    let text = stdout(&fleet.status(&[]));
+    assert!(
+        text.contains("PR #40 (draft), ready for you to merge ·"),
+        "{text}"
+    );
+    let status: Value =
+        serde_json::from_str(stdout(&fleet.status(&["--json"])).trim_end()).unwrap();
+    assert_eq!(status["workers"][0]["route"], "supervisor");
+    assert_eq!(status["workers"][0]["asked_owner"], true);
 }

@@ -86,21 +86,24 @@ fn the_count_starts_again_once_the_worker_stops_waiting() {
 }
 
 #[test]
-fn an_escalation_or_a_blocked_session_waits_on_the_owner_but_a_rate_limit_does_not() {
+fn an_escalation_a_blocked_session_or_a_pr_to_merge_waits_on_the_owner_but_a_rate_limit_does_not() {
     let mut state = State::default();
     for (issue, observed) in [
         (12, Observed::Waiting),
         (13, Observed::Waiting),
         (14, Observed::Waiting),
         (15, Observed::Idle),
+        (16, Observed::Idle),
     ] {
         let name = format!("issue-{issue}");
         state.workers.insert(name.clone(), worker(issue, None));
         state.observed.insert(name, observed);
     }
     let escalated = BTreeSet::from([12]);
+    // The owner was asked to merge issue-13's and issue-16's PRs.
+    let merging = BTreeMap::from([("issue-13".to_string(), 40), ("issue-16".to_string(), 41)]);
 
-    let waiting = nag::waiting(&state, &escalated, |worker| match worker.issue {
+    let waiting = nag::waiting(&state, &escalated, &merging, |worker| match worker.issue {
         14 => None,
         _ => Some("approve a push".into()),
     });
@@ -114,6 +117,7 @@ fn an_escalation_or_a_blocked_session_waits_on_the_owner_but_a_rate_limit_does_n
         [
             ("issue-12", &Why::Escalated),
             ("issue-13", &Why::Session("approve a push".into())),
+            ("issue-16", &Why::Merge(41)),
         ]
     );
 }
@@ -322,7 +326,7 @@ fn a_reviewer_on_an_escalated_issue_is_not_reminded_about() {
     reviewer.review_of = Some(40);
     state.workers.insert("review-40".into(), reviewer);
 
-    let waiting = nag::waiting(&state, &BTreeSet::from([12]), |_| None);
+    let waiting = nag::waiting(&state, &BTreeSet::from([12]), &BTreeMap::new(), |_| None);
 
     let names: Vec<_> = waiting.iter().map(|w| w.worker.as_str()).collect();
     assert_eq!(names, ["issue-12"]);

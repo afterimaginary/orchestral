@@ -1,7 +1,7 @@
 //! Reminders to the owner about a worker waiting on them, from the
 //! supervisor's minute tick. A worker waits on the owner while its issue is
-//! escalated with `needs-discussion`, or while its session is blocked on
-//! input. Repeat notifications from one session are silent, so each reminder
+//! escalated with `needs-discussion`, while its session is blocked on
+//! input, or while its PR waits for the owner to merge it. Repeat notifications from one session are silent, so each reminder
 //! comes from a new one-shot session, which is stopped once it has sent it
 //! (ADR-0009).
 
@@ -50,14 +50,18 @@ pub enum Why {
     Escalated,
     /// Its session is blocked, with what it says it needs.
     Session(String),
+    /// Its PR waits for the owner to merge it.
+    Merge(u64),
 }
 
 /// The workers waiting on the owner. An escalated issue comes first, since
-/// its question is the one to answer. A session blocked by a rate limit
+/// its question is the one to answer, then a blocked session, then a PR the
+/// owner was asked to merge, which `merging` maps from its branch. A session blocked by a rate limit
 /// waits on the plan, not the owner, so `question` returns `None` for it.
 pub fn waiting(
     state: &State,
     escalated: &BTreeSet<u64>,
+    merging: &BTreeMap<String, u64>,
     question: impl Fn(&Worker) -> Option<String>,
 ) -> Vec<Waiting> {
     state
@@ -66,10 +70,17 @@ pub fn waiting(
         .filter_map(|(name, worker)| {
             // A reviewer shares its issue, so only the implementer is
             // reminded about the escalation.
+            let session = || {
+                (state.observed.get(name) == Some(&Observed::Waiting))
+                    .then(|| question(worker))
+                    .flatten()
+            };
             let why = if escalated.contains(&worker.issue) && worker.review_of.is_none() {
                 Why::Escalated
-            } else if state.observed.get(name) == Some(&Observed::Waiting) {
-                Why::Session(question(worker)?)
+            } else if let Some(question) = session() {
+                Why::Session(question)
+            } else if let Some(&pr) = merging.get(name) {
+                Why::Merge(pr)
             } else {
                 return None;
             };
@@ -148,10 +159,20 @@ pub fn check(
     let main = crate::spawn::main_checkout(store.dir())?;
     let gaps = Policy::load(&main)?.settings.nag_minutes;
     let escalated = github::escalated(store);
+    let open_prs = github::open_pr_snapshot(store)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     let jobs = jobs_dir();
     // Under the lock, so a worker removed meanwhile isn't reminded about.
     let due = store.update(|state| {
-        let waiting = waiting(state, &escalated, |worker| {
+        // A worker's branch is its name.
+        let merging: BTreeMap<String, u64> = open_prs
+            .iter()
+            .filter(|(n, _)| state.asked.contains(n))
+            .map(|(&n, pr)| (pr.branch.clone(), n))
+            .collect();
+        let waiting = waiting(state, &escalated, &merging, |worker| {
             session_question(jobs.as_deref(), worker)
         });
         let due: Vec<(Waiting, String, u64)> = track(&mut state.nags, &waiting, &gaps, now)
@@ -168,16 +189,23 @@ pub fn check(
     let mut owner = None;
     for (waiting, session_name, n) in due {
         let sent = issue(gh, &main, waiting.issue).and_then(|issue| {
-            let question = match &waiting.why {
+            let (question, url) = match &waiting.why {
                 Why::Escalated => {
                     if owner.is_none() {
                         owner = Some(github::owner_login(gh, &main)?);
                     }
-                    issue.question(owner.as_deref().unwrap_or_default())
+                    (
+                        issue.question(owner.as_deref().unwrap_or_default()),
+                        issue.url,
+                    )
                 }
-                Why::Session(question) => question.clone(),
+                Why::Session(question) => (question.clone(), issue.url),
+                Why::Merge(pr) => (
+                    format!("PR #{pr} is ready for you to merge"),
+                    pr_url(gh, &main, *pr)?,
+                ),
             };
-            let text = message(&waiting.worker, &session_name, &question, &issue.url);
+            let text = message(&waiting.worker, &session_name, &question, &url);
             let job_id = launch(claude, &main, &nag_name(&main, n), &text)?;
             Ok((text, job_id))
         });
@@ -368,6 +396,20 @@ fn issue(gh: &Path, main: &Path, number: u64) -> Result<Issue, Failure> {
             "url,title,comments",
         ],
     )
+}
+
+#[derive(Deserialize)]
+struct PrUrl {
+    url: String,
+}
+
+fn pr_url(gh: &Path, main: &Path, number: u64) -> Result<String, Failure> {
+    gh_json::<PrUrl>(
+        gh,
+        main,
+        &["pr", "view", &number.to_string(), "--json", "url"],
+    )
+    .map(|pr| pr.url)
 }
 
 /// What a worker's blocked session says it needs, from its job record in

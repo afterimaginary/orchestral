@@ -22,6 +22,7 @@ pub mod preview;
 pub mod proposal;
 pub mod recover;
 pub mod review;
+pub mod route;
 pub mod sessions;
 pub mod setup;
 pub mod spawn;

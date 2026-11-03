@@ -57,12 +57,13 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Worker allow rules: workers stay in auto mode with narrow allow rules for their own git and gh commands, run one at a time, so they act on the orchestrator's later requests (#93)
 - Self-review: each worker reviews its own PR with a fresh subagent and records the verdict, so reviews never need a worker slot, with its `review` command allowed so auto mode doesn't deny the verdict (#100, #115)
 - Design proposals: `spawn --proposal` starts a worker on its issue's design proposal, which it publishes and links on the issue for the owner to choose, and `status` shows what proposals spend (#45)
+- Merge routing: `orchestral route` puts each PR on the owner's route or the supervisor's, and a PR that only needs the owner's approval is labelled `needs-discussion`, reminded about and keeps the supervisor running (#48)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
 2. Milestone 3 (Autonomous loop): the long-idle run (#44) is deferred.
-3. Milestone 4 (User decision points): merge routing (#48) can start, and supervisor merges (#49) need #48.
+3. Milestone 4 (User decision points): supervisor merges (#49) can start now that #48 is done.
 
 ## Needs Your Decision
 
