@@ -1,0 +1,33 @@
+#!/bin/sh
+# Builds the binary for a copy of the plugin installed from a marketplace,
+# which arrives as source only. Cargo's target directory lives in the
+# plugin's data folder, so a new version rebuilds incrementally; the binary
+# is copied to where bin/orchestral looks for it.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -x "$root/target/release/orchestral" ] || [ -x "$root/target/debug/orchestral" ]; then
+  exit 0
+fi
+data="${CLAUDE_PLUGIN_DATA:-$root}"
+mkdir -p "$data"
+log="$data/build-$$.log"
+: >"$log"
+# A hook may start with a short PATH whose cargo is old or missing, so try the
+# login shell's cargo first, then the usual installs.
+tried=""
+for cargo in "$("${SHELL:-/bin/sh}" -lc 'command -v cargo' 2>/dev/null)" \
+  "$(command -v cargo)" "$HOME/.cargo/bin/cargo" /opt/homebrew/bin/cargo /usr/local/bin/cargo; do
+  [ -x "$cargo" ] || continue
+  case " $tried " in *" $cargo "*) continue ;; esac
+  tried="$tried $cargo"
+  echo "== $cargo: $("$cargo" --version 2>&1)" >>"$log"
+  if PATH="$(dirname "$cargo"):$PATH" CARGO_TARGET_DIR="$data/target" \
+    "$cargo" build --release --locked --manifest-path "$root/Cargo.toml" >>"$log" 2>&1; then
+    mkdir -p "$root/target/release" &&
+      cp "$data/target/release/orchestral" "$root/target/release/orchestral.tmp.$$" &&
+      mv "$root/target/release/orchestral.tmp.$$" "$root/target/release/orchestral" &&
+      rm -f "$log" && exit 0
+    echo "Orchestral built, but its binary couldn't be copied into $root/target/release, so its commands will fail."
+    exit 0
+  fi
+done
+echo "Orchestral's binary didn't build, so its commands will fail. Tried:${tried:- no cargo found}. See the build log, $log. An old Rust toolchain is the usual cause: it needs 1.89 or later. Then start a new session."

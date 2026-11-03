@@ -2,6 +2,7 @@
 name = "orchestral"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
 description = "A small workflow layer for Claude Code: plan the work, run a fleet of workers, respect the budget."
 license = "MIT"
 repository = "https://github.com/afterimaginary/orchestral"
