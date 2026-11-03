@@ -101,7 +101,12 @@ fn an_escalation_a_blocked_session_or_a_pr_to_merge_waits_on_the_owner_but_a_rat
     }
     let escalated = BTreeSet::from([12]);
     // The owner was asked to merge issue-13's and issue-16's PRs.
-    let merging = BTreeMap::from([("issue-13".to_string(), 40), ("issue-16".to_string(), 41)]);
+    // issue-9's PR was asked about, but its worker was removed.
+    let merging = BTreeMap::from([
+        ("issue-13".to_string(), 40),
+        ("issue-16".to_string(), 41),
+        ("issue-9".to_string(), 42),
+    ]);
 
     let waiting = nag::waiting(&state, &escalated, &merging, |worker| match worker.issue {
         14 => None,
@@ -118,6 +123,7 @@ fn an_escalation_a_blocked_session_or_a_pr_to_merge_waits_on_the_owner_but_a_rat
             ("issue-12", &Why::Escalated),
             ("issue-13", &Why::Session("approve a push".into())),
             ("issue-16", &Why::Merge(41)),
+            ("pr-42", &Why::Merge(42)),
         ]
     );
 }
@@ -399,4 +405,49 @@ fn a_launch_without_a_job_id_still_counts_as_sent() {
     let state = repo.store.read().unwrap();
     assert_eq!(state.nags["issue-12"].sent, 1);
     assert!(state.nag_sessions.is_empty());
+}
+
+#[test]
+fn an_asked_pr_whose_worker_is_gone_still_reminds_the_owner() {
+    let repo = Repo::escalated(with_question());
+    // issue-12 was cleaned up, and PR #42 from a removed worker waits on
+    // the owner.
+    repo.store
+        .update(|state| {
+            state.workers.clear();
+            state.asked.insert(42);
+        })
+        .unwrap();
+    std::fs::write(
+        repo.store.dir().join("github.json"),
+        json!({
+            "issues": {}, "prs": {"42": {
+                "title": "Add login", "draft": false, "branch": "issue-9",
+                "head": "abc1234", "ci": "passed", "reviews": []
+            }},
+            "polled_at": T0, "seen_comments": [], "failures": 0,
+            "retry_after": null, "escalations": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    repo.stubs.respond(
+        "gh",
+        &["pr", "view", "42"],
+        r#"{"url": "https://github.com/o/app/pull/42"}"#,
+        0,
+    );
+
+    repo.check(0);
+    repo.check(15);
+
+    let calls = repo.stubs.calls("claude");
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        calls[0]
+            .last()
+            .unwrap()
+            .ends_with("\n\nPR #42 is ready for you to merge. https://github.com/o/app/pull/42")
+    );
+    assert_eq!(repo.store.read().unwrap().nags["pr-42"].sent, 1);
 }
