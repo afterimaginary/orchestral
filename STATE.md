@@ -55,7 +55,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Tailnet links: where portless is installed, previews run under `portless <repo>-pr-<n>`, registered with Tailscale while it runs; the link goes in a PR comment that's edited on each restart, `status` lists running previews, and stale `tailscale serve` entries from crashed previews are removed (#52)
 - Reminders: a worker waiting on the owner, by escalation or a blocked session, gets one-shot notification sessions at the policy's `nag_minutes` gaps (#41)
 - Worker allow rules: workers stay in auto mode with narrow allow rules for their own git and gh commands, run one at a time, so they act on the orchestrator's later requests (#93)
-- Self-review: each worker reviews its own PR with a fresh subagent and records the verdict, so reviews never need a worker slot (#100)
+- Self-review: each worker reviews its own PR with a fresh subagent and records the verdict, so reviews never need a worker slot, with its `review` command allowed so auto mode doesn't deny the verdict (#100, #115)
 - Design proposals: `spawn --proposal` starts a worker on its issue's design proposal, which it publishes and links on the issue for the owner to choose, and `status` shows what proposals spend (#45)
 
 ## Up Next

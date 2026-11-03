@@ -444,13 +444,13 @@ fn settings_json(
     Ok(serde_json::to_string_pretty(&settings).expect("settings always serialize"))
 }
 
-/// The commands a worker runs when its orchestrator asks, later in the run.
-/// Auto mode only counts the first message as the owner's request, so it
-/// would deny these, and narrow allow rules skip its classifier (ADR-0010).
-/// Each is the exact form the worker needs; anything else still goes through
-/// auto mode, and the worker guard and pre-push hook still apply. Recording
-/// a review verdict is one of them: an author records its own (ADR-0011),
-/// which the classifier would otherwise deny as self-approval.
+/// The commands a worker runs that auto mode would deny: ones its
+/// orchestrator asks for later in the run, since auto mode only counts the
+/// first message as the owner's request, and recording its own review's
+/// verdict, which it treats as self-approval (ADR-0011). Narrow allow rules
+/// skip its classifier (ADR-0010). Each is the exact form the worker needs;
+/// anything else still goes through auto mode, and the worker guard and
+/// pre-push hook still apply.
 fn allow_rules(request: &Request, orchestral: &Path) -> Vec<String> {
     // The prompt gives the binary's path quoted, so the rule matches it so.
     let orchestral = shell_quote(&orchestral.display().to_string());
