@@ -56,8 +56,10 @@ pub enum Why {
 
 /// The workers waiting on the owner. An escalated issue comes first, since
 /// its question is the one to answer, then a blocked session, then a PR the
-/// owner was asked to merge, which `merging` maps from its branch. A session blocked by a rate limit
-/// waits on the plan, not the owner, so `question` returns `None` for it.
+/// owner was asked to merge, which `merging` maps from its branch. A session
+/// blocked by a rate limit waits on the plan, not the owner, so `question`
+/// returns `None` for it. An asked PR whose worker is gone still waits, under
+/// the name `pr-<n>`.
 pub fn waiting(
     state: &State,
     escalated: &BTreeSet<u64>,
@@ -90,6 +92,16 @@ pub fn waiting(
                 why,
             })
         })
+        .chain(
+            merging
+                .iter()
+                .filter(|(branch, _)| !state.workers.contains_key(*branch))
+                .map(|(_, &pr)| Waiting {
+                    worker: format!("pr-{pr}"),
+                    issue: 0,
+                    why: Why::Merge(pr),
+                }),
+        )
         .collect()
 }
 
@@ -175,10 +187,13 @@ pub fn check(
         let waiting = waiting(state, &escalated, &merging, |worker| {
             session_question(jobs.as_deref(), worker)
         });
-        let due: Vec<(Waiting, String, u64)> = track(&mut state.nags, &waiting, &gaps, now)
+        let due: Vec<(Waiting, Option<String>, u64)> = track(&mut state.nags, &waiting, &gaps, now)
             .into_iter()
             .map(|waiting| {
-                let session = state.workers[&waiting.worker].session_name.clone();
+                let session = state
+                    .workers
+                    .get(&waiting.worker)
+                    .map(|worker| worker.session_name.clone());
                 let n = state.next_nag;
                 state.next_nag += 1;
                 (waiting.clone(), session, n)
@@ -188,9 +203,14 @@ pub fn check(
     })?;
     let mut owner = None;
     for (waiting, session_name, n) in due {
-        let sent = issue(gh, &main, waiting.issue).and_then(|issue| {
+        let mut send = || -> Result<(String, Option<String>), Failure> {
             let (question, url) = match &waiting.why {
+                Why::Merge(pr) => (
+                    format!("PR #{pr} is ready for you to merge"),
+                    pr_url(gh, &main, *pr)?,
+                ),
                 Why::Escalated => {
+                    let issue = issue(gh, &main, waiting.issue)?;
                     if owner.is_none() {
                         owner = Some(github::owner_login(gh, &main)?);
                     }
@@ -199,16 +219,17 @@ pub fn check(
                         issue.url,
                     )
                 }
-                Why::Session(question) => (question.clone(), issue.url),
-                Why::Merge(pr) => (
-                    format!("PR #{pr} is ready for you to merge"),
-                    pr_url(gh, &main, *pr)?,
-                ),
+                Why::Session(question) => (question.clone(), issue(gh, &main, waiting.issue)?.url),
             };
-            let text = message(&waiting.worker, &session_name, &question, &url);
+            let text = match &session_name {
+                Some(session_name) => message(&waiting.worker, session_name, &question, &url),
+                // Its worker is gone, so the PR is all there is to name.
+                None => format!("{question}. {url}"),
+            };
             let job_id = launch(claude, &main, &nag_name(&main, n), &text)?;
             Ok((text, job_id))
-        });
+        };
+        let sent = send();
         match sent {
             Ok((text, job_id)) => {
                 store.update(|state| {
