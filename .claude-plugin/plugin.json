@@ -1,5 +1,4 @@
 {
 	"name": "orchestral",
-	"version": "0.1.0",
 	"description": "Plan a project and run a fleet of Claude Code workers within a budget."
 }

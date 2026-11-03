@@ -6,7 +6,7 @@ A small workflow layer for Claude Code, as a plugin plus a Rust binary. Give it 
 
 ## Trying it
 
-Orchestral needs a Rust toolchain (1.85 or later). Install it from this repository's marketplace, in the terminal or in Claude Code Desktop:
+Orchestral needs a Rust toolchain (1.89 or later). Install it from this repository's marketplace, in the terminal or in Claude Code Desktop:
 
 ```bash
 claude plugin marketplace add afterimaginary/orchestral

@@ -15,11 +15,12 @@ The other ways to get a binary there cost more than they give at this stage. Pre
 
 - The repository is its own marketplace: `.claude-plugin/marketplace.json` lists the plugin with `"source": "./"`.
 - A `SessionStart` hook runs `hooks/build`. When the plugin has no build, it runs `cargo build --release --locked` with Cargo's target directory in the plugin's data folder (`${CLAUDE_PLUGIN_DATA}`), and copies the binary to `target/release/orchestral` in the installed copy, where `bin/orchestral` already looks.
-- If the build fails, the hook tells the session which cargo it used and where the build log is, and Orchestral's commands fail with the existing "isn't built" error.
+- The hook tries the login shell's cargo first, since a hook's `PATH` can be short, then the one on `PATH`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`, and stops at the first that builds. If none does, or the binary can't be copied, it tells the session which cargos it tried and where the build log is, and Orchestral's commands fail with the existing "isn't built" error.
+- `plugin.json` has no `version`, so each commit to `main` is a new version and installs pick it up on update.
 
 ## Consequences
 
-- Installing needs a Rust toolchain new enough for edition 2024. The hook falls back to `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin` when its `PATH` has no cargo.
-- The first session after an install or update waits for a release build before Claude's first response. Later builds reuse the target directory in the data folder, which survives updates.
+- Installing needs Rust 1.89 or later, which `Cargo.toml` states as its `rust-version`.
+- The first session after an install or update waits for a release build before Claude's first response. Each update is a new directory in the plugin cache, so it builds again, but incrementally, from the target directory in the data folder.
 - A checkout loaded with `--plugin-dir` that's already built is left alone.
 - Prebuilt releases can replace this later without changing `bin/orchestral`'s contract.
