@@ -16,8 +16,8 @@ The owner chose narrow rules over allowing whole commands or changing the permis
 ## Decision
 
 - Workers keep `--permission-mode auto`.
-- Each author's settings allow the exact forms it needs: `git commit *`, `git push` alone or to `origin <its branch>` (also with `-u` or `--force-with-lease`), `gh pr create *`, `gh pr ready`, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <its issue> *` and `gh issue edit <its issue> --add-label needs-discussion`. A reviewer gets only `gh pr comment <its PR> *`.
-- The worker prompt tells workers to run each git and gh command on its own, and to edit files with file tools rather than shell redirects, so the rules match.
+- Each author's settings allow the exact forms it needs: `git commit *`, `git push` alone, to `origin <its branch>` (also with `-u` or `--force-with-lease`) or to `origin HEAD`, `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <its issue> *` and `gh issue edit <its issue> --add-label needs-discussion`. A reviewer gets only `gh pr comment <its PR> *`.
+- The worker prompt tells workers to run each git and gh command on its own, and to edit files with file tools rather than shell redirects, so the rules match, and that a denied chained command can be rerun one part at a time.
 - The worker guard and the pre-push hook stay the hard limits on merges, approvals and pushes to `main`. No rule names a merge or `main`.
 
 ## Test

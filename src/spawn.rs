@@ -435,6 +435,8 @@ fn allow_rules(request: &Request) -> Vec<String> {
                 "git push".into(),
                 format!("git push origin {branch}"),
                 format!("git push -u origin {branch}"),
+                "git push origin HEAD".into(),
+                "git push -u origin HEAD".into(),
                 "git push --force-with-lease".into(),
                 format!("git push --force-with-lease origin {branch}"),
                 "gh pr create *".into(),

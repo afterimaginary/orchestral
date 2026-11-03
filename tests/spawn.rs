@@ -182,21 +182,25 @@ fn the_worker_gets_its_own_settings_and_prompt() {
             .contains(repo.stubs.dir().to_str().unwrap())
     );
     // Only the exact forms it needs, for its own branch and issue.
-    let allow = settings["permissions"]["allow"].as_array().unwrap();
-    for rule in [
-        "Bash(git push origin issue-12)",
-        "Bash(gh pr ready)",
-        "Bash(gh issue comment 12 *)",
-        "Bash(gh issue edit 12 --add-label needs-discussion)",
-    ] {
-        assert!(allow.contains(&json!(rule)), "{rule} in {allow:?}");
-    }
-    assert!(
-        allow.iter().all(|rule| {
-            let rule = rule.as_str().unwrap();
-            !rule.contains("merge") && !rule.contains("main") && rule != "Bash(*)"
-        }),
-        "{allow:?}"
+    assert_eq!(
+        settings["permissions"]["allow"],
+        json!([
+            "Bash(git commit *)",
+            "Bash(git push)",
+            "Bash(git push origin issue-12)",
+            "Bash(git push -u origin issue-12)",
+            "Bash(git push origin HEAD)",
+            "Bash(git push -u origin HEAD)",
+            "Bash(git push --force-with-lease)",
+            "Bash(git push --force-with-lease origin issue-12)",
+            "Bash(gh pr create *)",
+            "Bash(gh pr ready)",
+            "Bash(gh pr ready *)",
+            "Bash(gh pr comment *)",
+            "Bash(gh pr edit * --body-file *)",
+            "Bash(gh issue comment 12 *)",
+            "Bash(gh issue edit 12 --add-label needs-discussion)",
+        ])
     );
     let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         .as_str()
