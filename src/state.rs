@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::outcome::Failure;
 
 /// The `state.json` schema this build reads and writes.
-pub const SCHEMA: u32 = 12;
+pub const SCHEMA: u32 = 13;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct State {
@@ -52,6 +52,11 @@ pub struct State {
     pub holds: BTreeSet<u64>,
     /// PR previews, by PR number.
     pub previews: BTreeMap<u64, Preview>,
+    /// Workers still on their issue's design proposal, by name, with when
+    /// the proposal started, in RFC 3339 UTC.
+    pub proposals: BTreeMap<String, String>,
+    /// Weighted tokens this run's finished proposals used.
+    pub proposal_tokens: u64,
     /// Reminders to the owner, by the worker waiting on them.
     pub nags: BTreeMap<String, Nag>,
     /// Reminder sessions that haven't been stopped yet.
@@ -210,6 +215,8 @@ impl Default for State {
             approvals: BTreeMap::new(),
             holds: BTreeSet::new(),
             previews: BTreeMap::new(),
+            proposals: BTreeMap::new(),
+            proposal_tokens: 0,
             nags: BTreeMap::new(),
             nag_sessions: Vec::new(),
             next_nag: 1,
