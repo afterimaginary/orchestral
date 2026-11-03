@@ -181,6 +181,27 @@ fn the_worker_gets_its_own_settings_and_prompt() {
             .unwrap()
             .contains(repo.stubs.dir().to_str().unwrap())
     );
+    // Only the exact forms it needs, for its own branch and issue.
+    assert_eq!(
+        settings["permissions"]["allow"],
+        json!([
+            "Bash(git commit *)",
+            "Bash(git push)",
+            "Bash(git push origin issue-12)",
+            "Bash(git push -u origin issue-12)",
+            "Bash(git push origin HEAD)",
+            "Bash(git push -u origin HEAD)",
+            "Bash(git push --force-with-lease)",
+            "Bash(git push --force-with-lease origin issue-12)",
+            "Bash(gh pr create *)",
+            "Bash(gh pr ready)",
+            "Bash(gh pr ready *)",
+            "Bash(gh pr comment *)",
+            "Bash(gh pr edit * --body-file *)",
+            "Bash(gh issue comment 12 *)",
+            "Bash(gh issue edit 12 --add-label needs-discussion)",
+        ])
+    );
     let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         .as_str()
         .unwrap();
@@ -558,6 +579,13 @@ fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
     );
     assert!(prompt.contains("- Run /refine on the PR.\n"), "{prompt}");
     assert!(prompt.contains("review 40 --pass --sha <head>"), "{prompt}");
+    // A reviewer may comment on its PR, and push nothing.
+    let settings: Value =
+        serde_json::from_str(&repo.worker_file("review-40", "settings.json")).unwrap();
+    assert_eq!(
+        settings["permissions"]["allow"],
+        json!(["Bash(gh pr comment 40 *)"])
+    );
     let state = repo.store().read().unwrap();
     assert_eq!(state.workers["review-40"].review_of, Some(40));
 }

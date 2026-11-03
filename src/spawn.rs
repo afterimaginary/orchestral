@@ -190,7 +190,10 @@ impl Launch<'_> {
             fs::create_dir_all(&dir).map_err(|err| io_error(&dir, err))?;
             let settings = dir.join("settings.json");
             let prompt = dir.join("prompt.md");
-            write(&settings, &settings_json(name, self.main, &plugin_ids()?)?)?;
+            write(
+                &settings,
+                &settings_json(name, self.main, &allow_rules(request), &plugin_ids()?)?,
+            )?;
             let exe = std::env::current_exe()
                 .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
             let text = match request.review_of {
@@ -384,7 +387,12 @@ fn exclude_worktrees(store: &Path) -> Result<(), Failure> {
 
 /// The worker's settings. Hooks use the binary's absolute path and `PATH` is
 /// set, since a background session doesn't inherit the launching shell's.
-fn settings_json(name: &str, main: &Path, plugin_ids: &[String]) -> Result<String, Failure> {
+fn settings_json(
+    name: &str,
+    main: &Path,
+    allow: &[String],
+    plugin_ids: &[String],
+) -> Result<String, Failure> {
     let exe = std::env::current_exe()
         .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
     let enabled_plugins: serde_json::Map<String, serde_json::Value> = plugin_ids
@@ -400,6 +408,7 @@ fn settings_json(name: &str, main: &Path, plugin_ids: &[String]) -> Result<Strin
             "ORCHESTRAL_REPO": main.display().to_string(),
             "PATH": std::env::var("PATH").unwrap_or_default(),
         },
+        "permissions": {"allow": allow},
         "hooks": {"PreToolUse": [{
             "matcher": "Bash",
             "hooks": [{"type": "command", "command": format!("{} hook worker-guard", shell_quote(&exe.display().to_string()))}],
@@ -408,6 +417,42 @@ fn settings_json(name: &str, main: &Path, plugin_ids: &[String]) -> Result<Strin
         "enabledPlugins": enabled_plugins,
     });
     Ok(serde_json::to_string_pretty(&settings).expect("settings always serialize"))
+}
+
+/// The commands a worker runs when its orchestrator asks, later in the run.
+/// Auto mode only counts the first message as the owner's request, so it
+/// would deny these, and narrow allow rules skip its classifier (ADR-0010).
+/// Each is the exact form the worker needs; anything else still goes through
+/// auto mode, and the worker guard and pre-push hook still apply.
+fn allow_rules(request: &Request) -> Vec<String> {
+    let rules = match request.review_of {
+        Some(pr) => vec![format!("gh pr comment {pr} *")],
+        None => {
+            let branch = &request.name;
+            let issue = request.issue;
+            vec![
+                "git commit *".into(),
+                "git push".into(),
+                format!("git push origin {branch}"),
+                format!("git push -u origin {branch}"),
+                "git push origin HEAD".into(),
+                "git push -u origin HEAD".into(),
+                "git push --force-with-lease".into(),
+                format!("git push --force-with-lease origin {branch}"),
+                "gh pr create *".into(),
+                "gh pr ready".into(),
+                "gh pr ready *".into(),
+                "gh pr comment *".into(),
+                "gh pr edit * --body-file *".into(),
+                format!("gh issue comment {issue} *"),
+                format!("gh issue edit {issue} --add-label needs-discussion"),
+            ]
+        }
+    };
+    rules
+        .into_iter()
+        .map(|rule| format!("Bash({rule})"))
+        .collect()
 }
 
 /// Every installed ID of the Orchestral plugin, such as
