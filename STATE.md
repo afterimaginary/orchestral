@@ -59,12 +59,13 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Design proposals: `spawn --proposal` starts a worker on its issue's design proposal, which it publishes and links on the issue for the owner to choose, and `status` shows what proposals spend (#45)
 - Merge routing: `orchestral route` puts each PR on the owner's route or the supervisor's, and a PR that only needs the owner's approval is labelled `needs-discussion`, reminded about and keeps the supervisor running (#48)
 - Supervisor merges: every minute the supervisor merges each PR whose merge check passes, at the checked head commit, with the policy's `merge_method`, and records an event (#49)
+- Costly actions: deploys, deploy integrations, billable resources and new accounts always escalate to the owner, every PR takes the owner's route when `main` deploys, and worker settings carry no credentials (#54)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
 2. Milestone 3 (Autonomous loop): the long-idle run (#44) is deferred.
-3. Milestone 4 (User decision points): comment commands (#50), the boot check (#53) and escalating costly actions (#54) are next.
+3. Milestone 4 (User decision points): comment commands (#50) and the boot check (#53) are next.
 
 ## Needs Your Decision
 
