@@ -54,11 +54,12 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Previews: `orchestral try <pr>` asks for a PR's preview, which the supervisor runs in its worker's worktree on `$PORT`, restarting it once, rerunning setup on a lockfile change, keeping within `max_running` and stopping it on merge or close (#51)
 - Tailnet links: where portless is installed, previews run under `portless <repo>-pr-<n>`, registered with Tailscale while it runs; the link goes in a PR comment that's edited on each restart, `status` lists running previews, and stale `tailscale serve` entries from crashed previews are removed (#52)
 - Reminders: a worker waiting on the owner, by escalation or a blocked session, gets one-shot notification sessions at the policy's `nag_minutes` gaps (#41)
+- Worker allow rules: workers stay in auto mode with narrow allow rules for their own git and gh commands, run one at a time, so they act on the orchestrator's later requests (#93)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
-2. Milestone 3 (Autonomous loop): the long-idle run (#44) is deferred. #93 (worker permissions) and #100 (self-review) are decided and next.
+2. Milestone 3 (Autonomous loop): the long-idle run (#44) is deferred. #100 (self-review) is decided and next.
 3. Milestone 4 (User decision points): merge routing (#48) can start, and supervisor merges (#49) need #48. Design proposals (#45, PR #109) wait on #93.
 
 ## Needs Your Decision

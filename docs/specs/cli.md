@@ -172,6 +172,7 @@ The worker's settings apply to its process only:
 | `isolatePeerMachines` | `true` |
 | `worktree.bgIsolation` | `none`, since it already has a worktree |
 | `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), and the caller's `PATH` |
+| `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone or to `origin <name>` (with `-u` or `--force-with-lease`), `gh pr create *`, `gh pr ready`, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *` and `gh issue edit <issue> --add-label needs-discussion`. For a reviewer, only `gh pr comment <pr> *`. Anything else still goes through auto mode. |
 | `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
 
