@@ -119,7 +119,8 @@ pub fn poll(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
             None => Vec::new(),
         };
         let mut snapshot = fetched.snapshot;
-        snapshot.escalations = escalations(old.as_ref(), &snapshot);
+        let worked: BTreeSet<u64> = state.workers.values().map(|worker| worker.issue).collect();
+        snapshot.escalations = escalations(old.as_ref(), &snapshot, &worked);
         Ok((snapshot, lines))
     };
     let (snapshot, lines) = match attempt() {
@@ -194,23 +195,29 @@ pub fn open_prs(store: &Store) -> Result<Option<BTreeSet<u64>>, Failure> {
 }
 
 /// The open issues in `new` waiting on the owner that either were counted
-/// already or started waiting since `old`.
-fn escalations(old: Option<&Snapshot>, new: &Snapshot) -> BTreeSet<u64> {
-    let Some(old) = old.filter(|old| old.polled_at.is_some()) else {
-        return BTreeSet::new();
-    };
+/// already or started waiting since `old`. Without an earlier poll, it's
+/// those a worker is on.
+fn escalations(old: Option<&Snapshot>, new: &Snapshot, worked: &BTreeSet<u64>) -> BTreeSet<u64> {
     let escalated = |issue: &Issue| {
         issue
             .labels
             .iter()
             .any(|label| WAITS_ON_OWNER.contains(&label.as_str()))
     };
+    let old = old.filter(|old| old.polled_at.is_some());
     new.issues
         .iter()
         .filter(|(number, issue)| {
             escalated(issue)
-                && (old.escalations.contains(number)
-                    || !old.issues.get(number).is_some_and(escalated))
+                && match old {
+                    Some(old) => {
+                        old.escalations.contains(number)
+                            || !old.issues.get(number).is_some_and(escalated)
+                    }
+                    // With nothing to compare against, an issue a worker is
+                    // on counts, since its worker waits on the owner.
+                    None => worked.contains(number),
+                }
         })
         .map(|(number, _)| *number)
         .collect()

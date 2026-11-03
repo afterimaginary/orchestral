@@ -482,6 +482,22 @@ fn a_comment_on_a_pr_closed_earlier_is_still_called_a_pr() {
 }
 
 #[test]
+fn at_the_first_poll_an_escalated_issue_with_a_worker_counts() {
+    let repo = Repo::new();
+    // A worker is on #12. #13 has no worker.
+    repo.poll(&GitHub {
+        issues: vec![
+            issue(12, "Work", &["needs-discussion"]),
+            issue(13, "Work", &["needs-discussion"]),
+        ],
+        ..GitHub::default()
+    });
+
+    assert_eq!(repo.snapshot().escalations, [12].into());
+    assert!(github::waits_on_owner(&repo.store()));
+}
+
+#[test]
 fn only_an_escalation_raised_during_the_run_counts() {
     let repo = Repo::new();
     let store = repo.store();
