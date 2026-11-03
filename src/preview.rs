@@ -605,7 +605,7 @@ pub fn stop_closed(store: &Store) -> Result<Vec<String>, Failure> {
 
 /// Runs `preview.setup` in the worktree, its output going straight to the
 /// log so a hung setup still leaves a trace.
-fn run_setup(setup: &str, worktree: &Path, log: &Path) -> Result<(), String> {
+pub(crate) fn run_setup(setup: &str, worktree: &Path, log: &Path) -> Result<(), String> {
     let file = open_log(log).map_err(|err| format!("{}: {err}", log.display()))?;
     let mut child = Command::new("sh")
         .args(["-c", setup])
@@ -1020,14 +1020,14 @@ fn stop_server(server: &Server) {
 }
 
 /// Sends `signal` to a pid, or to a process group as `-<group>`.
-fn signal(signal: &str, target: &str) {
+pub(crate) fn signal(signal: &str, target: &str) {
     let _ = Command::new("kill")
         .args([&format!("-{signal}"), "--", target])
         .stderr(Stdio::null())
         .status();
 }
 
-fn free_port() -> Result<u16, Failure> {
+pub(crate) fn free_port() -> Result<u16, Failure> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|err| Failure::Error(format!("can't find a free port: {err}")))?;
     listener
@@ -1059,7 +1059,7 @@ fn log_path(store: &Store, pr: u64) -> PathBuf {
     store.dir().join("logs").join(format!("preview-{pr}.log"))
 }
 
-fn open_log(path: &Path) -> std::io::Result<fs::File> {
+pub(crate) fn open_log(path: &Path) -> std::io::Result<fs::File> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }

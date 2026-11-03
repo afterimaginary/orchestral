@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use orchestral::outcome::{self, Failure};
 use orchestral::{
-    claim, cleanup, compact, gate, guard, limits, merge, preview, proposal, review, route, setup,
-    spawn, status, stop, supervisor, watch,
+    boot, claim, cleanup, compact, gate, guard, limits, merge, preview, proposal, review, route,
+    setup, spawn, status, stop, supervisor, watch,
 };
 
 /// A small workflow layer for Claude Code.
@@ -87,10 +87,15 @@ enum Command {
     /// Ask for a PR's preview, which the supervisor runs in its worker's
     /// worktree.
     Try {
-        pr: u64,
+        #[arg(required_unless_present = "check")]
+        pr: Option<u64>,
         /// Stop the PR's preview instead.
         #[arg(long)]
         stop: bool,
+        /// From a worker's worktree: boot its preview, check it answers, and
+        /// stop it again.
+        #[arg(long, conflicts_with_all = ["pr", "stop"])]
+        check: bool,
         /// Print JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -309,10 +314,21 @@ fn run(command: Command) -> Result<(), Failure> {
             };
             outcome::print(&spawn::spawn(&cwd, request)?, json)
         }
-        Command::Try { pr, stop, json } => match stop {
-            true => outcome::print(&preview::stop(&current_dir()?, pr)?, json),
-            false => outcome::print(&preview::try_pr(&current_dir()?, pr)?, json),
-        },
+        Command::Try {
+            pr,
+            stop,
+            check,
+            json,
+        } => {
+            if check {
+                return outcome::print(&boot::check(&current_dir()?)?, json);
+            }
+            let pr = pr.expect("clap requires a PR without --check");
+            match stop {
+                true => outcome::print(&preview::stop(&current_dir()?, pr)?, json),
+                false => outcome::print(&preview::try_pr(&current_dir()?, pr)?, json),
+            }
+        }
         Command::Previews { json } => outcome::print(&preview::list(&current_dir()?)?, json),
         Command::ProposalDone { name, json } => {
             outcome::print(&proposal::done(&current_dir()?, &name)?, json)
