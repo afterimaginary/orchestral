@@ -1,0 +1,6 @@
+{
+	"name": "afterimaginary",
+	"description": "Orchestral: plan a project and run a fleet of Claude Code workers within a budget.",
+	"owner": { "name": "afterimaginary" },
+	"plugins": [{ "name": "orchestral", "source": "./" }]
+}

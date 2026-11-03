@@ -6,7 +6,17 @@ A small workflow layer for Claude Code, as a plugin plus a Rust binary. Give it 
 
 ## Trying it
 
-Build the binary, then start Claude Code in your project with this checkout as a plugin:
+Orchestral needs a Rust toolchain (1.85 or later). Install it from this repository's marketplace, in the terminal or in Claude Code Desktop:
+
+```bash
+claude plugin marketplace add afterimaginary/orchestral
+```
+
+```bash
+claude plugin install orchestral@afterimaginary
+```
+
+The first session after installing builds the binary, which can take a minute. Or build a checkout and load it directly:
 
 ```bash
 cargo build --release

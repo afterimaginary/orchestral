@@ -62,6 +62,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Costly actions: deploys, deploy integrations, billable resources and new accounts always escalate to the owner, every PR takes the owner's route when `main` deploys, and worker settings carry no credentials (#54)
 - Comment commands: the owner's `/approve`, `/hold` and `/unhold` comments record an approval of the head they saw and set or clear a hold, a new commit lapses an approval, and other comments go to the PR's worker (#50)
 - Boot check: `orchestral try --check` boots a worker's preview from its worktree and checks it answers before the PR reaches the owner, workers attach screenshots as an artifact page, and the orchestrator starts a preview for each PR waiting on the owner (#53)
+- Installs from this repository's marketplace, building its binary on first use (ADR-0012)
 
 ## Up Next
 
