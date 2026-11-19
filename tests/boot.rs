@@ -9,7 +9,7 @@ use common::Stubs;
 use tempfile::TempDir;
 
 /// A repository whose policy previews with `run`, and `setup` if given.
-fn repo(run: &str, setup: Option<&str>) -> (TempDir, PathBuf) {
+fn repo(run: &str, setup: Option<&str>) -> (TempDir, PathBuf, Stubs) {
     let dir = TempDir::new().unwrap();
     let main = dir.path().canonicalize().unwrap();
     let status = Command::new("git")
@@ -21,17 +21,14 @@ fn repo(run: &str, setup: Option<&str>) -> (TempDir, PathBuf) {
     let setup = setup
         .map(|setup| format!("  setup: {setup}\n"))
         .unwrap_or_default();
-    std::fs::create_dir(main.join(".orchestral")).unwrap();
-    std::fs::write(
-        main.join(".orchestral/policy.md"),
-        format!("---\nfleet_token_budget: 1000\npreview:\n{setup}  run: {run}\n---\n"),
-    )
-    .unwrap();
-    (dir, main)
+    let stubs = Stubs::new();
+    stubs.write_policy(&format!(
+        "---\nfleet_token_budget: 1000\npreview:\n{setup}  run: {run}\n---\n"
+    ));
+    (dir, main, stubs)
 }
 
-fn check(main: &Path, worker: Option<&str>) -> Output {
-    let stubs = Stubs::new();
+fn check(stubs: &Stubs, main: &Path, worker: Option<&str>) -> Output {
     let mut command = stubs.orchestral();
     command
         .args(["try", "--check"])
@@ -50,12 +47,12 @@ fn text(bytes: &[u8]) -> String {
 #[test]
 fn a_preview_that_answers_passes_and_is_stopped() {
     // The server records its pid, so the test can see it stopped.
-    let (_dir, main) = repo(
+    let (_dir, main, stubs) = repo(
         "echo $$ > server.pid; exec python3 -m http.server $PORT --bind 127.0.0.1",
         Some("touch set-up"),
     );
 
-    let output = check(&main, Some("issue-12"));
+    let output = check(&stubs, &main, Some("issue-12"));
 
     assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
     assert!(
@@ -75,9 +72,9 @@ fn a_preview_that_answers_passes_and_is_stopped() {
 
 #[test]
 fn a_preview_that_exits_fails_with_its_log() {
-    let (_dir, main) = repo("echo missing module; exit 3", None);
+    let (_dir, main, stubs) = repo("echo missing module; exit 3", None);
 
-    let output = check(&main, Some("issue-12"));
+    let output = check(&stubs, &main, Some("issue-12"));
 
     assert_eq!(output.status.code(), Some(2));
     let stderr = text(&output.stderr);
@@ -90,9 +87,9 @@ fn a_preview_that_exits_fails_with_its_log() {
 
 #[test]
 fn a_failing_setup_fails_the_check() {
-    let (_dir, main) = repo("true", Some("echo no lockfile; exit 1"));
+    let (_dir, main, stubs) = repo("true", Some("echo no lockfile; exit 1"));
 
-    let output = check(&main, Some("issue-12"));
+    let output = check(&stubs, &main, Some("issue-12"));
 
     assert_eq!(output.status.code(), Some(2));
     let stderr = text(&output.stderr);
@@ -102,37 +99,26 @@ fn a_failing_setup_fails_the_check() {
 
 #[test]
 fn only_a_worker_runs_it() {
-    let (_dir, main) = repo("true", None);
+    let (_dir, main, stubs) = repo("true", None);
 
-    let output = check(&main, None);
+    let output = check(&stubs, &main, None);
 
     assert_eq!(output.status.code(), Some(2));
     assert!(text(&output.stderr).contains("only a worker runs the boot check"));
 }
 
 #[test]
-fn the_policy_comes_from_origin_main_not_the_branch() {
-    // origin/main's policy runs a server; the branch's own copy exits.
-    let (_dir, main) = repo("exec python3 -m http.server $PORT --bind 127.0.0.1", None);
-    let git = |args: &[&str]| {
-        let status = Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(&main)
-            .status()
-            .unwrap();
-        assert!(status.success());
-    };
-    git(&["add", "-A"]);
-    git(&["commit", "-qm", "policy"]);
-    git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+fn a_policy_in_the_repository_is_ignored() {
+    // The config directory's policy runs a server; the repository's exits.
+    let (_dir, main, stubs) = repo("exec python3 -m http.server $PORT --bind 127.0.0.1", None);
+    std::fs::create_dir(main.join(".orchestral")).unwrap();
     std::fs::write(
         main.join(".orchestral/policy.md"),
         "---\nfleet_token_budget: 1000\npreview:\n  run: exit 7\n---\n",
     )
     .unwrap();
 
-    let output = check(&main, Some("issue-12"));
+    let output = check(&stubs, &main, Some("issue-12"));
 
     assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
 }

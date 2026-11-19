@@ -1,6 +1,6 @@
 # Policy
 
-Each project has one policy file, `.orchestral/policy.md`, tracked in its repository. Its YAML frontmatter holds settings the binary reads. The prose after it holds rules the orchestrator session reads, in the project owner's words.
+The policy belongs to the person running Orchestral, not the project, so it lives in Orchestral's config directory rather than the repository (ADR-0013). Each policy file's YAML frontmatter holds settings the binary reads. The prose after it holds rules the orchestrator session reads, in the owner's words.
 
 ```markdown
 ---
@@ -14,6 +14,19 @@ preview:
 Propose a design first for anything a user sees or interacts with.
 Always ask me before changing auth, payments or migrations.
 ```
+
+## Files
+
+The config directory is `$XDG_CONFIG_HOME/orchestral`, or `~/.config/orchestral` when that's unset or not an absolute path. It holds up to two files for a repository:
+
+| File | Applies to |
+| --- | --- |
+| `policy.md` | Every repository. |
+| `<owner>/<repo>/policy.md` | The GitHub repository `origin` points at, lowercased, read from `origin`'s URL as configured (HTTPS, SSH or `git@github.com:` form). A repository whose `origin` isn't on GitHub has no file of its own. |
+
+Either file alone is enough. With both, the repository's settings override the global ones key by key, with `preview` replaced as a whole, and both files' rules apply, the global ones first. `orchestral policy` prints the result and the files it came from.
+
+The repository's own files are read only for `CONTRIBUTING.md`, below. A `.orchestral/policy.md` tracked in the repository isn't read: `orchestral init` moves it to the repository's file, or the global one when `origin` isn't on GitHub. Until that file exists, every command that reads the policy fails and points at `init`, so a repository's old rules and limits are never silently dropped. Once it exists, `doctor` warns that the tracked file is left behind.
 
 ## Settings
 
@@ -37,20 +50,19 @@ Always ask me before changing auth, payments or migrations.
 
 ## Rejected files
 
-Every command that reads the policy fails with exit `1` when the file:
+Every command that reads the policy fails with exit `1` when either file:
 
 - doesn't start with frontmatter between `---` lines,
 - has a key not listed above, at the top level or under `preview`,
-- has no `fleet_token_budget`, or one that isn't a whole number above 0,
 - has a value of the wrong type, or a `merge_method` not listed,
-- has a `preview` with both `run` and `url`, or with neither.
+- has a `preview` with both `run` and `url`, or with neither,
 
-## Which copy is read
+or when neither file has a `fleet_token_budget`, or the one that applies isn't a whole number above 0.
 
-The policy is read from `origin/main` with `git show`, so a worker can't change its own limits from a branch or a local edit. Until `origin/main` exists, before the first push, the main checkout's copy is read instead. Once `origin/main` exists, a policy missing from it is an error.
+## Who can change it
 
-Whether the repository has a `CONTRIBUTING.md` is checked in the same place.
+The config directory is outside every worktree, so no branch, commit or merged PR can change a worker's limits. Each worker's settings also deny the Edit tool, which covers Write and shell redirects, under the config directory, so a worker can't change its limits by accident. This doesn't stop a worker set on it, which could still write there with a script.
 
-`origin/main` here is the local remote-tracking ref, so the policy is as current as the last fetch. The ref is shared by every worktree, so this stops a worker changing its limits by accident, not a worker set on it: one could still move or delete the ref.
+`CONTRIBUTING.md` is read from `origin/main` with `git show`, so a branch can't change it, or from the main checkout until `origin/main` exists, before the first push. `origin/main` here is the local remote-tracking ref, as current as the last fetch.
 
 A file may start with a byte order mark and use Windows line endings.

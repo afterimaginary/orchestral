@@ -159,6 +159,7 @@ pub fn check(
     store: &Store,
     claude: &Path,
     gh: &Path,
+    config: &Path,
     now: Timestamp,
 ) -> Result<Vec<String>, Failure> {
     // A session that can't be stopped now is tried again next minute, and
@@ -170,7 +171,7 @@ pub fn check(
         )]
     });
     let main = crate::spawn::main_checkout(store.dir())?;
-    let gaps = Policy::load(&main)?.settings.nag_minutes;
+    let gaps = Policy::load_from(config, &main)?.settings.nag_minutes;
     let escalated = github::escalated(store);
     let open_prs = github::open_pr_snapshot(store)
         .ok()

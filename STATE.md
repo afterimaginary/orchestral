@@ -4,7 +4,7 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `cleanup`, which removes a finished worker by its PR's state, `claim`, `resolve`, `init`, `doctor`, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `cleanup`, which removes a finished worker by its PR's state, `claim`, `resolve`, `init`, `doctor`, `policy`, which prints the policy in effect, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The repository is private and written to be made public later.
 
 ## Features
 
@@ -23,7 +23,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - CLI conventions: exit codes, refusals and `--json` (`docs/specs/cli.md`)
 - Integration test harness with stub external tools
 - State store: `state.json` and `events.jsonl` under the git common directory (`docs/specs/state.md`)
-- Policy file: settings and rules in `.orchestral/policy.md`, read from `origin/main` (`docs/specs/policy.md`)
+- Policy file: settings and rules in the operator's config directory, a global file layered under a per-repository one, so managed repositories carry no Orchestral files (`docs/specs/policy.md`, ADR-0013)
 - Context and cache state read from transcripts (`docs/specs/claude-code-internals.md`)
 - Session reader: session records, pid liveness and `claude agents --json`
 - Fleet token accounting, shown as an estimate (`docs/specs/budget.md`)
@@ -63,6 +63,7 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Comment commands: the owner's `/approve`, `/hold` and `/unhold` comments record an approval of the head they saw and set or clear a hold, a new commit lapses an approval, and other comments go to the PR's worker (#50)
 - Boot check: `orchestral try --check` boots a worker's preview from its worktree and checks it answers before the PR reaches the owner, workers attach screenshots as an artifact page, and the orchestrator starts a preview for each PR waiting on the owner (#53)
 - Installs from this repository's marketplace, building its binary on first use (ADR-0012)
+- The policy moves out of managed repositories into `~/.config/orchestral`, with `orchestral policy` and an `init` import, and the plugin installs at local scope (#131, in review)
 
 ## Up Next
 

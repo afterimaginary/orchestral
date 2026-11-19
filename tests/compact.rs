@@ -30,12 +30,8 @@ impl Repo {
             .status()
             .unwrap();
         assert!(status.success());
-        std::fs::create_dir(main.join(".orchestral")).unwrap();
-        std::fs::write(
-            main.join(".orchestral/policy.md"),
-            "---\nfleet_token_budget: 1000\n---\n",
-        )
-        .unwrap();
+        let stubs = Stubs::new();
+        stubs.write_policy("---\nfleet_token_budget: 1000\n---\n");
         Store::for_repo(&main)
             .unwrap()
             .update(|state| {
@@ -48,7 +44,7 @@ impl Repo {
         Repo {
             _dir: dir,
             main,
-            stubs: Stubs::new(),
+            stubs,
         }
     }
 

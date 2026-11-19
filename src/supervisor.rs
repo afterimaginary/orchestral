@@ -262,7 +262,9 @@ impl Ticks {
         if finished(&self.previews) {
             let store = store.clone();
             self.previews = Some(thread::spawn(move || {
-                match preview::reconcile(&store, &preview::Tools::default()) {
+                match crate::policy::config_dir().and_then(|config| {
+                    preview::reconcile(&store, &preview::Tools::default(), &config)
+                }) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!("can't check the previews: {}", failure_text(&err))),
                 }
@@ -282,11 +284,15 @@ impl Ticks {
                 }
                 // Before asking the owner, so a PR that merges isn't asked
                 // about.
-                match merge::merge_ready(&store, Path::new("gh")) {
+                match crate::policy::config_dir()
+                    .and_then(|config| merge::merge_ready(&store, Path::new("gh"), &config))
+                {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!("can't merge ready PRs: {}", failure_text(&err))),
                 }
-                match route::ask_owner(&store, Path::new("gh")) {
+                match crate::policy::config_dir()
+                    .and_then(|config| route::ask_owner(&store, Path::new("gh"), &config))
+                {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!(
                         "can't ask the owner to merge: {}",
@@ -317,12 +323,15 @@ impl Ticks {
                         None
                     }
                 };
-                match nag::check(
-                    &store,
-                    Path::new("claude"),
-                    Path::new("gh"),
-                    jiff::Timestamp::now(),
-                ) {
+                match crate::policy::config_dir().and_then(|config| {
+                    nag::check(
+                        &store,
+                        Path::new("claude"),
+                        Path::new("gh"),
+                        &config,
+                        jiff::Timestamp::now(),
+                    )
+                }) {
                     Ok(lines) => lines.iter().for_each(|line| log(line)),
                     Err(err) => log(&format!("can't check reminders: {}", failure_text(&err))),
                 }

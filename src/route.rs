@@ -132,7 +132,7 @@ pub fn route(cwd: &Path, pr: u64, to: MergeRoute, reason: &str) -> Result<Routed
 /// was asked about and no longer looks ready, after a push, a failed check or
 /// a return to draft, loses the label and is no longer asked about. Forgets
 /// PRs that are no longer open. Returns lines for the log.
-pub fn ask_owner(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
+pub fn ask_owner(store: &Store, gh: &Path, config: &Path) -> Result<Vec<String>, Failure> {
     let Some(prs) = github::open_pr_snapshot(store)? else {
         return Ok(Vec::new());
     };
@@ -161,7 +161,7 @@ pub fn ask_owner(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
     let mut lines = Vec::new();
     let mut asked = Vec::new();
     if !candidates.is_empty() {
-        let settings = Policy::load(&main)?.settings;
+        let settings = Policy::load_from(config, &main)?.settings;
         for number in candidates {
             let labelled = merge::read_pr(gh, &main, number).and_then(|pr| {
                 if !merge::evaluate(&pr, &state, &settings).waits_on_owner() {

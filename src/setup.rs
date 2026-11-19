@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::git::git;
 use crate::outcome::Failure;
-use crate::policy::Policy;
+use crate::policy::{self, Files, Policy, TRACKED_PATH};
 use crate::spawn::main_checkout;
 use crate::state::Store;
 
@@ -20,7 +20,6 @@ use crate::state::Store;
 /// (`docs/specs/claude-code-internals.md`).
 pub const TESTED_CLAUDE: &str = "2.1.314";
 
-const POLICY: &str = ".orchestral/policy.md";
 const BLOCK_START: &str = "# >>> orchestral >>>";
 const BLOCK_END: &str = "# <<< orchestral <<<";
 
@@ -60,23 +59,42 @@ impl fmt::Display for Report {
 
 #[derive(Debug, Serialize)]
 pub struct Initialized {
-    /// The policy file, when init created it.
-    pub created_policy: Option<PathBuf>,
+    /// What init did about the policy.
+    pub policy: PolicySetup,
     pub hook: PathBuf,
     /// Whether git tracks the hook, as with a `core.hooksPath` in the
     /// repository.
     pub hook_tracked: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "action", rename_all = "lowercase")]
+pub enum PolicySetup {
+    /// Wrote the template to `path`.
+    Created { path: PathBuf },
+    /// Moved the repository's tracked policy to `path`.
+    Moved { path: PathBuf },
+    /// Left the existing policy files alone.
+    Kept { paths: Vec<PathBuf> },
+}
+
 impl fmt::Display for Initialized {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.created_policy {
-            Some(path) => writeln!(
+        match &self.policy {
+            PolicySetup::Created { path } => writeln!(
                 f,
-                "Created {}. Set fleet_token_budget, then commit it and push it to main.",
+                "Created {}. Set fleet_token_budget there.",
                 path.display()
             )?,
-            None => writeln!(f, "Kept the existing {POLICY}.")?,
+            PolicySetup::Moved { path } => writeln!(
+                f,
+                "Moved the repository's {TRACKED_PATH} to {}. Remove it from the repository with `git rm {TRACKED_PATH}`, and push.",
+                path.display()
+            )?,
+            PolicySetup::Kept { paths } => {
+                let paths: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+                writeln!(f, "Kept the policy in {}.", paths.join(" and "))?
+            }
         }
         write!(f, "Installed the pre-push hook in {}.", self.hook.display())?;
         if self.hook_tracked {
@@ -96,7 +114,7 @@ pub fn doctor(cwd: &Path) -> Report {
     match Store::for_repo(cwd).and_then(|store| main_checkout(store.dir())) {
         Ok(main) => {
             checks.push(trust(&main));
-            checks.push(policy(cwd, &main));
+            checks.push(policy(cwd));
             checks.push(hook(&main));
         }
         Err(
@@ -139,16 +157,7 @@ pub fn init(cwd: &Path) -> Result<Initialized, Failure> {
         });
     }
 
-    let policy = main.join(POLICY);
-    let created_policy = if policy.exists() {
-        None
-    } else {
-        let dir = policy.parent().expect("the policy is in a directory");
-        fs::create_dir_all(dir).map_err(|err| io_error(dir, err))?;
-        fs::write(&policy, include_str!("templates/policy.md"))
-            .map_err(|err| io_error(&policy, err))?;
-        Some(policy)
-    };
+    let policy = set_up_policy(&main)?;
     let hook = install_pre_push(&main)?;
     let hook_tracked = Command::new("git")
         .args(["ls-files", "--error-unmatch"])
@@ -157,10 +166,35 @@ pub fn init(cwd: &Path) -> Result<Initialized, Failure> {
         .output()
         .is_ok_and(|output| output.status.success());
     Ok(Initialized {
-        created_policy,
+        policy,
         hook,
         hook_tracked,
     })
+}
+
+/// Moves a tracked policy into the config directory when the repository
+/// has one and the target file doesn't exist yet, and otherwise creates the
+/// template when there's no policy file at all.
+fn set_up_policy(main: &Path) -> Result<PolicySetup, Failure> {
+    let files = Files::for_repo(&policy::config_dir()?, main)?;
+    let target = files.target().to_owned();
+    let write = |text: &str| {
+        let dir = target.parent().expect("the policy is in a directory");
+        fs::create_dir_all(dir).map_err(|err| io_error(dir, err))?;
+        fs::write(&target, text).map_err(|err| io_error(&target, err))
+    };
+    if !target.exists()
+        && let Some(text) = policy::tracked(main, TRACKED_PATH)?
+    {
+        write(&text)?;
+        return Ok(PolicySetup::Moved { path: target });
+    }
+    let existing = files.existing();
+    if existing.is_empty() {
+        write(include_str!("templates/policy.md"))?;
+        return Ok(PolicySetup::Created { path: target });
+    }
+    Ok(PolicySetup::Kept { paths: existing })
 }
 
 /// Adds or replaces Orchestral's block in the pre-push hook git runs, in
@@ -322,25 +356,31 @@ fn trust(main: &Path) -> Check {
     }
 }
 
-fn policy(cwd: &Path, main: &Path) -> Check {
-    if let Err(
-        Failure::Error(message)
-        | Failure::Refused {
-            reason: message, ..
-        },
-    ) = Policy::load(cwd)
-    {
-        return fail("policy", &message);
-    }
-    let local = fs::read_to_string(main.join(POLICY)).ok();
-    let pushed = git(main, &["show", &format!("origin/main:{POLICY}")]).ok();
-    match (local, pushed) {
-        (Some(local), Some(pushed)) if local != pushed => warn(
+fn policy(cwd: &Path) -> Check {
+    let policy = match Policy::load(cwd) {
+        Ok(policy) => policy,
+        Err(
+            Failure::Error(message)
+            | Failure::Refused {
+                reason: message, ..
+            },
+        ) => return fail("policy", &message),
+    };
+    let sources: Vec<String> = policy
+        .sources
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    let sources = sources.join(" and ");
+    if matches!(policy::tracked(cwd, TRACKED_PATH), Ok(Some(_))) {
+        return warn(
             "policy",
-            "the local policy differs from origin/main, which is the copy that's used".into(),
-        ),
-        _ => ok("policy", "valid".into()),
+            format!(
+                "valid, from {sources}; the repository's {TRACKED_PATH} isn't read, so remove it"
+            ),
+        );
     }
+    ok("policy", format!("valid, from {sources}"))
 }
 
 /// Whether the pre-push hook has Orchestral's block, and the binary it calls

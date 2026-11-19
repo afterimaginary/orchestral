@@ -5,8 +5,8 @@
 //! must be open, ready, on `main`, free of conflicts, not held, with passing
 //! CI, a passing review and every finding decided. The owner's route also
 //! needs their approval of the head commit. The supervisor's needs
-//! `supervisor_merges` on, and no change to `.orchestral/` or `.github/`,
-//! which are the owner's to review.
+//! `supervisor_merges` on, and no change to `.github/`, which is the
+//! owner's to review.
 
 use std::fmt;
 use std::path::Path;
@@ -22,7 +22,7 @@ use crate::spawn::main_checkout;
 use crate::state::{MergeRoute, State, Store};
 
 /// Paths a supervisor merge may not change.
-pub(crate) const HARD_CHECKED: [&str; 2] = [".orchestral/", ".github/"];
+pub(crate) const HARD_CHECKED: [&str; 1] = [".github/"];
 
 /// The owner's route's own condition.
 const APPROVED: &str = "approved by the owner";
@@ -194,7 +194,7 @@ pub fn evaluate(pr: &Pr, state: &State, settings: &Settings) -> MergeCheck {
                 .map(String::as_str)
                 .collect();
             add(
-                "no change to .orchestral/ or .github/",
+                "no change to .github/",
                 (!hard.is_empty()).then(|| format!("it changes {}", hard.join(", "))),
             );
         }
@@ -220,13 +220,13 @@ pub fn route(state: &State, pr: u64) -> MergeRoute {
 /// The snapshot rules out PRs that can't pass before GitHub is asked about
 /// them. A refused merge is checked again from scratch next minute. Returns
 /// lines for the log.
-pub fn merge_ready(store: &Store, gh: &Path) -> Result<Vec<String>, Failure> {
+pub fn merge_ready(store: &Store, gh: &Path, config: &Path) -> Result<Vec<String>, Failure> {
     let Some(prs) = github::open_pr_snapshot(store)? else {
         return Ok(Vec::new());
     };
     let state = store.read()?;
     let main = main_checkout(store.dir())?;
-    let settings = Policy::load(&main)?.settings;
+    let settings = Policy::load_from(config, &main)?.settings;
     let candidates: Vec<(u64, github::Pr)> = prs
         .into_iter()
         .filter(|(number, pr)| {

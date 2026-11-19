@@ -26,10 +26,10 @@ claude plugin marketplace add afterimaginary/orchestral
 ```
 
 ```bash
-claude plugin install orchestral@afterimaginary --scope project
+claude plugin install orchestral@afterimaginary --scope local
 ```
 
-Run the install from inside the project. In Claude Code Desktop, use the plugin settings while a session in that project is open: Desktop installs into the project of the session you're viewing. The first session after an install or update builds the binary, which can take a minute.
+Run the install from a terminal inside the project. Local scope enables the plugin for you in that project only, in `.claude/settings.local.json`, which git ignores, so nothing Orchestral-specific is committed to the project. Claude Code Desktop reads the same settings, so its sessions in that project get the plugin too. Avoid user scope: the plugin's event monitor would run in every session you open, and a session running it always looks busy. The first session after an install or update builds the binary, which can take a minute.
 
 To work on Orchestral itself, build a checkout and load it directly instead:
 
@@ -41,9 +41,10 @@ claude --plugin-dir /path/to/orchestral
 ## Set up a project
 
 1. Open Claude Code in the project once and accept the trust prompt. Workers can't start in an untrusted folder.
-2. In that session, ask Claude to run the plugin's `orchestral init` by its full path, `~/.claude/plugins/cache/afterimaginary/orchestral/<version>/bin/orchestral`, where `<version>` is the newest folder there. Use the full path because another `orchestral` on `PATH` could be found first, and `init` writes the path of the binary it ran into the hook. It checks `claude`, `gh`, `git` and trust, creates `.orchestral/policy.md`, and installs a pre-push hook that stops workers pushing to `main`.
-3. Edit `.orchestral/policy.md`. Set `fleet_token_budget`, the tokens the whole fleet may use in a run. Below the settings, write your rules for the project in plain words, such as "Ask me before changing auth or billing."
-4. Commit the policy and push it to `main`. Orchestral reads the policy from `origin/main`, so local edits don't count until they're pushed.
+2. In that session, ask Claude to run the plugin's `orchestral init` by its full path, `~/.claude/plugins/cache/afterimaginary/orchestral/<version>/bin/orchestral`, where `<version>` is the newest folder there. Use the full path because another `orchestral` on `PATH` could be found first, and `init` writes the path of the binary it ran into the hook. It checks `claude`, `gh`, `git` and trust, creates a policy in your config directory, and installs a pre-push hook that stops workers pushing to `main`.
+3. Edit the policy file `init` names. Set `fleet_token_budget`, the tokens the whole fleet may use in a run. Below the settings, write your rules in plain words, such as "Ask me before changing auth or billing."
+
+The policy is yours, not the project's, so it lives outside the repository, in `~/.config/orchestral` (or `$XDG_CONFIG_HOME/orchestral`), and workers can't change it from a branch. `policy.md` there applies to every repository, and `<owner>/<repo>/policy.md` to one GitHub repository, overriding the global settings one by one and adding its rules after the global ones. `orchestral policy` shows the result. A project that tracks an older `.orchestral/policy.md` gets it moved there by `init`; then remove it from the repository.
 
 A policy for a first run:
 
@@ -84,7 +85,7 @@ The orchestrator asks you only for what's yours to decide, in the orchestrator s
 
 Each command goes alone on the first line of a PR comment. An `/approve` covers the commit you saw: a new commit needs a new `/approve`. Deploys, deploy setup, paid services and new accounts always come to you, even when an issue seems to allow them.
 
-The supervisor merges a PR without your `/approve` only when the orchestrator routes it there, which needs `supervisor_merges: true` in the policy and a change you wouldn't need to see, such as an internal refactor. Changes to `.orchestral/` or `.github/` always come to you. When the repository has a `CONTRIBUTING.md`, `supervisor_merges` defaults to off.
+The supervisor merges a PR without your `/approve` only when the orchestrator routes it there, which needs `supervisor_merges: true` in the policy and a change you wouldn't need to see, such as an internal refactor. Changes to `.github/` always come to you. When the repository has a `CONTRIBUTING.md`, `supervisor_merges` defaults to off.
 
 ## Keep an eye on it
 

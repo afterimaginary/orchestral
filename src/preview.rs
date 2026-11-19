@@ -196,7 +196,7 @@ pub fn try_pr(cwd: &Path, pr: u64) -> Result<Tried, Failure> {
     let settings = Policy::load(&main)?.settings;
     let preview = settings.preview.ok_or_else(|| Failure::Refused {
         reason: "the policy has no `preview`".into(),
-        fix: "add `preview` to .orchestral/policy.md".into(),
+        fix: "add `preview` to the policy; `orchestral policy` shows its files".into(),
     })?;
     let view: PrView = gh_json(
         Path::new("gh"),
@@ -356,13 +356,13 @@ pub fn wanted(state: &State) -> bool {
 /// Brings the servers in line with the desired state. Run by the supervisor
 /// on every tick; returns lines for its log. A preview that can't be
 /// handled is logged, and the others carry on.
-pub fn reconcile(store: &Store, tools: &Tools) -> Result<Vec<String>, Failure> {
+pub fn reconcile(store: &Store, tools: &Tools, config: &Path) -> Result<Vec<String>, Failure> {
     let state = store.read()?;
     if state.previews.is_empty() {
         return Ok(Vec::new());
     }
     let main = main_checkout(store.dir())?;
-    let preview = Policy::load(&main)?.settings.preview;
+    let preview = Policy::load_from(config, &main)?.settings.preview;
     let run = match preview.as_ref().map(|preview| &preview.start) {
         Some(PreviewStart::Run(run)) => Some(run.clone()),
         _ => None,
