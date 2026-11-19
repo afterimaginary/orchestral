@@ -1,28 +1,36 @@
-//! The policy file, `.orchestral/policy.md`: settings the binary reads, in
-//! YAML frontmatter, and rules Claude reads, as the prose after it.
+//! The policy: settings the binary reads, in YAML frontmatter, and rules
+//! Claude reads, as the prose after it. It lives in the operator's config
+//! directory, not the repository (ADR-0013): a global `policy.md`, layered
+//! under a per-repository `<owner>/<repo>/policy.md`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::git::git;
 use crate::outcome::Failure;
 
-pub const PATH: &str = ".orchestral/policy.md";
+/// Where a repository kept its policy before it moved to the config
+/// directory. Only read to move it, and to say it needs moving.
+pub const TRACKED_PATH: &str = ".orchestral/policy.md";
 
-/// The branch the policy is read from, so a worker can't change its own
-/// limits from a branch.
+const FILE: &str = "policy.md";
+
+/// The branch repository files are read from, so a worker can't change them
+/// from a branch.
 const MAIN: &str = "origin/main";
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Policy {
     pub settings: Settings,
-    /// The prose after the frontmatter.
+    /// The prose after the frontmatter, global rules first.
     pub rules: String,
+    /// The files it was read from, global first.
+    pub sources: Vec<PathBuf>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Settings {
     pub workers: u32,
     pub plan_limit_percent: u8,
@@ -33,11 +41,13 @@ pub struct Settings {
     pub supervisor_merges: bool,
     pub design_variants: u32,
     pub nag_minutes: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<Preview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub review_command: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MergeMethod {
     Squash,
@@ -45,15 +55,18 @@ pub enum MergeMethod {
     Rebase,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Preview {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,
+    #[serde(flatten)]
     pub start: PreviewStart,
     pub max_running: u32,
 }
 
 /// How a PR's preview is reached.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PreviewStart {
     /// A command the supervisor runs.
     Run(String),
@@ -87,25 +100,194 @@ struct PreviewFrontmatter {
     max_running: Option<u32>,
 }
 
-impl Policy {
-    /// Reads the policy for the repository containing `cwd`, from `origin/main`,
-    /// or from the main checkout until `origin/main` exists.
-    pub fn load(cwd: &Path) -> Result<Policy, Failure> {
-        let source = Source::find(cwd)?;
-        let text = source.read(PATH)?.ok_or_else(|| {
-            Failure::Error(format!(
-                "there's no {PATH} in {}; add one",
-                source.describe()
-            ))
-        })?;
-        let has_contributing = source.read("CONTRIBUTING.md")?.is_some();
-        Policy::parse(&text, has_contributing)
+/// One policy file, checked on its own.
+struct Layer {
+    front: Frontmatter,
+    preview: Option<Preview>,
+    rules: String,
+}
+
+/// Where a repository's policy files go.
+#[derive(Debug, Serialize)]
+pub struct Files {
+    /// `policy.md`, for every repository.
+    pub global: PathBuf,
+    /// `<owner>/<repo>/policy.md`, for the GitHub repository `origin` points
+    /// at. `None` when `origin` isn't on GitHub.
+    pub repo: Option<PathBuf>,
+}
+
+impl Files {
+    /// The policy files for the repository containing `cwd`, in `config`.
+    pub fn for_repo(config: &Path, cwd: &Path) -> Result<Files, Failure> {
+        // The URL as configured, before any `insteadOf` rewrite.
+        let output = Command::new("git")
+            .args(["config", "--get", "remote.origin.url"])
+            .current_dir(cwd)
+            .output()
+            .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
+        let url = String::from_utf8_lossy(&output.stdout);
+        Ok(Files {
+            global: config.join(FILE),
+            repo: github_repo(url.trim()).map(|repo| config.join(repo).join(FILE)),
+        })
     }
 
-    /// Parses a policy file. `has_contributing` sets the default for
+    /// The per-repository file when there is one, or else the global one:
+    /// where `init` puts a new or moved policy.
+    pub fn target(&self) -> &Path {
+        self.repo.as_deref().unwrap_or(&self.global)
+    }
+
+    /// The files that exist, global first.
+    pub fn existing(&self) -> Vec<PathBuf> {
+        std::iter::once(&self.global)
+            .chain(&self.repo)
+            .filter(|path| path.is_file())
+            .cloned()
+            .collect()
+    }
+}
+
+/// Orchestral's config directory: `$XDG_CONFIG_HOME/orchestral`, or
+/// `~/.config/orchestral` when that's unset.
+pub fn config_dir() -> Result<PathBuf, Failure> {
+    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|dir| !dir.is_empty()) {
+        return Ok(PathBuf::from(dir).join("orchestral"));
+    }
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .ok_or_else(|| Failure::Error("neither XDG_CONFIG_HOME nor HOME is set".into()))?;
+    Ok(PathBuf::from(home).join(".config/orchestral"))
+}
+
+/// `owner/repo`, lowercased, from a GitHub remote URL in HTTPS, SSH or
+/// scp-like form.
+pub fn github_repo(url: &str) -> Option<String> {
+    let path = [
+        "https://github.com/",
+        "http://github.com/",
+        "ssh://git@github.com/",
+        "git@github.com:",
+    ]
+    .iter()
+    .find_map(|prefix| url.strip_prefix(prefix))?;
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    (valid(owner) && valid(repo)).then(|| format!("{owner}/{repo}").to_lowercase())
+}
+
+/// The repository's own file at `path`, from `origin/main`, or from the main
+/// checkout until `origin/main` exists.
+pub fn tracked(cwd: &Path, path: &str) -> Result<Option<String>, Failure> {
+    Source::find(cwd)?.read(path)
+}
+
+impl Policy {
+    /// Reads the policy for the repository containing `cwd` from Orchestral's
+    /// config directory.
+    pub fn load(cwd: &Path) -> Result<Policy, Failure> {
+        Policy::load_from(&config_dir()?, cwd)
+    }
+
+    /// Reads the policy for the repository containing `cwd` from `config`.
+    pub fn load_from(config: &Path, cwd: &Path) -> Result<Policy, Failure> {
+        let files = Files::for_repo(config, cwd)?;
+        let sources = files.existing();
+        if sources.is_empty() {
+            let target = files.target().display();
+            return Err(if tracked(cwd, TRACKED_PATH)?.is_some() {
+                Failure::Error(format!(
+                    "the policy is still in the repository's {TRACKED_PATH}, which isn't read; run `orchestral init` to move it to {target}"
+                ))
+            } else {
+                Failure::Error(format!(
+                    "there's no policy; run `orchestral init` to create {target}"
+                ))
+            });
+        }
+        let mut texts = Vec::new();
+        for path in &sources {
+            let text = std::fs::read_to_string(path)
+                .map_err(|err| Failure::Error(format!("{}: {err}", path.display())))?;
+            texts.push((path.display().to_string(), text));
+        }
+        let has_contributing = tracked(cwd, "CONTRIBUTING.md")?.is_some();
+        let layers: Vec<(&str, &str)> = texts
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect();
+        let mut policy = Policy::layered(&layers, has_contributing)?;
+        policy.sources = sources;
+        Ok(policy)
+    }
+
+    /// Parses one policy file. `has_contributing` sets the default for
     /// `supervisor_merges`.
     pub fn parse(text: &str, has_contributing: bool) -> Result<Policy, Failure> {
-        let invalid = |message: String| Failure::Error(format!("{PATH} is invalid: {message}"));
+        Policy::layered(&[("the policy", text)], has_contributing)
+    }
+
+    /// Parses policy files, each named for its errors, with later ones
+    /// overriding earlier ones' settings key by key and every file's rules
+    /// applying in order.
+    fn layered(files: &[(&str, &str)], has_contributing: bool) -> Result<Policy, Failure> {
+        let mut layers = Vec::new();
+        for (name, text) in files {
+            layers.push(Layer::parse(name, text)?);
+        }
+        let merged = layers
+            .into_iter()
+            .reduce(|base, top| top.over(base))
+            .expect("a policy has at least one file");
+        let name = match files {
+            [(name, _)] => *name,
+            _ => "the policy",
+        };
+        let invalid = |message: &str| Failure::Error(format!("{name} is invalid: {message}"));
+        let front = merged.front;
+        let fleet_token_budget = match front.fleet_token_budget {
+            Some(budget) if budget > 0 => budget,
+            Some(_) => return Err(invalid("`fleet_token_budget` has to be above 0")),
+            None => return Err(invalid("`fleet_token_budget` is required")),
+        };
+        let settings = Settings {
+            workers: front.workers.unwrap_or(3),
+            plan_limit_percent: front.plan_limit_percent.unwrap_or(85),
+            fleet_token_budget,
+            default_model: front
+                .default_model
+                .unwrap_or_else(|| "claude-opus-5-5".into()),
+            default_effort: front.default_effort.unwrap_or_else(|| "high".into()),
+            merge_method: front.merge_method.unwrap_or(MergeMethod::Squash),
+            supervisor_merges: front.supervisor_merges.unwrap_or(!has_contributing),
+            design_variants: front.design_variants.unwrap_or(4),
+            nag_minutes: front
+                .nag_minutes
+                .unwrap_or_else(|| vec![15, 30, 60, 120, 240]),
+            preview: merged.preview,
+            review_command: front.review_command,
+        };
+        Ok(Policy {
+            settings,
+            rules: merged.rules,
+            sources: Vec::new(),
+        })
+    }
+}
+
+impl Layer {
+    fn parse(name: &str, text: &str) -> Result<Layer, Failure> {
+        let invalid = |message: String| Failure::Error(format!("{name} is invalid: {message}"));
         // Editors may add a byte order mark or Windows line endings.
         let text = text
             .strip_prefix('\u{feff}')
@@ -114,16 +296,11 @@ impl Policy {
         let (yaml, rules) = split_frontmatter(&text).ok_or_else(|| {
             invalid("it has to start with frontmatter between `---` lines".into())
         })?;
-        let front: Frontmatter =
+        let mut front: Frontmatter =
             yaml_serde::from_str(yaml).map_err(|err| invalid(err.to_string()))?;
-
-        let fleet_token_budget = match front.fleet_token_budget {
-            Some(budget) if budget > 0 => budget,
-            Some(_) => return Err(invalid("`fleet_token_budget` has to be above 0".into())),
-            None => return Err(invalid("`fleet_token_budget` is required".into())),
-        };
         let preview = front
             .preview
+            .take()
             .map(|preview| {
                 let start = match (preview.run, preview.url) {
                     (Some(run), None) => PreviewStart::Run(run),
@@ -140,28 +317,56 @@ impl Policy {
                 })
             })
             .transpose()?;
-
-        let settings = Settings {
-            workers: front.workers.unwrap_or(3),
-            plan_limit_percent: front.plan_limit_percent.unwrap_or(85),
-            fleet_token_budget,
-            default_model: front
-                .default_model
-                .unwrap_or_else(|| "claude-opus-5-5".into()),
-            default_effort: front.default_effort.unwrap_or_else(|| "high".into()),
-            merge_method: front.merge_method.unwrap_or(MergeMethod::Squash),
-            supervisor_merges: front.supervisor_merges.unwrap_or(!has_contributing),
-            design_variants: front.design_variants.unwrap_or(4),
-            nag_minutes: front
-                .nag_minutes
-                .unwrap_or_else(|| vec![15, 30, 60, 120, 240]),
+        Ok(Layer {
+            front,
             preview,
-            review_command: front.review_command,
-        };
-        Ok(Policy {
-            settings,
             rules: rules.trim().to_owned(),
         })
+    }
+
+    /// This layer's settings over `base`'s, key by key, with `preview` as a
+    /// whole, and `base`'s rules before this one's.
+    fn over(self, base: Layer) -> Layer {
+        let (top, base_front) = (self.front, base.front);
+        let rules = [base.rules, self.rules]
+            .into_iter()
+            .filter(|rules| !rules.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Layer {
+            front: Frontmatter {
+                workers: top.workers.or(base_front.workers),
+                plan_limit_percent: top.plan_limit_percent.or(base_front.plan_limit_percent),
+                fleet_token_budget: top.fleet_token_budget.or(base_front.fleet_token_budget),
+                default_model: top.default_model.or(base_front.default_model),
+                default_effort: top.default_effort.or(base_front.default_effort),
+                merge_method: top.merge_method.or(base_front.merge_method),
+                supervisor_merges: top.supervisor_merges.or(base_front.supervisor_merges),
+                design_variants: top.design_variants.or(base_front.design_variants),
+                nag_minutes: top.nag_minutes.or(base_front.nag_minutes),
+                preview: None,
+                review_command: top.review_command.or(base_front.review_command),
+            },
+            preview: self.preview.or(base.preview),
+            rules,
+        }
+    }
+}
+
+impl std::fmt::Display for Policy {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let sources: Vec<String> = self
+            .sources
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        writeln!(f, "From: {}", sources.join(", "))?;
+        let yaml = yaml_serde::to_string(&self.settings).map_err(|_| std::fmt::Error)?;
+        write!(f, "---\n{yaml}---")?;
+        if !self.rules.is_empty() {
+            write!(f, "\n{}", self.rules)?;
+        }
+        Ok(())
     }
 }
 
@@ -178,7 +383,7 @@ fn split_frontmatter(text: &str) -> Option<(&str, &str)> {
     None
 }
 
-/// Where the policy is read from.
+/// Where repository files are read from.
 enum Source {
     /// A commit, read through `git show`.
     Branch { repo: PathBuf },
@@ -232,17 +437,8 @@ impl Source {
             },
         }
     }
-
-    fn describe(&self) -> String {
-        match self {
-            Source::Branch { .. } => MAIN.to_owned(),
-            Source::Checkout { dir } => dir.display().to_string(),
-        }
-    }
 }
 
-/// Runs git in `dir` and returns its stdout. A non-zero exit is an error
-/// carrying git's message.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,5 +632,87 @@ review_command: /refine
         let error = Policy::parse("Just rules.\n", false).unwrap_err();
 
         assert!(matches!(error, Failure::Error(message) if message.contains("frontmatter")));
+    }
+
+    #[test]
+    fn a_repository_file_overrides_the_global_one_key_by_key() {
+        let global = "---\nfleet_token_budget: 1000\nworkers: 2\npreview:\n  run: pnpm dev\n---\nAsk me first.\n";
+        let repo = "---\nworkers: 5\npreview:\n  url: https://pr-{pr}.example.com\n---\nKeep the shim small.\n";
+
+        let policy = Policy::layered(&[("global", global), ("repo", repo)], false).unwrap();
+
+        assert_eq!(policy.settings.fleet_token_budget, 1000);
+        assert_eq!(policy.settings.workers, 5);
+        assert_eq!(
+            policy.settings.preview.unwrap().start,
+            PreviewStart::Url("https://pr-{pr}.example.com".into())
+        );
+        assert_eq!(policy.rules, "Ask me first.\n\nKeep the shim small.");
+    }
+
+    #[test]
+    fn either_file_alone_is_enough_but_the_merged_result_needs_a_budget() {
+        let repo_only = "---\nfleet_token_budget: 7\n---\n";
+        assert_eq!(
+            Policy::layered(&[("repo", repo_only)], false)
+                .unwrap()
+                .settings
+                .fleet_token_budget,
+            7
+        );
+
+        let Err(Failure::Error(message)) = Policy::layered(
+            &[
+                ("global", "---\nworkers: 1\n---\n"),
+                ("repo", "---\nworkers: 2\n---\n"),
+            ],
+            false,
+        ) else {
+            panic!("expected an error");
+        };
+        assert_eq!(
+            message,
+            "the policy is invalid: `fleet_token_budget` is required"
+        );
+    }
+
+    #[test]
+    fn each_file_is_checked_on_its_own() {
+        let Err(Failure::Error(message)) = Policy::layered(
+            &[
+                ("/c/policy.md", "---\nfleet_token_budget: 1\n---\n"),
+                ("/c/a/b/policy.md", "---\nworker: 2\n---\n"),
+            ],
+            false,
+        ) else {
+            panic!("expected an error");
+        };
+        assert!(
+            message.starts_with("/c/a/b/policy.md is invalid: unknown field `worker`"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn github_remotes_give_their_repository() {
+        for url in [
+            "https://github.com/Acme/App.git",
+            "https://github.com/acme/app",
+            "https://github.com/acme/app/",
+            "git@github.com:acme/app.git",
+            "ssh://git@github.com/acme/app.git",
+        ] {
+            assert_eq!(github_repo(url).as_deref(), Some("acme/app"), "{url}");
+        }
+        for url in [
+            "",
+            "/tmp/origin.git",
+            "https://gitlab.com/acme/app.git",
+            "https://github.com/acme",
+            "https://github.com/acme/app/extra",
+            "https://github.com/../app",
+        ] {
+            assert_eq!(github_repo(url), None, "{url}");
+        }
     }
 }

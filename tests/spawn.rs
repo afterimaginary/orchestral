@@ -24,8 +24,8 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(output.status.success(), "git {args:?}: {output:?}");
 }
 
-/// A bare origin whose `main` has a policy, a clone of it named `app`, and a
-/// Claude config directory.
+/// A bare origin with one commit on `main`, a clone of it named `app`, a
+/// policy, and a Claude config directory.
 struct Repo {
     dir: TempDir,
     main: PathBuf,
@@ -39,18 +39,16 @@ impl Repo {
         git(&root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
         git(&root, &["clone", "-q", "origin.git", "app"]);
         let main = root.join("app");
-        fs::create_dir(main.join(".orchestral")).unwrap();
-        fs::write(
-            main.join(".orchestral/policy.md"),
-            "---\nfleet_token_budget: 1000\ndefault_model: claude-sonnet-5-5\ndefault_effort: medium\n---\nRules.\n",
-        )
-        .unwrap();
+        fs::write(main.join("README.md"), "An app.\n").unwrap();
         git(&main, &["add", "."]);
-        git(&main, &["commit", "-q", "-m", "policy"]);
+        git(&main, &["commit", "-q", "-m", "start"]);
         git(&main, &["push", "-q", "origin", "main"]);
         fs::create_dir(root.join("config")).unwrap();
 
         let stubs = Stubs::new();
+        stubs.write_policy(
+            "---\nfleet_token_budget: 1000\ndefault_model: claude-sonnet-5-5\ndefault_effort: medium\n---\nRules.\n",
+        );
         stubs.respond(
             "claude",
             &["plugin", "list", "--json"],
@@ -117,7 +115,7 @@ fn starts_a_worker_in_its_own_worktree() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let worktree = repo.main.join(".claude/worktrees/issue-12");
     assert!(stdout(&output).starts_with("Started issue-12 as app-issue-12 (job 558b988a)"));
-    assert!(worktree.join(".orchestral/policy.md").exists());
+    assert!(worktree.join("README.md").exists());
 
     let settings_path = repo.store().dir().join("workers/issue-12/settings.json");
     let prompt_path = repo.store().dir().join("workers/issue-12/prompt.md");
@@ -251,7 +249,13 @@ fn the_worker_gets_its_own_settings_and_prompt() {
             format!("Bash('{}' review *)", env!("CARGO_BIN_EXE_orchestral")),
             // Its boot check before the PR reaches the owner.
             format!("Bash('{}' try --check)", env!("CARGO_BIN_EXE_orchestral")),
+            format!("Bash('{}' policy)", env!("CARGO_BIN_EXE_orchestral")),
         ])
+    );
+    // It can't edit the policy (ADR-0013).
+    assert_eq!(
+        settings["permissions"]["deny"],
+        json!([format!("Edit(/{}/**)", repo.stubs.config().display())])
     );
     let hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         .as_str()
@@ -417,15 +421,11 @@ impl Repo {
             .unwrap()
     }
 
-    /// Replaces the policy's settings on `origin/main`, keeping the budget.
+    /// Replaces the policy's settings, keeping the budget.
     fn policy(&self, settings: &str) {
-        fs::write(
-            self.main.join(".orchestral/policy.md"),
-            format!("---\nfleet_token_budget: 1000\n{settings}---\nRules.\n"),
-        )
-        .unwrap();
-        git(&self.main, &["commit", "-q", "-am", "policy"]);
-        git(&self.main, &["push", "-q", "origin", "main"]);
+        self.stubs.write_policy(&format!(
+            "---\nfleet_token_budget: 1000\n{settings}---\nRules.\n"
+        ));
     }
 
     fn usage(&self, output: &str) {
@@ -602,7 +602,7 @@ fn a_run_over_its_fleet_budget_is_refused() {
     assert_refused(
         &output,
         "the fleet has used about 3011 tokens (estimate), and fleet_token_budget is 1000",
-        "ask the owner to raise fleet_token_budget in .orchestral/policy.md",
+        "ask the owner to raise fleet_token_budget in the policy",
     );
     assert!(repo.bg_calls().is_empty());
 }
@@ -610,13 +610,7 @@ fn a_run_over_its_fleet_budget_is_refused() {
 #[test]
 fn a_worker_s_review_subagent_gets_the_policy_s_review_command() {
     let repo = Repo::new();
-    fs::write(
-        repo.main.join(".orchestral/policy.md"),
-        "---\nfleet_token_budget: 1000\nreview_command: Run /refine on the PR.\n---\nRules.\n",
-    )
-    .unwrap();
-    git(&repo.main, &["commit", "-q", "-am", "review command"]);
-    git(&repo.main, &["push", "-q", "origin", "main"]);
+    repo.policy("review_command: Run /refine on the PR.\n");
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
@@ -629,13 +623,7 @@ fn a_worker_s_review_subagent_gets_the_policy_s_review_command() {
 #[test]
 fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
     let repo = Repo::new();
-    fs::write(
-        repo.main.join(".orchestral/policy.md"),
-        "---\nfleet_token_budget: 1000\nreview_command: Run /refine on the PR.\n---\nRules.\n",
-    )
-    .unwrap();
-    git(&repo.main, &["commit", "-q", "-am", "review command"]);
-    git(&repo.main, &["push", "-q", "origin", "main"]);
+    repo.policy("review_command: Run /refine on the PR.\n");
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&[
@@ -751,5 +739,14 @@ fn worker_settings_carry_no_credentials_from_the_orchestrator() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(keys, ["ORCHESTRAL_REPO", "ORCHESTRAL_WORKER", "PATH"]);
+    // The config directory comes through, so the worker reads the same policy.
+    assert_eq!(
+        keys,
+        [
+            "ORCHESTRAL_REPO",
+            "ORCHESTRAL_WORKER",
+            "PATH",
+            "XDG_CONFIG_HOME"
+        ]
+    );
 }

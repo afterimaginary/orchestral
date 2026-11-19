@@ -25,7 +25,7 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(output.status.success(), "git {args:?}: {output:?}");
 }
 
-/// A repository with a policy on `origin/main`, two recorded workers, and a
+/// A repository with a policy, two recorded workers, and a
 /// Claude config directory holding the first worker's transcript.
 struct Fleet {
     _dir: TempDir,
@@ -41,14 +41,7 @@ impl Fleet {
         git(&root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
         git(&root, &["clone", "-q", "origin.git", "app"]);
         let main = root.join("app");
-        fs::create_dir(main.join(".orchestral")).unwrap();
-        fs::write(
-            main.join(".orchestral/policy.md"),
-            "---\nfleet_token_budget: 1000\nworkers: 3\n---\nRules.\n",
-        )
-        .unwrap();
-        git(&main, &["add", "."]);
-        git(&main, &["commit", "-q", "-m", "policy"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
         git(&main, &["push", "-q", "origin", "main"]);
 
         let config = root.join("config");
@@ -81,6 +74,8 @@ impl Fleet {
             review_of: None,
             created_at: "2026-11-02T00:00:00Z".into(),
         };
+        let stubs = Stubs::new();
+        stubs.write_policy("---\nfleet_token_budget: 1000\nworkers: 3\n---\nRules.\n");
         Store::for_repo(&main)
             .unwrap()
             .update(|state| {
@@ -98,7 +93,7 @@ impl Fleet {
             _dir: dir,
             main,
             config,
-            stubs: Stubs::new(),
+            stubs,
         }
     }
 

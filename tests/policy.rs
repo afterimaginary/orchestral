@@ -16,21 +16,18 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(output.status.success(), "git {args:?}: {output:?}");
 }
 
-fn write_policy(checkout: &Path, workers: u32) {
-    fs::create_dir_all(checkout.join(".orchestral")).unwrap();
+fn write(path: &Path, workers: u32) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
-        checkout.join(".orchestral/policy.md"),
-        format!("---\nworkers: {workers}\nfleet_token_budget: 1000\n---\nRules.\n"),
+        path,
+        format!("---\nworkers: {workers}\nfleet_token_budget: 1000\n---\nRules {workers}.\n"),
     )
     .unwrap();
 }
 
-fn workers(cwd: &Path) -> u32 {
-    Policy::load(cwd).unwrap().settings.workers
-}
-
-/// A bare `origin` and a clone of it, with one commit on `main` locally.
-fn repo() -> (TempDir, PathBuf) {
+/// A bare `origin`, a clone of it with one commit on `main` locally, and an
+/// empty config directory.
+fn repo() -> (TempDir, PathBuf, PathBuf) {
     let dir = TempDir::new().unwrap();
     let origin = dir.path().join("origin.git");
     let main = dir.path().join("main");
@@ -43,27 +40,19 @@ fn repo() -> (TempDir, PathBuf) {
         &["clone", "-q", origin.to_str().unwrap(), "main"],
     );
     git(&main, &["commit", "-q", "--allow-empty", "-m", "start"]);
-    (dir, main)
+    let config = dir.path().join("config/orchestral");
+    (dir, main, config)
+}
+
+fn load(config: &Path, cwd: &Path) -> Policy {
+    Policy::load_from(config, cwd).unwrap()
 }
 
 #[test]
-fn before_the_first_push_the_main_checkout_is_read() {
-    let (_dir, main) = repo();
-    write_policy(&main, 1);
-    fs::write(main.join("CONTRIBUTING.md"), "How to contribute.\n").unwrap();
-    git(&main, &["worktree", "add", "-q", "../feature"]);
-    let feature = main.join("../feature");
-    write_policy(&feature, 5);
-
-    assert_eq!(workers(&main), 1);
-    assert_eq!(workers(&feature), 1);
-    assert!(!Policy::load(&feature).unwrap().settings.supervisor_merges);
-}
-
-#[test]
-fn after_a_push_origin_main_wins_over_every_local_copy() {
-    let (_dir, main) = repo();
-    write_policy(&main, 2);
+fn the_global_policy_applies_to_every_checkout_and_tracked_copies_are_ignored() {
+    let (_dir, main, config) = repo();
+    write(&config.join("policy.md"), 2);
+    write(&main.join(".orchestral/policy.md"), 9);
     git(&main, &["add", "."]);
     git(&main, &["commit", "-q", "-m", "policy"]);
     git(&main, &["push", "-q", "origin", "main"]);
@@ -72,49 +61,77 @@ fn after_a_push_origin_main_wins_over_every_local_copy() {
         &["worktree", "add", "-q", "-b", "feature", "../feature"],
     );
     let feature = main.join("../feature");
-    write_policy(&main, 9);
-    write_policy(&feature, 7);
-    git(&feature, &["commit", "-q", "-am", "raise my own limit"]);
+    write(&feature.join(".orchestral/policy.md"), 7);
 
-    assert_eq!(workers(&main), 2);
-    assert_eq!(workers(&feature), 2);
+    assert_eq!(load(&config, &main).settings.workers, 2);
+    assert_eq!(load(&config, &feature).settings.workers, 2);
+    assert_eq!(load(&config, &feature).sources, [config.join("policy.md")]);
+}
+
+#[test]
+fn a_github_origin_adds_its_repository_layer() {
+    let (_dir, main, config) = repo();
+    git(
+        &main,
+        &["remote", "set-url", "origin", "git@github.com:Acme/App.git"],
+    );
+    write(&config.join("policy.md"), 2);
+    write(&config.join("acme/app/policy.md"), 4);
+    write(&config.join("acme/other/policy.md"), 6);
+
+    let policy = load(&config, &main);
+
+    assert_eq!(policy.settings.workers, 4);
+    assert_eq!(policy.rules, "Rules 2.\n\nRules 4.");
+    assert_eq!(
+        policy.sources,
+        [config.join("policy.md"), config.join("acme/app/policy.md")]
+    );
+}
+
+#[test]
+fn a_contributing_file_turns_supervisor_merges_off_before_the_first_push() {
+    let (_dir, main, config) = repo();
+    write(&config.join("policy.md"), 1);
+    fs::write(main.join("CONTRIBUTING.md"), "How to contribute.\n").unwrap();
+
+    assert!(!load(&config, &main).settings.supervisor_merges);
 }
 
 #[test]
 fn a_pushed_contributing_file_turns_supervisor_merges_off() {
-    let (_dir, main) = repo();
-    write_policy(&main, 1);
+    let (_dir, main, config) = repo();
+    write(&config.join("policy.md"), 1);
     fs::write(main.join("CONTRIBUTING.md"), "How to contribute.\n").unwrap();
     git(&main, &["add", "."]);
-    git(&main, &["commit", "-q", "-m", "policy"]);
+    git(&main, &["commit", "-q", "-m", "contributing"]);
     git(&main, &["push", "-q", "origin", "main"]);
 
-    assert!(!Policy::load(&main).unwrap().settings.supervisor_merges);
+    assert!(!load(&config, &main).settings.supervisor_merges);
 }
 
 #[test]
 fn a_contributing_file_only_in_a_checkout_is_ignored_after_a_push() {
-    let (_dir, main) = repo();
-    write_policy(&main, 1);
-    git(&main, &["add", "."]);
-    git(&main, &["commit", "-q", "-m", "policy"]);
+    let (_dir, main, config) = repo();
+    write(&config.join("policy.md"), 1);
     git(&main, &["push", "-q", "origin", "main"]);
     fs::write(main.join("CONTRIBUTING.md"), "How to contribute.\n").unwrap();
 
-    assert!(Policy::load(&main).unwrap().settings.supervisor_merges);
+    assert!(load(&config, &main).settings.supervisor_merges);
 }
 
 #[test]
-fn origin_main_without_a_policy_is_an_error() {
-    let (_dir, main) = repo();
-    git(&main, &["push", "-q", "origin", "main"]);
-    write_policy(&main, 1);
+fn no_policy_is_an_error_naming_where_to_create_one() {
+    let (_dir, main, config) = repo();
 
-    let Err(Failure::Error(message)) = Policy::load(&main) else {
+    let Err(Failure::Error(message)) = Policy::load_from(&config, &main) else {
         panic!("expected an error");
     };
     assert_eq!(
         message,
-        "there's no .orchestral/policy.md in origin/main; add one"
+        format!(
+            "there's no policy; run `orchestral init` to create {}",
+            config.join("policy.md").display()
+        )
     );
 }

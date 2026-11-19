@@ -90,7 +90,7 @@ pub fn check_budget(used: &Estimate, settings: &Settings) -> Result<(), Failure>
             "the fleet has used {used}, and fleet_token_budget is {}",
             settings.fleet_token_budget
         ),
-        fix: "ask the owner to raise fleet_token_budget in .orchestral/policy.md".into(),
+        fix: "ask the owner to raise fleet_token_budget in the policy".into(),
     })
 }
 

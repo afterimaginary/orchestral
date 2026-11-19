@@ -214,6 +214,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Print the policy in effect for this repository, and its files.
+    Policy {
+        /// Print JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check tools, auth, trust and the policy before a run.
     Doctor {
         /// Print JSON instead of text.
@@ -376,6 +382,9 @@ fn run(command: Command) -> Result<(), Failure> {
             outcome::print(&claim::resolve(&current_dir()?, &name)?, json)
         }
         Command::Init { json } => outcome::print(&setup::init(&current_dir()?)?, json),
+        Command::Policy { json } => {
+            outcome::print(&orchestral::policy::Policy::load(&current_dir()?)?, json)
+        }
         Command::Doctor { json } => {
             let report = setup::doctor(&current_dir()?);
             outcome::print(&report, json)?;

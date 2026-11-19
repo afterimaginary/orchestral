@@ -49,12 +49,26 @@ fn text(output: &Output) -> String {
         .to_owned()
 }
 
+/// Runs orchestral with its own config directory, so a run never reads or
+/// writes the operator's policy. Workers get it through their settings.
 fn orchestral(cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_orchestral"))
         .args(args)
         .current_dir(cwd)
+        .env("XDG_CONFIG_HOME", config_home())
         .output()
         .unwrap()
+}
+
+fn config_home() -> PathBuf {
+    local_root().join("config")
+}
+
+/// Writes the global policy in the runners' config directory.
+fn write_policy(text: &str) {
+    let path = config_home().join("orchestral/policy.md");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
 }
 
 fn orchestral_ok(cwd: &Path, args: &[&str]) -> String {
@@ -206,14 +220,9 @@ fn local_runner() {
     }
     git(&root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
     git(&root, &["clone", "-q", "origin.git", "repo"]);
-    fs::create_dir(repo.join(".orchestral")).unwrap();
-    fs::write(
-        repo.join(".orchestral/policy.md"),
-        format!(
-            "---\nfleet_token_budget: 5000000\nworkers: 2\ndefault_model: {MODEL}\ndefault_effort: low\n---\nKeep changes small.\n"
-        ),
-    )
-    .unwrap();
+    write_policy(&format!(
+        "---\nfleet_token_budget: 5000000\nworkers: 2\ndefault_model: {MODEL}\ndefault_effort: low\n---\nKeep changes small.\n"
+    ));
     fs::write(repo.join("README.md"), "# e2e\n").unwrap();
     git(&repo, &["add", "."]);
     git(
@@ -356,6 +365,9 @@ fn sandbox_runner() {
         "refused: live workers in the sandbox: {live:?}"
     );
     git(&clone, &["pull", "-q", "--ff-only"]);
+    write_policy(&format!(
+        "---\nfleet_token_budget: 3000000\nworkers: 2\ndefault_model: {MODEL}\ndefault_effort: low\ndesign_variants: 2\n---\nThis is a sandbox for testing Orchestral. Keep every change small.\n"
+    ));
 
     let stamp = Timestamp::now().strftime("%Y%m%d%H%M%S").to_string();
     let name = format!("sbx-{}", &stamp[8..]);

@@ -170,18 +170,13 @@ impl Repo {
     fn escalated(issue: serde_json::Value) -> Self {
         let dir = TempDir::new().unwrap();
         let main = dir.path().join("app");
-        std::fs::create_dir_all(main.join(".orchestral")).unwrap();
+        std::fs::create_dir_all(&main).unwrap();
         let status = Command::new("git")
             .args(["init", "-q"])
             .current_dir(&main)
             .status()
             .unwrap();
         assert!(status.success());
-        std::fs::write(
-            main.join(".orchestral/policy.md"),
-            "---\nfleet_token_budget: 1000\nnag_minutes: [15, 30]\n---\n",
-        )
-        .unwrap();
         let store = Store::for_repo(&main).unwrap();
         store
             .update(|state| {
@@ -201,6 +196,7 @@ impl Repo {
         )
         .unwrap();
         let stubs = Stubs::new();
+        stubs.write_policy("---\nfleet_token_budget: 1000\nnag_minutes: [15, 30]\n---\n");
         stubs.respond("gh", &["issue", "view", "12"], &issue.to_string(), 0);
         stubs.respond("gh", &["api", "user"], "owner\n", 0);
         stubs.respond(
@@ -221,6 +217,7 @@ impl Repo {
             &self.store,
             &self.tool("claude"),
             &self.tool("gh"),
+            &self.stubs.config(),
             at(minutes),
         )
         .unwrap()
@@ -298,6 +295,7 @@ fn a_failed_launch_is_tried_again_the_next_minute() {
         &repo.store,
         &failing.dir().join("claude"),
         &repo.tool("gh"),
+        &repo.stubs.config(),
         at(15),
     )
     .unwrap();
@@ -397,6 +395,7 @@ fn a_launch_without_a_job_id_still_counts_as_sent() {
         &repo.store,
         &quiet.dir().join("claude"),
         &repo.tool("gh"),
+        &repo.stubs.config(),
         at(15),
     )
     .unwrap();

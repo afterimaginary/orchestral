@@ -27,6 +27,8 @@ const RECORD: char = '\u{1e}';
 pub struct Stubs {
     dir: TempDir,
     rules: Cell<usize>,
+    /// `XDG_CONFIG_HOME` for the commands it runs.
+    config_home: PathBuf,
 }
 
 impl Stubs {
@@ -40,9 +42,11 @@ impl Stubs {
         }
         fs::create_dir(dir.path().join("calls")).unwrap();
         fs::create_dir(dir.path().join("rules")).unwrap();
+        let config_home = dir.path().join("config");
         Stubs {
             dir,
             rules: Cell::new(0),
+            config_home,
         }
     }
 
@@ -56,6 +60,24 @@ impl Stubs {
         fs::write(rule("args"), prefix).unwrap();
         fs::write(rule("stdout"), stdout).unwrap();
         fs::write(rule("code"), code.to_string()).unwrap();
+    }
+
+    /// Uses `home` as `XDG_CONFIG_HOME`, so several stubs can share one
+    /// policy.
+    pub fn with_config_home(mut self, home: &Path) -> Self {
+        self.config_home = home.to_owned();
+        self
+    }
+
+    /// Orchestral's config directory for commands this harness runs, kept
+    /// out of the real one through `XDG_CONFIG_HOME`.
+    pub fn config(&self) -> PathBuf {
+        self.config_home.join("orchestral")
+    }
+
+    /// Writes the global policy file.
+    pub fn write_policy(&self, text: &str) {
+        write_policy_in(&self.config_home, text);
     }
 
     /// The directory holding the stubs.
@@ -78,6 +100,7 @@ impl Stubs {
             "PATH",
             format!("{}:{SYSTEM_PATH}", self.dir.path().display()),
         );
+        command.env("XDG_CONFIG_HOME", &self.config_home);
         command
     }
 
@@ -85,6 +108,13 @@ impl Stubs {
     pub fn orchestral(&self) -> Command {
         self.command(env!("CARGO_BIN_EXE_orchestral"))
     }
+}
+
+/// Writes the global policy file under the `XDG_CONFIG_HOME` `home`.
+pub fn write_policy_in(home: &Path, text: &str) {
+    let path = home.join("orchestral/policy.md");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
 }
 
 /// Reads a fixture from `tests/fixtures/`. Output captured from Claude Code is

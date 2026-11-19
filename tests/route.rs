@@ -24,12 +24,10 @@ fn repo(supervisor_merges: bool) -> (TempDir, PathBuf) {
         .status()
         .unwrap();
     assert!(status.success());
-    std::fs::create_dir(main.join(".orchestral")).unwrap();
-    std::fs::write(
-        main.join(".orchestral/policy.md"),
-        format!("---\nfleet_token_budget: 1000\nsupervisor_merges: {supervisor_merges}\n---\n"),
-    )
-    .unwrap();
+    common::write_policy_in(
+        &config_home(&main),
+        &format!("---\nfleet_token_budget: 1000\nsupervisor_merges: {supervisor_merges}\n---\n"),
+    );
     Store::for_repo(&main)
         .unwrap()
         .update(|state| {
@@ -42,6 +40,16 @@ fn repo(supervisor_merges: bool) -> (TempDir, PathBuf) {
     (dir, main)
 }
 
+/// The repository's `XDG_CONFIG_HOME`, outside its work tree.
+fn config_home(main: &Path) -> PathBuf {
+    main.join(".git/test-config")
+}
+
+/// Stubs that read the repository's policy.
+fn new_stubs(main: &Path) -> Stubs {
+    Stubs::new().with_config_home(&config_home(main))
+}
+
 fn store(main: &Path) -> Store {
     Store::for_repo(main).unwrap()
 }
@@ -49,7 +57,7 @@ fn store(main: &Path) -> Store {
 /// Runs `route 42 <to>` from `session`, with PR #42 open and changing
 /// `files`.
 fn run(main: &Path, to: &str, session: Option<&str>, files: &str) -> (Output, Stubs) {
-    let stubs = Stubs::new();
+    let stubs = new_stubs(main);
     stubs.respond("gh", &["pr", "view", "42"], r#"{"state":"OPEN"}"#, 0);
     stubs.respond(
         "gh",
@@ -98,7 +106,7 @@ fn the_orchestrator_records_a_route() {
 #[test]
 fn an_empty_reason_is_refused() {
     let (_dir, main) = repo(true);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
 
     let output = stubs
         .orchestral()
@@ -136,7 +144,7 @@ fn only_the_orchestrator_routes() {
 #[test]
 fn a_closed_pr_is_refused() {
     let (_dir, main) = repo(true);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond("gh", &["pr", "view", "42"], r#"{"state":"MERGED"}"#, 0);
 
     let output = stubs
@@ -269,7 +277,7 @@ fn the_owner_is_asked_once_when_only_their_approval_is_missing() {
             (46, false, "passed"),
         ],
     );
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond(
         "gh",
         &["pr", "view", "42"],
@@ -286,7 +294,7 @@ fn the_owner_is_asked_once_when_only_their_approval_is_missing() {
     stubs.respond("gh", &["pr", "edit"], "", 0);
     let gh = stubs.dir().join("gh");
 
-    let lines = route::ask_owner(&store, &gh).unwrap();
+    let lines = route::ask_owner(&store, &gh, &stubs.config()).unwrap();
 
     assert_eq!(
         lines,
@@ -310,12 +318,16 @@ fn the_owner_is_asked_once_when_only_their_approval_is_missing() {
     );
 
     // Asked already, so not again.
-    assert!(route::ask_owner(&store, &gh).unwrap().is_empty());
+    assert!(
+        route::ask_owner(&store, &gh, &stubs.config())
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(edits(&stubs).len(), 1);
 
     // Once it's no longer open, it's forgotten.
     snapshot(&main, &[(43, true, "passed")]);
-    route::ask_owner(&store, &gh).unwrap();
+    route::ask_owner(&store, &gh, &stubs.config()).unwrap();
     assert!(store.read().unwrap().asked.is_empty());
 }
 
@@ -331,10 +343,10 @@ fn a_pr_that_stops_being_ready_loses_the_label() {
         .unwrap();
     // A new push is waiting on CI.
     snapshot(&main, &[(42, false, "pending")]);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond("gh", &["pr", "edit"], "", 0);
 
-    let lines = route::ask_owner(&store, &stubs.dir().join("gh")).unwrap();
+    let lines = route::ask_owner(&store, &stubs.dir().join("gh"), &stubs.config()).unwrap();
 
     assert_eq!(
         edits(&stubs),
@@ -358,7 +370,7 @@ fn one_failing_pr_does_not_hold_up_the_others() {
         })
         .unwrap();
     snapshot(&main, &[(42, false, "passed"), (43, false, "passed")]);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond("gh", &["pr", "view", "42"], "", 1);
     stubs.respond(
         "gh",
@@ -369,7 +381,7 @@ fn one_failing_pr_does_not_hold_up_the_others() {
     stubs.respond("gh", &["label", "create"], "", 1);
     stubs.respond("gh", &["pr", "edit"], "", 0);
 
-    let lines = route::ask_owner(&store, &stubs.dir().join("gh")).unwrap();
+    let lines = route::ask_owner(&store, &stubs.dir().join("gh"), &stubs.config()).unwrap();
 
     assert!(
         lines[0].starts_with("can't ask the owner to merge PR #42"),

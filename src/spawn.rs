@@ -203,7 +203,13 @@ impl Launch<'_> {
                 .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
             write(
                 &settings,
-                &settings_json(name, self.main, &allow_rules(request, &exe), &plugin_ids()?)?,
+                &settings_json(
+                    name,
+                    self.main,
+                    &allow_rules(request, &exe),
+                    &plugin_ids()?,
+                    &crate::policy::config_dir()?,
+                )?,
             )?;
             let text = match request.review_of {
                 Some(pr) => reviewer_prompt(
@@ -417,6 +423,7 @@ fn settings_json(
     main: &Path,
     allow: &[String],
     plugin_ids: &[String],
+    config: &Path,
 ) -> Result<String, Failure> {
     let exe = std::env::current_exe()
         .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
@@ -424,16 +431,26 @@ fn settings_json(
         .iter()
         .map(|id| (id.clone(), json!(false)))
         .collect();
+    let mut env = json!({
+        "ORCHESTRAL_WORKER": name,
+        "ORCHESTRAL_REPO": main.display().to_string(),
+        "PATH": std::env::var("PATH").unwrap_or_default(),
+    });
+    // So the worker's own orchestral calls read the same policy.
+    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|dir| !dir.is_empty()) {
+        env["XDG_CONFIG_HOME"] = json!(dir.to_string_lossy());
+    }
     let settings = json!({
         "crossSessionInbound": "accept",
         "isolatePeerMachines": true,
         "worktree": {"bgIsolation": "none"},
-        "env": {
-            "ORCHESTRAL_WORKER": name,
-            "ORCHESTRAL_REPO": main.display().to_string(),
-            "PATH": std::env::var("PATH").unwrap_or_default(),
+        "env": env,
+        // A worker can't change its own limits by accident (ADR-0013). `//`
+        // makes the path absolute, and Edit covers Write and shell redirects.
+        "permissions": {
+            "allow": allow,
+            "deny": [format!("Edit(/{}/**)", config.display())],
         },
-        "permissions": {"allow": allow},
         "hooks": {"PreToolUse": [{
             "matcher": "Bash",
             "hooks": [{"type": "command", "command": format!("{} hook worker-guard", shell_quote(&exe.display().to_string()))}],
@@ -480,6 +497,7 @@ fn allow_rules(request: &Request, orchestral: &Path) -> Vec<String> {
                 format!("gh issue edit {issue} --add-label needs-discussion"),
                 format!("{orchestral} review *"),
                 format!("{orchestral} try --check"),
+                format!("{orchestral} policy"),
             ]
         }
     };

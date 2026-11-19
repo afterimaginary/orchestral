@@ -57,14 +57,8 @@ fn git(dir: &Path, args: &[&str]) {
 fn repo(preview: &str, prs: &[u64]) -> Repo {
     let dir = TempDir::new().unwrap();
     let main = dir.path().canonicalize().unwrap().join("main");
-    std::fs::create_dir_all(main.join(".orchestral")).unwrap();
-    std::fs::write(
-        main.join(".orchestral/policy.md"),
-        format!("---\nfleet_token_budget: 1000\npreview:\n{preview}---\n"),
-    )
-    .unwrap();
+    std::fs::create_dir_all(&main).unwrap();
     git(&main, &["init", "-q", "-b", "main"]);
-    git(&main, &["add", "."]);
     git(
         &main,
         &[
@@ -73,12 +67,17 @@ fn repo(preview: &str, prs: &[u64]) -> Repo {
             "-c",
             "user.email=t@t",
             "commit",
-            "-qm",
+            "-q",
+            "--allow-empty",
+            "-m",
             "init",
         ],
     );
     let store = Store::for_repo(&main).unwrap();
     let stubs = Stubs::new();
+    stubs.write_policy(&format!(
+        "---\nfleet_token_budget: 1000\npreview:\n{preview}---\n"
+    ));
     for &pr in prs {
         let branch = format!("branch-{pr}");
         let worktree = dir.path().canonicalize().unwrap().join(&branch);
@@ -153,7 +152,7 @@ impl Repo {
             portless: self.stubs.dir().join("portless"),
             tailscale: self.stubs.dir().join("tailscale"),
         };
-        preview::reconcile(&self.store, &tools).unwrap()
+        preview::reconcile(&self.store, &tools, &self.stubs.config()).unwrap()
     }
 
     /// Replaces the `portless` stub with a stand-in that runs servers.
@@ -467,11 +466,8 @@ fn try_refuses_without_a_preview_policy_or_a_worker() {
 
     let no_worker = repo.run(&["try", "8"]);
     let merged = repo.run(&["try", "10"]);
-    std::fs::write(
-        repo.main.join(".orchestral/policy.md"),
-        "---\nfleet_token_budget: 1000\n---\n",
-    )
-    .unwrap();
+    repo.stubs
+        .write_policy("---\nfleet_token_budget: 1000\n---\n");
     let no_policy = repo.run(&["try", "8"]);
 
     for (output, reason) in [
@@ -551,11 +547,8 @@ fn a_policy_without_previews_stops_them() {
     let repo = repo("  run: 'exec sleep 600'\n", &[14]);
     repo.stdout(&["try", "14"]);
     repo.reconcile();
-    std::fs::write(
-        repo.main.join(".orchestral/policy.md"),
-        "---\nfleet_token_budget: 1000\n---\n",
-    )
-    .unwrap();
+    repo.stubs
+        .write_policy("---\nfleet_token_budget: 1000\n---\n");
 
     let lines = repo.reconcile();
 

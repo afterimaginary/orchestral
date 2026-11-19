@@ -177,8 +177,9 @@ The worker's settings apply to its process only:
 | `crossSessionInbound` | `accept`, so the orchestrator can message it |
 | `isolatePeerMachines` | `true` |
 | `worktree.bgIsolation` | `none`, since it already has a worktree |
-| `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), and the caller's `PATH`, and nothing else from the orchestrator's environment, so the settings carry no credentials |
-| `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone, to `origin <name>` (with `-u` or `--force-with-lease`) or to `origin HEAD` (with or without `-u`), `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *`, `gh issue edit <issue> --add-label needs-discussion`, and `'<this binary>' review *` to record its own review's verdict (ADR-0011), which the classifier denies as self-approval otherwise, and `'<this binary>' try --check`, its boot check. For a reviewer, only `gh pr comment <pr> *` and `'<this binary>' review <pr> *`. Anything else still goes through auto mode. |
+| `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), the caller's `PATH`, and `XDG_CONFIG_HOME` when it's set, so the worker reads the same policy, and nothing else from the orchestrator's environment, so the settings carry no credentials |
+| `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone, to `origin <name>` (with `-u` or `--force-with-lease`) or to `origin HEAD` (with or without `-u`), `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *`, `gh issue edit <issue> --add-label needs-discussion`, and `'<this binary>' review *` to record its own review's verdict (ADR-0011), which the classifier denies as self-approval otherwise, `'<this binary>' try --check`, its boot check, and `'<this binary>' policy`, to read the policy. For a reviewer, only `gh pr comment <pr> *` and `'<this binary>' review <pr> *`. Anything else still goes through auto mode. |
+| `permissions.deny` | `Edit(/<config directory>/**)`, so the worker can't change the policy by accident (ADR-0013). Edit covers the Write tool and shell redirects. |
 | `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
 
@@ -252,7 +253,7 @@ Shows whether PR `<pr>` could merge at its head commit, condition by condition, 
 Then the route, from the state's `routes`, where no record means the owner's:
 
 - **the owner's:** the owner approved the head commit (the state's `approvals`). An approval of an earlier commit doesn't count.
-- **the supervisor's:** the policy's `supervisor_merges` is on, and the PR changes nothing under `.orchestral/` or `.github/`, which are the owner's to review. It reads the changed paths from the GitHub API only on this route, and a rename counts as changing both its old and new path.
+- **the supervisor's:** the policy's `supervisor_merges` is on, and the PR changes nothing under `.github/`, which is the owner's to review. It reads the changed paths from the GitHub API only on this route, and a rename counts as changing both its old and new path.
 
 ```text
 PR #42 at 4f2c9e1, merged by the owner:
@@ -279,7 +280,7 @@ Records who merges PR `<pr>`, and why, in the state's `routes`. A PR with no rou
 - from any session but the orchestrator, the one whose `CLAUDE_CODE_SESSION_ID` holds the claim,
 - a PR that isn't open, as `gh pr view` shows,
 - `supervisor` when the owner was already asked to merge the PR (the state's `asked`), so a PR never moves off the owner's route once it's waiting on them,
-- `supervisor` when the policy's `supervisor_merges` is off, or the PR changes anything under `.orchestral/` or `.github/`, read as `merge-check` reads them.
+- `supervisor` when the policy's `supervisor_merges` is off, or the PR changes anything under `.github/`, read as `merge-check` reads them.
 
 ```text
 Routed PR #42: the supervisor may merge it (an internal refactor).
@@ -332,7 +333,7 @@ PR #42 running at https://host.example.ts.net:8443 (log .git/orchestral/logs/pre
 
 ### `orchestral try --check [--json]`
 
-The boot check, which a worker runs from its worktree before its PR reaches the owner. It refuses outside a worker (no `ORCHESTRAL_WORKER`), without a `preview` in the policy, and when the policy's `preview.url` has the host serve previews, since nothing boots locally then. It reads the policy from `origin/main`, as everything else does, so a branch can't change what runs. It runs `preview.setup`, if any, then `preview.run` with `sh -c`, a free `$PORT`, from the top of the worktree, with both writing to a fresh log, `.git/orchestral/logs/boot-<worker>.log`. It passes once `GET /` on `$PORT`, at `127.0.0.1` or `::1`, answers with a status below 500. It fails if setup fails or runs past 15 minutes, if the server exits first, or if nothing answers within 120 seconds. Either way it then stops the server's process group, with SIGTERM and then SIGKILL after 5 seconds.
+The boot check, which a worker runs from its worktree before its PR reaches the owner. It refuses outside a worker (no `ORCHESTRAL_WORKER`), without a `preview` in the policy, and when the policy's `preview.url` has the host serve previews, since nothing boots locally then. It reads the policy from the config directory, as everything else does, so a branch can't change what runs. It runs `preview.setup`, if any, then `preview.run` with `sh -c`, a free `$PORT`, from the top of the worktree, with both writing to a fresh log, `.git/orchestral/logs/boot-<worker>.log`. It passes once `GET /` on `$PORT`, at `127.0.0.1` or `::1`, answers with a status below 500. It fails if setup fails or runs past 15 minutes, if the server exits first, or if nothing answers within 120 seconds. Either way it then stops the server's process group, with SIGTERM and then SIGKILL after 5 seconds.
 
 ```text
 The preview booted: it answered 200 after 3s, and it's stopped again. Its log is /repo/.git/orchestral/logs/boot-issue-12.log.
@@ -428,13 +429,34 @@ uds:/tmp/cc-socks/41001.sock
 
 Sets a repository up. First it checks that `claude` and `gh` are installed and logged in, that `git` works, and that Claude Code trusts the main checkout, and refuses, exiting `2`, naming the first problem. Then it:
 
-1. Creates `.orchestral/policy.md` in the main checkout from a template, unless one exists. The template's `fleet_token_budget` is an example to replace. The file takes effect once it's on `origin/main`.
+1. Sets the policy up in the config directory ([policy spec](policy.md)), in the repository's file, or the global one when `origin` isn't on GitHub:
+   - When the repository tracks `.orchestral/policy.md`, on `origin/main` or in the main checkout before the first push, and that file doesn't exist yet, it copies the tracked policy there and says to remove it from the repository with `git rm -r .orchestral`.
+   - Otherwise, when neither policy file exists, it creates that file from a template. The template's `fleet_token_budget` is an example to replace.
+   - Otherwise it keeps the existing files.
 2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. If the binary later moves, as a plugin update does, the block warns on each push and, when `ORCHESTRAL_WORKER` is set, still rejects a push to `refs/heads/main` itself, until init runs again. `doctor` warns when the hook is missing or calls a binary that has moved. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
 
 ```text
-Created /home/dev/app/.orchestral/policy.md. Set fleet_token_budget, then commit it and push it to main.
+Created /home/dev/.config/orchestral/acme/app/policy.md. Set fleet_token_budget there.
 Installed the pre-push hook in /home/dev/app/.git/hooks/pre-push.
 ```
+
+### `orchestral policy [--json]`
+
+Prints the policy in effect for the repository: the files it came from, global first, then the merged settings with every default filled in, as frontmatter, then the rules. The orchestrator and workers read the policy through it. It fails as any command that reads the policy does ([policy spec](policy.md)).
+
+```text
+From: /home/dev/.config/orchestral/policy.md, /home/dev/.config/orchestral/acme/app/policy.md
+---
+workers: 3
+fleet_token_budget: 3000000
+...
+---
+Ask me before changing auth, payments or migrations.
+
+Keep the hook shim on the standard library only.
+```
+
+With `--json`, it prints `settings`, `rules` and `sources`.
 
 ### `orchestral doctor [--json]`
 
@@ -448,7 +470,7 @@ Checks what a run needs and prints one line per check, as `ok`, `warn` or `FAIL`
 | `gh` | Fails when it's missing or `gh auth status` fails. |
 | `git` | Fails when it's missing. |
 | `trust` | Fails when Claude Code doesn't trust the main checkout. |
-| `policy` | Fails when the policy can't be read. Warns when the main checkout's copy differs from `origin/main`'s, since that one is used. |
+| `policy` | Fails when the policy can't be read, and names the files it read when it can. Warns when the repository still tracks `.orchestral/policy.md`, which isn't read. |
 | `hook` | Warns when the pre-push hook isn't installed, or calls a binary that has moved; `orchestral init` fixes both. |
 | `portless` | Warns when it's missing, since previews can run without it. |
 | `tailscale` | Warns when it's missing or not running, since previews can run without it. |

@@ -164,16 +164,24 @@ fn the_supervisor_route_needs_no_approval_but_refuses_owner_paths_and_a_disabled
         failed(&merge::evaluate(&pr(), &routed, &settings(false))),
         ["supervisor merges allowed"]
     );
-    for path in [".orchestral/policy.md", ".github/workflows/verify.yml"] {
-        let mut pr = pr();
-        pr.files.push(path.into());
-        let check = check(&pr, &routed);
-        assert_eq!(failed(&check), ["no change to .orchestral/ or .github/"]);
-        assert_eq!(
-            check.conditions.last().unwrap().detail,
-            format!("it changes {path}")
-        );
-    }
+    let mut pr = pr();
+    pr.files.push(".github/workflows/verify.yml".into());
+    let check = check(&pr, &routed);
+    assert_eq!(failed(&check), ["no change to .github/"]);
+    assert_eq!(
+        check.conditions.last().unwrap().detail,
+        "it changes .github/workflows/verify.yml"
+    );
+}
+
+/// The repository's `XDG_CONFIG_HOME`, outside its work tree.
+fn config_home(main: &std::path::Path) -> std::path::PathBuf {
+    main.join(".git/test-config")
+}
+
+/// Stubs that read the repository's policy.
+fn new_stubs(main: &std::path::Path) -> Stubs {
+    Stubs::new().with_config_home(&config_home(main))
 }
 
 /// A repository with a policy and the state from `state()`, changed by
@@ -187,12 +195,10 @@ fn repo(change: impl FnOnce(&mut State)) -> (TempDir, std::path::PathBuf) {
         .status()
         .unwrap();
     assert!(status.success());
-    std::fs::create_dir(main.join(".orchestral")).unwrap();
-    std::fs::write(
-        main.join(".orchestral/policy.md"),
+    common::write_policy_in(
+        &config_home(&main),
         "---\nfleet_token_budget: 1000\nsupervisor_merges: true\n---\n",
-    )
-    .unwrap();
+    );
     let store = Store::for_repo(&main).unwrap();
     store
         .update(|s| {
@@ -225,7 +231,7 @@ fn merge_check(stubs: &Stubs, main: &std::path::Path, json: bool) -> std::proces
 #[test]
 fn the_command_prints_each_condition_and_refuses_when_one_fails() {
     let (_dir, main) = repo(|_| {});
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond(
         "gh",
         &["pr", "view", "42"],
@@ -269,7 +275,7 @@ fn the_command_prints_each_condition_and_refuses_when_one_fails() {
 #[test]
 fn only_skipped_checks_are_not_a_pass() {
     let (_dir, main) = repo(|_| {});
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond(
         "gh",
         &["pr", "view", "42"],
@@ -296,7 +302,7 @@ fn the_supervisor_route_reads_renames_out_of_a_checked_directory() {
         state.approvals.clear();
         supervisor_route(state);
     });
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond(
         "gh",
         &["pr", "view", "42"],
@@ -315,9 +321,7 @@ fn the_supervisor_route_reads_renames_out_of_a_checked_directory() {
     assert_eq!(output.status.code(), Some(2));
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains(
-            "FAIL  no change to .orchestral/ or .github/: it changes .github/workflows/verify.yml\n"
-        ),
+        stdout.contains("FAIL  no change to .github/: it changes .github/workflows/verify.yml\n"),
         "{stdout}"
     );
     let api = stubs
@@ -375,12 +379,12 @@ fn events(main: &std::path::Path) -> Vec<String> {
 fn the_supervisor_merges_an_approved_pr_at_its_checked_head() {
     let (_dir, main) = repo(|_| {});
     snapshot(&main, HEAD);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond("gh", &["pr", "view", "42"], &view(passing()), 0);
     stubs.respond("gh", &["pr", "merge", "42"], "", 0);
     let store = Store::for_repo(&main).unwrap();
 
-    let lines = merge::merge_ready(&store, &stubs.dir().join("gh")).unwrap();
+    let lines = merge::merge_ready(&store, &stubs.dir().join("gh"), &stubs.config()).unwrap();
 
     assert_eq!(
         merges(&stubs),
@@ -404,13 +408,12 @@ fn the_supervisor_route_merges_without_an_approval_by_the_policy_method() {
         state.approvals.clear();
         supervisor_route(state);
     });
-    std::fs::write(
-        main.join(".orchestral/policy.md"),
+    common::write_policy_in(
+        &config_home(&main),
         "---\nfleet_token_budget: 1000\nsupervisor_merges: true\nmerge_method: rebase\n---\n",
-    )
-    .unwrap();
+    );
     snapshot(&main, HEAD);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond("gh", &["pr", "view", "42"], &view(passing()), 0);
     stubs.respond(
         "gh",
@@ -420,7 +423,12 @@ fn the_supervisor_route_merges_without_an_approval_by_the_policy_method() {
     );
     stubs.respond("gh", &["pr", "merge", "42"], "", 0);
 
-    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+    merge::merge_ready(
+        &Store::for_repo(&main).unwrap(),
+        &stubs.dir().join("gh"),
+        &stubs.config(),
+    )
+    .unwrap();
 
     assert_eq!(
         merges(&stubs),
@@ -433,25 +441,34 @@ fn nothing_merges_without_the_owners_approval_or_with_a_failed_condition() {
     // No approval on the owner's route: not even read.
     let (_dir, main) = repo(|state| state.approvals.clear());
     snapshot(&main, HEAD);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     assert!(
-        merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh"))
-            .unwrap()
-            .is_empty()
+        merge::merge_ready(
+            &Store::for_repo(&main).unwrap(),
+            &stubs.dir().join("gh"),
+            &stubs.config()
+        )
+        .unwrap()
+        .is_empty()
     );
     assert!(stubs.calls("gh").is_empty());
 
     // Approved, but a finding is still pending.
     let (_dir, main) = repo(|_| {});
     snapshot(&main, HEAD);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     let body = json!({
         "state": "OPEN", "isDraft": false, "baseRefName": "main",
         "mergeable": "MERGEABLE", "headRefOid": HEAD,
         "body": "## Findings\n\n- [pending] A typo\n", "statusCheckRollup": passing()
     });
     stubs.respond("gh", &["pr", "view", "42"], &body.to_string(), 0);
-    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+    merge::merge_ready(
+        &Store::for_repo(&main).unwrap(),
+        &stubs.dir().join("gh"),
+        &stubs.config(),
+    )
+    .unwrap();
     assert!(merges(&stubs).is_empty());
     assert!(events(&main).is_empty());
 }
@@ -461,11 +478,16 @@ fn a_moved_head_is_not_merged() {
     // The poll saw the approved head, but a commit was pushed since.
     let (_dir, main) = repo(|_| {});
     snapshot(&main, HEAD);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     let moved = view(passing()).replace(HEAD, "9999999aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     stubs.respond("gh", &["pr", "view", "42"], &moved, 0);
 
-    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+    merge::merge_ready(
+        &Store::for_repo(&main).unwrap(),
+        &stubs.dir().join("gh"),
+        &stubs.config(),
+    )
+    .unwrap();
 
     assert!(merges(&stubs).is_empty());
 }
@@ -474,13 +496,13 @@ fn a_moved_head_is_not_merged() {
 fn a_refused_merge_is_logged_and_left_for_the_next_minute() {
     let (_dir, main) = repo(|_| {});
     snapshot(&main, HEAD);
-    let stubs = Stubs::new();
+    let stubs = new_stubs(&main);
     stubs.respond("gh", &["pr", "view", "42"], &view(passing()), 0);
     // GitHub refuses, as when the head moved after the check.
     stubs.respond("gh", &["pr", "merge", "42"], "", 1);
     let store = Store::for_repo(&main).unwrap();
 
-    let lines = merge::merge_ready(&store, &stubs.dir().join("gh")).unwrap();
+    let lines = merge::merge_ready(&store, &stubs.dir().join("gh"), &stubs.config()).unwrap();
 
     assert_eq!(lines.len(), 1);
     assert!(lines[0].starts_with("can't merge PR #42: "), "{lines:?}");
@@ -500,21 +522,30 @@ fn a_held_pr_or_a_supervisor_pr_with_supervisor_merges_off_is_not_read() {
         state.holds.insert(42);
     });
     snapshot(&main, HEAD);
-    let stubs = Stubs::new();
-    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
+    let stubs = new_stubs(&main);
+    merge::merge_ready(
+        &Store::for_repo(&main).unwrap(),
+        &stubs.dir().join("gh"),
+        &stubs.config(),
+    )
+    .unwrap();
     assert!(stubs.calls("gh").is_empty());
 
     let (_dir, main) = repo(|state| {
         state.approvals.clear();
         supervisor_route(state);
     });
-    std::fs::write(
-        main.join(".orchestral/policy.md"),
+    common::write_policy_in(
+        &config_home(&main),
         "---\nfleet_token_budget: 1000\nsupervisor_merges: false\n---\n",
+    );
+    snapshot(&main, HEAD);
+    let stubs = new_stubs(&main);
+    merge::merge_ready(
+        &Store::for_repo(&main).unwrap(),
+        &stubs.dir().join("gh"),
+        &stubs.config(),
     )
     .unwrap();
-    snapshot(&main, HEAD);
-    let stubs = Stubs::new();
-    merge::merge_ready(&Store::for_repo(&main).unwrap(), &stubs.dir().join("gh")).unwrap();
     assert!(stubs.calls("gh").is_empty());
 }

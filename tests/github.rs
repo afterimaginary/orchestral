@@ -716,12 +716,6 @@ fn only_the_owners_unmarked_command_counts() {
 fn an_approve_leads_to_a_merge_of_that_commit() {
     let repo = Repo::new();
     let head = "4f2c9e1a0b5d3c1e6a2f4c8e9d7b1f2e3a4b5c6d";
-    fs::create_dir(repo.main.join(".orchestral")).unwrap();
-    fs::write(
-        repo.main.join(".orchestral/policy.md"),
-        "---\nfleet_token_budget: 1000\n---\n",
-    )
-    .unwrap();
     repo.store()
         .update(|state| {
             state.reviews.insert(
@@ -741,6 +735,7 @@ fn an_approve_leads_to_a_merge_of_that_commit() {
     ));
 
     let stubs = Stubs::new();
+    stubs.write_policy("---\nfleet_token_budget: 1000\n---\n");
     let view = json!({
         "state": "OPEN", "isDraft": false, "baseRefName": "main",
         "mergeable": "MERGEABLE", "headRefOid": head,
@@ -749,7 +744,8 @@ fn an_approve_leads_to_a_merge_of_that_commit() {
     });
     stubs.respond("gh", &["pr", "view", "40"], &view.to_string(), 0);
     stubs.respond("gh", &["pr", "merge", "40"], "", 0);
-    orchestral::merge::merge_ready(&repo.store(), &stubs.dir().join("gh")).unwrap();
+    orchestral::merge::merge_ready(&repo.store(), &stubs.dir().join("gh"), &stubs.config())
+        .unwrap();
 
     let merges: Vec<Vec<String>> = stubs
         .calls("gh")

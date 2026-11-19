@@ -103,17 +103,40 @@ impl Repo {
             .unwrap()
     }
 
-    /// Pushes a valid policy to origin.
-    fn push_policy(&self) {
+    /// Writes a valid global policy.
+    fn write_policy(&self) {
+        self.stubs
+            .write_policy("---\nfleet_token_budget: 1000\n---\nRules.\n");
+    }
+
+    /// Pushes a policy tracked in the repository, where it used to live.
+    fn track_policy(&self) {
         fs::create_dir_all(self.main.join(".orchestral")).unwrap();
         fs::write(
             self.main.join(".orchestral/policy.md"),
-            "---\nfleet_token_budget: 1000\n---\nRules.\n",
+            "---\nfleet_token_budget: 2000\n---\nTracked rules.\n",
         )
         .unwrap();
         git(&self.main, &["add", "."]);
         git(&self.main, &["commit", "-q", "-m", "policy"]);
         git(&self.main, &["push", "-q", "origin", "main"]);
+    }
+
+    /// Points `origin` at GitHub's `Acme/App`, which git rewrites to the
+    /// local bare repository.
+    fn on_github(&self) {
+        let bare = self.main.parent().unwrap().join("origin.git");
+        let url = "https://github.com/Acme/App.git";
+        git(&self.main, &["config", "remote.origin.url", url]);
+        git(
+            &self.main,
+            &["config", &format!("url.{}.insteadOf", bare.display()), url],
+        );
+    }
+
+    /// The per-repository policy for `Acme/App`.
+    fn repo_policy(&self) -> PathBuf {
+        self.stubs.config().join("acme/app/policy.md")
     }
 
     /// Each check's status from `doctor --json`, by name.
@@ -137,7 +160,7 @@ fn stderr(output: &Output) -> String {
 #[test]
 fn doctor_passes_a_ready_project() {
     let repo = Repo::new();
-    repo.push_policy();
+    repo.write_policy();
     repo.run(&["init"]);
 
     let (code, statuses) = repo.doctor();
@@ -153,7 +176,7 @@ fn doctor_passes_a_ready_project() {
 #[test]
 fn doctor_warns_on_an_untested_claude_code() {
     let repo = Repo::with("2.2.0 (Claude Code)\n", true, true);
-    repo.push_policy();
+    repo.write_policy();
 
     let (code, statuses) = repo.doctor();
 
@@ -164,7 +187,7 @@ fn doctor_warns_on_an_untested_claude_code() {
 #[test]
 fn missing_portless_and_tailscale_only_warn() {
     let repo = Repo::with(VERSION, true, false);
-    repo.push_policy();
+    repo.write_policy();
 
     let (code, statuses) = repo.doctor();
 
@@ -176,7 +199,7 @@ fn missing_portless_and_tailscale_only_warn() {
 #[test]
 fn doctor_fails_an_untrusted_repository() {
     let repo = Repo::new();
-    repo.push_policy();
+    repo.write_policy();
     repo.trust(false);
 
     let (code, statuses) = repo.doctor();
@@ -188,7 +211,7 @@ fn doctor_fails_an_untrusted_repository() {
 #[test]
 fn doctor_fails_when_logged_out() {
     let repo = Repo::with(VERSION, false, true);
-    repo.push_policy();
+    repo.write_policy();
 
     let (code, statuses) = repo.doctor();
 
@@ -198,14 +221,10 @@ fn doctor_fails_when_logged_out() {
 }
 
 #[test]
-fn doctor_warns_when_the_local_policy_differs() {
+fn doctor_warns_about_a_tracked_policy_left_behind() {
     let repo = Repo::new();
-    repo.push_policy();
-    fs::write(
-        repo.main.join(".orchestral/policy.md"),
-        "---\nfleet_token_budget: 2000\n---\nRules.\n",
-    )
-    .unwrap();
+    repo.write_policy();
+    repo.track_policy();
 
     let (code, statuses) = repo.doctor();
 
@@ -216,28 +235,89 @@ fn doctor_warns_when_the_local_policy_differs() {
 }
 
 #[test]
-fn init_creates_the_policy_and_installs_the_hook() {
+fn init_creates_the_global_policy_and_installs_the_hook() {
     let repo = Repo::new();
 
     let output = repo.run(&["init"]);
 
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
-    let policy = fs::read_to_string(repo.main.join(".orchestral/policy.md")).unwrap();
+    // The origin isn't on GitHub, so there's no per-repository file.
+    let policy = fs::read_to_string(repo.stubs.config().join("policy.md")).unwrap();
     assert!(policy.contains("fleet_token_budget: 3000000"));
+    assert!(!repo.main.join(".orchestral").exists());
     let hook = fs::read_to_string(repo.main.join(".git/hooks/pre-push")).unwrap();
     assert!(hook.starts_with("#!/bin/sh\n# >>> orchestral >>>\n"));
 }
 
 #[test]
+fn init_creates_the_repository_policy_for_a_github_origin() {
+    let repo = Repo::new();
+    repo.on_github();
+
+    let output = repo.run(&["init"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(repo.repo_policy().is_file());
+    assert!(!repo.stubs.config().join("policy.md").exists());
+}
+
+#[test]
+fn init_moves_a_tracked_policy_and_the_policy_layers_over_the_global_one() {
+    let repo = Repo::new();
+    repo.on_github();
+    repo.track_policy();
+    repo.stubs
+        .write_policy("---\nfleet_token_budget: 1000\nworkers: 1\n---\nGlobal rules.\n");
+
+    let output = repo.run(&["init"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Remove it from the repository"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let moved = fs::read_to_string(repo.repo_policy()).unwrap();
+    assert!(moved.contains("Tracked rules."));
+    let output = repo.run(&["policy", "--json"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let policy: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(policy["settings"]["fleet_token_budget"], 2000);
+    assert_eq!(policy["settings"]["workers"], 1);
+    assert_eq!(policy["rules"], "Global rules.\n\nTracked rules.");
+    // The tracked file is still there until the owner removes it.
+    assert_eq!(repo.doctor().1["policy"], "warn");
+}
+
+#[test]
+fn a_tracked_policy_alone_is_an_error_until_init_moves_it() {
+    let repo = Repo::new();
+    repo.on_github();
+    repo.track_policy();
+
+    let output = repo.run(&["policy"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains(&format!(
+            "the policy is still in the repository's .orchestral/policy.md, which isn't read; run `orchestral init` to move it to {}",
+            repo.repo_policy().display()
+        )),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn init_keeps_an_existing_policy_and_runs_twice_cleanly() {
     let repo = Repo::new();
-    repo.push_policy();
+    repo.write_policy();
 
     repo.run(&["init"]);
     let output = repo.run(&["init"]);
 
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Kept the existing"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Kept the policy in"));
     let hook = fs::read_to_string(repo.main.join(".git/hooks/pre-push")).unwrap();
     assert_eq!(hook.matches("# >>> orchestral >>>").count(), 1);
 }
@@ -277,7 +357,7 @@ fn init_respects_hooks_path_and_keeps_an_existing_hook_working() {
 #[test]
 fn the_hook_still_rejects_a_workers_push_to_main_after_the_binary_moves() {
     let repo = Repo::new();
-    repo.push_policy();
+    repo.write_policy();
     repo.run(&["init"]);
     assert_eq!(repo.doctor().1["hook"], "ok");
     // A plugin update moves the binary the hook calls.
@@ -318,13 +398,13 @@ fn init_refuses_an_untrusted_repository() {
 
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("doesn't trust"));
-    assert!(!repo.main.join(".orchestral/policy.md").exists());
+    assert!(!repo.stubs.config().join("policy.md").exists());
 }
 
 #[test]
 fn doctor_fails_missing_tools_and_reports_each_failure() {
     let repo = Repo::bare();
-    repo.push_policy();
+    repo.write_policy();
     repo.stubs.respond(
         "tailscale",
         &["status", "--json"],
