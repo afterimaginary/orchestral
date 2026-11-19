@@ -26,7 +26,7 @@ The config directory is `$XDG_CONFIG_HOME/orchestral`, or `~/.config/orchestral`
 
 Either file alone is enough. With both, the repository's settings override the global ones key by key, with `preview` replaced as a whole, and both files' rules apply, the global ones first. `orchestral policy` prints the result and the files it came from.
 
-The repository's own files are read only for `CONTRIBUTING.md`, below. A `.orchestral/policy.md` tracked in the repository isn't read: `orchestral init` moves it to the repository's file. While there's no policy file in the config directory at all, every command that reads the policy fails and points at `init`. Once a global file exists, a tracked policy that hasn't been moved is ignored, and only `doctor` warns about it.
+The repository's own files are read only for `CONTRIBUTING.md`, below. A `.orchestral/policy.md` tracked in the repository isn't read: `orchestral init` moves it to the repository's file, or the global one when `origin` isn't on GitHub. Until that file exists, every command that reads the policy fails and points at `init`, so a repository's old rules and limits are never silently dropped. Once it exists, `doctor` warns that the tracked file is left behind.
 
 ## Settings
 

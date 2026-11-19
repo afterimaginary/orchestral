@@ -205,18 +205,21 @@ impl Policy {
     /// Reads the policy for the repository containing `cwd` from `config`.
     pub fn load_from(config: &Path, cwd: &Path) -> Result<Policy, Failure> {
         let files = Files::for_repo(config, cwd)?;
+        let target = files.target();
+        // Where `init` would move it, so the repository's own rules and
+        // limits are never silently dropped.
+        if !target.exists() && tracked(cwd, TRACKED_PATH)?.is_some() {
+            return Err(Failure::Error(format!(
+                "the policy is still in the repository's {TRACKED_PATH}, which isn't read; run `orchestral init` to move it to {}",
+                target.display()
+            )));
+        }
         let sources = files.existing();
         if sources.is_empty() {
-            let target = files.target().display();
-            return Err(if tracked(cwd, TRACKED_PATH)?.is_some() {
-                Failure::Error(format!(
-                    "the policy is still in the repository's {TRACKED_PATH}, which isn't read; run `orchestral init` to move it to {target}"
-                ))
-            } else {
-                Failure::Error(format!(
-                    "there's no policy; run `orchestral init` to create {target}"
-                ))
-            });
+            return Err(Failure::Error(format!(
+                "there's no policy; run `orchestral init` to create {}",
+                target.display()
+            )));
         }
         let mut texts = Vec::new();
         for path in &sources {

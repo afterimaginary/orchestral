@@ -290,10 +290,11 @@ fn init_moves_a_tracked_policy_and_the_policy_layers_over_the_global_one() {
 }
 
 #[test]
-fn a_tracked_policy_alone_is_an_error_until_init_moves_it() {
+fn a_tracked_policy_is_an_error_until_init_moves_it_even_with_a_global_policy() {
     let repo = Repo::new();
     repo.on_github();
     repo.track_policy();
+    repo.write_policy();
 
     let output = repo.run(&["policy"]);
 
