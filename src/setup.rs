@@ -88,7 +88,7 @@ impl fmt::Display for Initialized {
             )?,
             PolicySetup::Moved { path } => writeln!(
                 f,
-                "Moved the repository's {TRACKED_PATH} to {}. Remove it from the repository with `git rm -r .orchestral`, and push.",
+                "Moved the repository's {TRACKED_PATH} to {}. Remove it from the repository with `git rm {TRACKED_PATH}`, and push.",
                 path.display()
             )?,
             PolicySetup::Kept { paths } => {

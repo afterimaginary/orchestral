@@ -437,7 +437,9 @@ fn settings_json(
         "PATH": std::env::var("PATH").unwrap_or_default(),
     });
     // So the worker's own orchestral calls read the same policy.
-    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|dir| !dir.is_empty()) {
+    if let Some(dir) =
+        std::env::var_os("XDG_CONFIG_HOME").filter(|dir| Path::new(dir).is_absolute())
+    {
         env["XDG_CONFIG_HOME"] = json!(dir.to_string_lossy());
     }
     let settings = json!({

@@ -150,9 +150,12 @@ impl Files {
 }
 
 /// Orchestral's config directory: `$XDG_CONFIG_HOME/orchestral`, or
-/// `~/.config/orchestral` when that's unset.
+/// `~/.config/orchestral` when that's unset or, as the XDG spec says to
+/// treat it, relative.
 pub fn config_dir() -> Result<PathBuf, Failure> {
-    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|dir| !dir.is_empty()) {
+    if let Some(dir) =
+        std::env::var_os("XDG_CONFIG_HOME").filter(|dir| Path::new(dir).is_absolute())
+    {
         return Ok(PathBuf::from(dir).join("orchestral"));
     }
     let home = std::env::var_os("HOME")

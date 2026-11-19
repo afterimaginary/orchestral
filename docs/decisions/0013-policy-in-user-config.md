@@ -20,7 +20,7 @@ Both are the operator's configuration, not the project's. A reader of the reposi
 - Nothing is read from the managed repository except its `CONTRIBUTING.md` on `origin/main`, which still sets the `supervisor_merges` default. There's no in-repository policy option.
 - `orchestral policy` prints the effective policy, and the orchestrator and workers read it through that command.
 - The README installs the plugin with `--scope local`, which writes the project's untracked `.claude/settings.local.json`. User scope would run the plugin's monitor in every session, which makes sessions report as busy (ADR-0001).
-- `init` moves a tracked `.orchestral/policy.md` to the per-repository file. Until then, commands that read the policy fail and point at `init`.
+- `init` moves a tracked `.orchestral/policy.md` to the per-repository file. While no policy file exists in the config directory, commands that read the policy fail and point at `init`. Once one does, an unmoved tracked policy is ignored, and `doctor` warns about it.
 
 ## Consequences
 

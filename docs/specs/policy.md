@@ -17,7 +17,7 @@ Always ask me before changing auth, payments or migrations.
 
 ## Files
 
-The config directory is `$XDG_CONFIG_HOME/orchestral`, or `~/.config/orchestral` when that's unset. It holds up to two files for a repository:
+The config directory is `$XDG_CONFIG_HOME/orchestral`, or `~/.config/orchestral` when that's unset or not an absolute path. It holds up to two files for a repository:
 
 | File | Applies to |
 | --- | --- |
@@ -26,7 +26,7 @@ The config directory is `$XDG_CONFIG_HOME/orchestral`, or `~/.config/orchestral`
 
 Either file alone is enough. With both, the repository's settings override the global ones key by key, with `preview` replaced as a whole, and both files' rules apply, the global ones first. `orchestral policy` prints the result and the files it came from.
 
-The repository's own files are read only for `CONTRIBUTING.md`, below. A `.orchestral/policy.md` tracked in the repository isn't read: `orchestral init` moves it to the repository's file, and until then every command that reads the policy fails and says so.
+The repository's own files are read only for `CONTRIBUTING.md`, below. A `.orchestral/policy.md` tracked in the repository isn't read: `orchestral init` moves it to the repository's file. While there's no policy file in the config directory at all, every command that reads the policy fails and points at `init`. Once a global file exists, a tracked policy that hasn't been moved is ignored, and only `doctor` warns about it.
 
 ## Settings
 
