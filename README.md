@@ -2,7 +2,17 @@
 
 A small workflow layer for Claude Code, as a plugin plus a Rust binary. Give it a brief, and it plans the work, runs a fleet of worker sessions, respects your budget, and brings you in for the designs and decisions that are yours.
 
-**Status:** early. Every part runs end to end on a test repository, from planning through review to merge. Long unattended runs, such as a fleet idling overnight, are still being tested, so stay within reach on a first run. Progress is in [`STATE.md`](STATE.md).
+![A real run: a worker takes a GitHub issue in a test repository to a reviewed PR, and `orchestral status` and `merge-check` show where it stands](docs/demo.gif)
+
+A real run, with the waits cut: a worker takes an issue to a reviewed PR. In normal use you don't type these commands; the orchestrator session runs them and tells you what needs you. [`demo/demo.tape`](demo/demo.tape) records it again.
+
+## Why
+
+Running several Claude Code sessions at once makes you the dispatcher. You split the work, start each session, remember which one is waiting on you, check what each PR did, watch the plan's usage limits, and merge. Most of that is bookkeeping, and the rest, the decisions, gets lost in it.
+
+Orchestral does the bookkeeping. One session plans and dispatches, a small binary enforces the limits you set and keeps the fleet moving while you're away, and every question, design choice and merge that's yours to make comes to you in one place, with reminders until you answer. It has taken a project from a brief to a public release: [cc-notify-tts](https://github.com/afterimaginary/cc-notify-tts) was planned and built by an Orchestral fleet.
+
+**Status:** early. Every part runs end to end, from planning through review to merge. Long unattended runs, such as a fleet idling for days, are still being tested ([#2](https://github.com/afterimaginary/orchestral/issues/2), [#44](https://github.com/afterimaginary/orchestral/issues/44)), so stay within reach on a first run.
 
 ## How it works
 
