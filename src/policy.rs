@@ -535,7 +535,7 @@ preview:
   setup: pnpm install
   run: pnpm dev
   max_running: 1
-review_command: /refine
+review_command: Run the review checklist.
 ",
         )
         .unwrap();
@@ -551,7 +551,10 @@ review_command: /refine
                 max_running: 1,
             })
         );
-        assert_eq!(settings.review_command.as_deref(), Some("/refine"));
+        assert_eq!(
+            settings.review_command.as_deref(),
+            Some("Run the review checklist.")
+        );
     }
 
     #[test]
