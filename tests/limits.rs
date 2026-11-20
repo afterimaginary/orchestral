@@ -72,7 +72,7 @@ fn json_lists_the_windows() {
     assert_eq!(parsed["windows"][1]["percent"], 26);
     let resets = parsed["windows"][1]["resets"].as_str().unwrap();
     assert!(
-        resets.contains("-11-04T12:59:00-08:00[America/Los_Angeles]"),
+        resets.contains("-11-04T12:59:00+01:00[Europe/Berlin]"),
         "{resets}"
     );
 }

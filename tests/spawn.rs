@@ -566,18 +566,17 @@ fn a_window_at_the_plan_limit_is_refused() {
     let repo = Repo::new();
     repo.policy("plan_limit_percent: 80\n");
     repo.usage(
-        "Current session: 95% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n\
-         Current week (all models): 80% used · resets Nov 4 at 1pm (America/Los_Angeles)\n",
+        "Current session: 95% used · resets Nov 2 at 6:49am (Europe/Berlin)\n\
+         Current week (all models): 80% used · resets Nov 4 at 1pm (Europe/Berlin)\n",
     );
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
 
-    // The zone abbreviation, PST or PDT, depends on the year.
     assert_refused(
         &output,
         "the week (all models) window is 80% used, at or past plan_limit_percent (80%)",
-        "wait until it resets at Nov 4 at 1:00pm P",
+        "wait until it resets at Nov 4 at 1:00pm CET",
     );
     assert!(repo.bg_calls().is_empty());
 }
@@ -585,7 +584,7 @@ fn a_window_at_the_plan_limit_is_refused() {
 #[test]
 fn windows_under_the_plan_limit_spawn() {
     let repo = Repo::new();
-    repo.usage("Current session: 84% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n");
+    repo.usage("Current session: 84% used · resets Nov 2 at 6:49am (Europe/Berlin)\n");
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);

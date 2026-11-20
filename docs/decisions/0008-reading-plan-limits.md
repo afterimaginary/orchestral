@@ -22,9 +22,9 @@ claude -p /usage --no-session-persistence --settings '{"disableAllHooks":true}'
 It was run from a new temporary directory, without `CLAUDE_CODE_SESSION_ID` or `CLAUDECODE` in its environment, every 5 minutes for about two hours. Every run printed the same shape, saved as `tests/fixtures/claude/2.1.314/usage.txt` with the usage breakdown made generic:
 
 ```
-Current session: 2% used · resets Nov 2 at 6:49am (America/Los_Angeles)
-Current week (all models): 26% used · resets Nov 4 at 12:59pm (America/Los_Angeles)
-Current week (Fable): 0% used · resets Nov 4 at 12:59pm (America/Los_Angeles)
+Current session: 2% used · resets Nov 2 at 6:49am (Europe/Berlin)
+Current week (all models): 26% used · resets Nov 4 at 12:59pm (Europe/Berlin)
+Current week (Fable): 0% used · resets Nov 4 at 12:59pm (Europe/Berlin)
 ```
 
 Each window is one line: a label, a whole percent, a reset time in the account's local time with no year, and the IANA time zone in parentheses. Times on the hour drop the minutes, as in `resets Nov 4 at 1pm`. A breakdown of what used the plan follows, and nothing reads it.
