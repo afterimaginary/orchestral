@@ -122,7 +122,7 @@ Integration tests run offline: `tests/common/mod.rs` puts stub `claude`, `gh`, `
 Stubs can't catch a change in Claude Code itself, so `tests/e2e.rs` holds real runs, ignored by `cargo test`:
 
 - **`make e2e`** runs `compatibility`, which rereads a fresh print session's transcript, the plan limits and `claude agents` with the parsers, and `local_runner`, which rebuilds a repository with a local bare remote at `$TMPDIR/orchestral-e2e/repo` and runs `init`, `up`, `spawn`, `status`, `stop` and `resume` with a real worker on Sonnet. Claude Code only starts background sessions in a trusted directory, so run `claude` in that path once and accept the trust prompt; the runner refuses until then, and never changes Claude Code's settings itself.
-- **`make sandbox`** uses the sandbox clone at `~/src/orchestral-sandbox`. It refuses with local changes or live workers, files an issue, spawns a worker that opens a PR, checks `status` shows it, then closes the PR and issue and removes the worker. It grows as the fleet gains steps such as review and merge.
+- **`make sandbox`** uses a clone of a throwaway GitHub repository you own, at `$ORCHESTRAL_SANDBOX` (default `~/src/orchestral-sandbox`). It refuses with local changes or live workers, files an issue, spawns a worker that opens a PR, checks `status` shows it, then closes the PR and issue and removes the worker. It grows as the fleet gains steps such as review and merge.
 
 Both clear the caller's Claude Code session variables, so they run as if from a plain terminal.
 

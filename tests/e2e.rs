@@ -325,9 +325,13 @@ impl Drop for LocalRun {
     }
 }
 
-/// The sandbox clone.
+/// The sandbox clone: `$ORCHESTRAL_SANDBOX`, or `~/src/orchestral-sandbox`.
 fn sandbox() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap()).join("src/orchestral-sandbox")
+    std::env::var_os("ORCHESTRAL_SANDBOX")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap()).join("src/orchestral-sandbox")
+        })
 }
 
 fn gh(cwd: &Path, args: &[&str]) -> String {
