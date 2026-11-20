@@ -1,6 +1,6 @@
 ## Verification
 
-- Before `/refine`: `make ready`
+- Before opening a PR: `make ready`
 - The full suite, `make verify`, runs as the PR's required `verify` check. Do not run it locally unless you are changing it or reproducing a failure.
 
 ## Project notes

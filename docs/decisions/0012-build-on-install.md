@@ -9,7 +9,7 @@ status: accepted
 
 Claude Code Desktop can't load a plugin from a directory, only from a marketplace (#81). A marketplace install copies the repository's files into Claude Code's plugin cache, with no compiled binary, so `bin/orchestral` has nothing to run.
 
-The other ways to get a binary there cost more than they give at this stage. Prebuilt releases need release CI per platform, an authenticated download while the repository is private, and possibly macOS signing. A marketplace entry that builds a local checkout doesn't test installing from GitHub at all.
+The other ways to get a binary there cost more than they give at this stage. Prebuilt releases need release CI per platform, platform builds to host and download, and possibly macOS signing. A marketplace entry that builds a local checkout doesn't test installing from GitHub at all.
 
 ## Decision
 

@@ -32,10 +32,10 @@ An unplanned run also showed what happens when a merge is tried too soon. Right 
 
 - Merges show as merged by the owner, as expected for a single-account setup.
 - A merge can only use the exact head commit that passed review and CI, which the merge check (#47) relies on.
-- The squash still combines that head with whatever `main` is at merge time, and CI never ran on that combination. A private repository on the Free plan can't require branches to be up to date, so this gap stays unless the merge check adds its own base check.
+- The squash still combines that head with whatever `main` is at merge time, and CI never ran on that combination. Without branch protection or rulesets, GitHub can't require branches to be up to date, so this gap stays unless the merge check adds its own base check.
 - The refusal messages are GitHub's, and may change, so the supervisor shouldn't parse them. A non-zero exit is enough.
 
 ## Limits
 
-- One sandbox repository, with no required checks or branch protection, since neither is available on a private repository on the Free plan.
+- One sandbox repository, with no required checks, branch protection or rulesets.
 - Only the squash method was used.

@@ -54,7 +54,7 @@ claude --plugin-dir /path/to/orchestral
 2. In that session, ask Claude to run the plugin's `orchestral init` by its full path, `~/.claude/plugins/cache/afterimaginary/orchestral/<version>/bin/orchestral`, where `<version>` is the newest folder there. Use the full path because another `orchestral` on `PATH` could be found first, and `init` writes the path of the binary it ran into the hook. The hook moves on to the newest installed version by itself when the plugin updates. It checks `claude`, `gh`, `git` and trust, creates a policy in your config directory, and installs a pre-push hook that stops workers pushing to `main`.
 3. Edit the policy file `init` names. Set `fleet_token_budget`, the tokens the whole fleet may use in a run. Below the settings, write your rules in plain words, such as "Ask me before changing auth or billing."
 
-The policy is yours, not the project's, so it lives outside the repository, in `~/.config/orchestral` (or `$XDG_CONFIG_HOME/orchestral`), and workers can't change it from a branch. `policy.md` there applies to every repository, and `<owner>/<repo>/policy.md` to one GitHub repository, overriding the global settings one by one and adding its rules after the global ones. `orchestral policy` shows the result. A project that tracks an older `.orchestral/policy.md` gets it moved there by `init`; then remove it from the repository.
+The policy is yours, not the project's, so it lives outside the repository, in `~/.config/orchestral` (or `$XDG_CONFIG_HOME/orchestral`), and workers can't change it from a branch. `policy.md` there applies to every repository, and `<owner>/<repo>/policy.md` to one GitHub repository, overriding the global settings one by one and adding its rules after the global ones. `orchestral policy` shows the result. If a project keeps its policy in `.orchestral/policy.md`, `init` moves it to your config directory.
 
 A policy for a first run:
 
@@ -120,12 +120,12 @@ Requires a Rust toolchain. To run the checks before every push:
 git config core.hooksPath .githooks
 ```
 
-| Command       | Does                                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------ |
-| `make ready`  | Format check, lints, unit tests and CLI tests.                                             |
-| `make verify` | `ready`, integration tests, a release build and plugin validation. CI runs it on every PR. |
-| `make e2e`     | Real runs against the installed, logged-in `claude`. Never part of `verify` or CI.          |
-| `make sandbox` | A real worker on an issue in the sandbox repository. Run before each milestone closes.     |
+| Command        | Does                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `make ready`   | Format check, lints, unit tests and CLI tests.                                             |
+| `make verify`  | `ready`, integration tests, a release build and plugin validation. CI runs it on every PR. |
+| `make e2e`     | Real runs against the installed, logged-in `claude`. Never part of `verify` or CI.         |
+| `make sandbox` | A real worker on an issue in the sandbox repository.                                       |
 
 Integration tests run offline: `tests/common/mod.rs` puts stub `claude`, `gh`, `portless` and `tailscale` scripts on `PATH`, which record their calls and reply with canned output. Output captured from Claude Code is kept under `tests/fixtures/claude/<version>/`.
 

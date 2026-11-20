@@ -4,14 +4,14 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on GitHub-hosted macOS and Ubuntu runners. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `cleanup`, which removes a finished worker by its PR's state, `claim`, `resolve`, `init`, `doctor`, `policy`, which prints the policy in effect, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The repository is being prepared for its first public release.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on GitHub-hosted macOS and Ubuntu runners. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `cleanup`, which removes a finished worker by its PR's state, `claim`, `resolve`, `init`, `doctor`, `policy`, which prints the policy in effect, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The first release is v0.1.0.
 
 ## Features
 
 - [ ] Prove the risky parts
 - [x] Core: one worker, started and watched by the binary
 - [ ] Autonomous loop
-- [ ] User decision points: designs, findings, merges, previews
+- [x] User decision points: designs, findings, merges, previews
 - [ ] Test project
 
 ## Recently Done
@@ -78,6 +78,5 @@ None.
 
 ## Notes
 
-- Public-facing repository (see `CONTRIBUTING.md`): issues, PRs and commits must be presentable, with no personal identifiers.
 - `verify` runs on GitHub-hosted macOS and Ubuntu runners; the final `verify` job passes only when both do.
 - Work order: earliest milestone, then the lowest-numbered issue whose dependencies are closed.
