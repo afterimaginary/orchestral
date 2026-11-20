@@ -41,7 +41,8 @@ enum Command {
     },
     /// Start a worker on an issue, in its own worktree.
     Spawn {
-        /// Lowercase letters, digits and dashes. Also the branch name.
+        /// Lowercase letters, digits and dashes. Also the branch name, unless
+        /// the worker takes over a PR.
         name: String,
         /// The issue the worker implements, or the reviewed PR is for.
         #[arg(long)]
@@ -49,7 +50,8 @@ enum Command {
         /// A worker implements the issue; a reviewer reviews `--pr`.
         #[arg(long, value_enum, default_value_t = Role::Worker)]
         role: Role,
-        /// The PR a reviewer reviews.
+        /// The PR a reviewer reviews, or an open PR a worker takes over,
+        /// checking out its branch.
         #[arg(long, required_if_eq("role", "reviewer"))]
         pr: Option<u64>,
         /// The worker starts on its issue's design proposal, whose token
@@ -299,15 +301,15 @@ fn run(command: Command) -> Result<(), Failure> {
                     fix: "drop --proposal".into(),
                 });
             }
-            let review_of = match role {
-                Role::Worker if pr.is_some() => {
-                    return Err(Failure::Refused {
-                        reason: "--pr is only for `--role reviewer`".into(),
-                        fix: "drop --pr, or add `--role reviewer`".into(),
-                    });
-                }
-                Role::Worker => None,
-                Role::Reviewer => pr,
+            if proposal && pr.is_some() {
+                return Err(Failure::Refused {
+                    reason: "--proposal is only for a worker starting fresh".into(),
+                    fix: "drop --proposal or --pr".into(),
+                });
+            }
+            let (review_of, takes_over) = match role {
+                Role::Worker => (None, pr),
+                Role::Reviewer => (pr, None),
             };
             let request = spawn::Request {
                 name,
@@ -317,6 +319,7 @@ fn run(command: Command) -> Result<(), Failure> {
                 prompt,
                 review_of,
                 proposal,
+                takes_over,
             };
             outcome::print(&spawn::spawn(&cwd, request)?, json)
         }

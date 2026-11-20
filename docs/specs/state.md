@@ -31,7 +31,7 @@ A JSON object with a `schema` version, currently `14`. A file with any other ver
 | `paused` | Whether the fleet is paused. While it is, spawns are refused. |
 | `run_started_at` | When the current run started, in RFC 3339 UTC, or null before the first run. The supervisor sets it when it starts with no worker open, and the fleet budget counts from here. |
 | `observed` | What the supervisor last saw each launched worker's session doing, by worker name: `busy`, `idle`, `waiting` or `exited`, or `lost` once a restarted supervisor finds it can't be resumed. |
-| `reviews` | The latest review verdict on each PR, by PR number: the head commit it's for as `sha`, whether it `passed`, and the commits that `failed` review, oldest first. |
+| `reviews` | The latest review verdict on each PR, by PR number: the head commit it's for as `sha`, whether it `passed`, and the commits that `failed` review, oldest first. A worker taking over the PR with `spawn --pr` clears `failed`. |
 | `wound_down` | The plan window the fleet wound down for, as `window` and its reset time `resets_at` (RFC 3339 UTC, or null), until it resets. Null otherwise. |
 | `usage` | The run's fleet usage as the supervisor last read it: `estimated_tokens` and when, `at`. Null until the first read of a run. |
 | `budget_reached` | Whether this run's usage has reached `fleet_token_budget`. A new run clears it and `usage`. |

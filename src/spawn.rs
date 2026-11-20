@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::git::git;
+use crate::github::gh_json;
 use crate::outcome::Failure;
 use crate::policy::{Policy, Settings};
 use crate::state::{State, Store, Worker};
@@ -44,6 +45,8 @@ pub struct Request {
     pub review_of: Option<u64>,
     /// The worker starts on its issue's design proposal.
     pub proposal: bool,
+    /// For a worker taking over an open PR, that PR.
+    pub takes_over: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +87,16 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
         });
     }
     check_one_reviewer(&state, request.review_of)?;
+    // A worker taking over a PR works on its branch, and Orchestral finds the
+    // PR's worker by it.
+    let branch = match request.takes_over {
+        Some(pr) => {
+            let branch = open_pr_branch(&main, pr)?;
+            check_no_author(&state, pr, &branch)?;
+            branch
+        }
+        None => name.clone(),
+    };
     gate::check_capacity(&state, &policy.settings)?;
     let agents = match state.run_started_at {
         Some(_) => sessions::agents(Path::new("claude"))?,
@@ -100,19 +113,46 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
 
     let worktree = main.join(WORKTREES).join(name);
     git(&main, &["fetch", "--quiet", "origin", "main"])?;
-    git(
-        &main,
-        &[
-            "worktree",
-            "add",
-            "--quiet",
-            "--no-track",
-            "-b",
-            name,
-            path_str(&worktree)?,
-            "origin/main",
-        ],
-    )?;
+    if request.takes_over.is_some() {
+        let remote = format!("origin/{branch}");
+        git(
+            &main,
+            &[
+                "fetch",
+                "--quiet",
+                "origin",
+                &format!("+refs/heads/{branch}:refs/remotes/{remote}"),
+            ],
+        )?;
+        // Tracking the PR's branch, so a plain `git push` updates the PR.
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--track",
+                "-b",
+                &branch,
+                path_str(&worktree)?,
+                &remote,
+            ],
+        )?;
+    } else {
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--no-track",
+                "-b",
+                name,
+                path_str(&worktree)?,
+                "origin/main",
+            ],
+        )?;
+    }
     let model = request
         .model
         .clone()
@@ -125,6 +165,7 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
         store: &store,
         main: &main,
         worktree: &worktree,
+        branch: &branch,
         session_name: &session_name,
         model: &model,
         effort: &effort,
@@ -144,15 +185,16 @@ pub fn spawn(cwd: &Path, request: Request) -> Result<Spawned, Failure> {
                 &main,
                 &["worktree", "remove", "--force", path_str(&worktree)?],
             );
-            let _ = git(&main, &["branch", "-D", name]);
+            let _ = git(&main, &["branch", "-D", &branch]);
             return Err(failure);
         }
         Err(Launched::Maybe(failure)) => return Err(failure),
     };
-    store.record(
-        "worker",
-        &format!("{name} started on issue #{}", request.issue),
-    )?;
+    let event = match request.takes_over {
+        Some(pr) => format!("{name} took over PR #{pr} on issue #{}", request.issue),
+        None => format!("{name} started on issue #{}", request.issue),
+    };
+    store.record("worker", &event)?;
 
     Ok(Spawned {
         name: name.clone(),
@@ -178,6 +220,58 @@ fn check_one_reviewer(state: &State, review_of: Option<u64>) -> Result<(), Failu
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrView {
+    state: String,
+    head_ref_name: String,
+    is_cross_repository: bool,
+}
+
+/// The head branch of PR `pr`, which must be open and from this repository
+/// for a worker to take it over.
+fn open_pr_branch(main: &Path, pr: u64) -> Result<String, Failure> {
+    let view: PrView = gh_json(
+        Path::new("gh"),
+        main,
+        &[
+            "pr",
+            "view",
+            &pr.to_string(),
+            "--json",
+            "state,headRefName,isCrossRepository",
+        ],
+    )?;
+    if view.state != "OPEN" {
+        return Err(Failure::Refused {
+            reason: format!("PR #{pr} is {}", view.state.to_lowercase()),
+            fix: "only an open PR can be taken over".into(),
+        });
+    }
+    if view.is_cross_repository {
+        return Err(Failure::Refused {
+            reason: format!("PR #{pr} is from a fork"),
+            fix: "only a PR from a branch in this repository can be taken over".into(),
+        });
+    }
+    Ok(view.head_ref_name)
+}
+
+/// Refuses to take over PR `pr` while another worker is on its branch.
+fn check_no_author(state: &State, pr: u64, branch: &str) -> Result<(), Failure> {
+    if let Some((other, _)) = state
+        .workers
+        .iter()
+        .find(|(_, worker)| worker.branch == branch && worker.review_of.is_none())
+    {
+        return Err(Failure::Refused {
+            reason: format!("PR #{pr} already has a worker, {other}"),
+            fix: format!("clean up {other} first"),
+        });
+    }
+    Ok(())
+}
+
 /// Whether a failed launch may have left a session running.
 enum Launched {
     No(Failure),
@@ -189,6 +283,7 @@ struct Launch<'a> {
     store: &'a Store,
     main: &'a Path,
     worktree: &'a Path,
+    branch: &'a str,
     session_name: &'a str,
     model: &'a str,
     effort: &'a str,
@@ -212,7 +307,7 @@ impl Launch<'_> {
                 &settings_json(
                     name,
                     self.main,
-                    &allow_rules(request, &exe),
+                    &allow_rules(request, self.branch, &exe),
                     &plugin_ids()?,
                     &crate::policy::config_dir()?,
                 )?,
@@ -228,6 +323,8 @@ impl Launch<'_> {
                 None => worker_prompt(
                     name,
                     request.issue,
+                    self.branch,
+                    request.takes_over,
                     request.proposal.then_some(self.settings.design_variants),
                     self.settings.review_command.as_deref(),
                     &exe,
@@ -241,6 +338,13 @@ impl Launch<'_> {
             self.store.update(|state| {
                 gate::check_capacity(state, self.settings)?;
                 check_one_reviewer(state, request.review_of)?;
+                if let Some(pr) = request.takes_over {
+                    check_no_author(state, pr, self.branch)?;
+                    // A fresh worker gets the PR's review rounds over again.
+                    if let Some(review) = state.reviews.get_mut(&pr) {
+                        review.failed.clear();
+                    }
+                }
                 state.workers.insert(
                     name.clone(),
                     Worker {
@@ -249,7 +353,7 @@ impl Launch<'_> {
                         model: self.model.into(),
                         effort: self.effort.into(),
                         worktree: self.worktree.into(),
-                        branch: name.clone(),
+                        branch: self.branch.into(),
                         job_id: None,
                         review_of: request.review_of,
                         created_at: now.clone(),
@@ -560,7 +664,7 @@ fn settings_json(
 /// skip its classifier (ADR-0010). Each is the exact form the worker needs;
 /// anything else still goes through auto mode, and the worker guard and
 /// pre-push hook still apply.
-fn allow_rules(request: &Request, orchestral: &Path) -> Vec<String> {
+fn allow_rules(request: &Request, branch: &str, orchestral: &Path) -> Vec<String> {
     // The prompt gives the binary's path quoted, so the rule matches it so.
     let orchestral = shell_quote(&orchestral.display().to_string());
     let rules = match request.review_of {
@@ -569,7 +673,6 @@ fn allow_rules(request: &Request, orchestral: &Path) -> Vec<String> {
             format!("{orchestral} review {pr} *"),
         ],
         None => {
-            let branch = &request.name;
             let issue = request.issue;
             vec![
                 "git commit *".into(),
@@ -630,11 +733,14 @@ fn plugin_ids() -> Result<Vec<String>, Failure> {
 const DEFAULT_REVIEW: &str =
     "Check that the PR meets the issue's acceptance criteria and keeps to its non-goals.";
 
-/// The worker's prompt. `proposal` is the policy's `design_variants` for a
-/// worker starting on a design proposal, which adds how to make one.
+/// The worker's prompt. `takes_over` is the PR a worker carries on, which
+/// adds how to take it over. `proposal` is the policy's `design_variants` for
+/// a worker starting on a design proposal, which adds how to make one.
 fn worker_prompt(
     name: &str,
     issue: u64,
+    branch: &str,
+    takes_over: Option<u64>,
     proposal: Option<u32>,
     review_command: Option<&str>,
     orchestral: &Path,
@@ -643,12 +749,20 @@ fn worker_prompt(
     // its path (ADR-0001).
     let mut prompt = include_str!("prompts/worker.md")
         .replace("{{name}}", name)
+        .replace("{{branch}}", branch)
         .replace("{{review}}", review_command.unwrap_or(DEFAULT_REVIEW))
         .replace("{{issue}}", &issue.to_string())
         .replace(
             "{{orchestral}}",
             &shell_quote(&orchestral.display().to_string()),
         );
+    if let Some(pr) = takes_over {
+        prompt.push_str(
+            &include_str!("prompts/takeover.md")
+                .replace("{{pr}}", &pr.to_string())
+                .replace("{{branch}}", branch),
+        );
+    }
     if let Some(variants) = proposal {
         prompt.push_str(
             &include_str!("prompts/proposal.md")
@@ -776,7 +890,15 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_worker_and_its_issue() {
-        let prompt = worker_prompt("issue-12", 12, None, None, Path::new("/opt/orchestral"));
+        let prompt = worker_prompt(
+            "issue-12",
+            12,
+            "issue-12",
+            None,
+            None,
+            None,
+            Path::new("/opt/orchestral"),
+        );
 
         assert!(prompt.starts_with("You are worker issue-12 on issue #12."));
         assert!(prompt.contains("`'/opt/orchestral' resolve orchestrator`"));

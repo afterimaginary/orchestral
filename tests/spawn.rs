@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 
 use common::Stubs;
 use orchestral::sessions;
-use orchestral::state::{Store, WoundDown};
+use orchestral::state::{Review, Store, WoundDown};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -764,7 +764,7 @@ fn a_pr_gets_one_reviewer() {
 }
 
 #[test]
-fn a_reviewer_needs_a_pr_and_a_worker_takes_none() {
+fn a_reviewer_needs_a_pr() {
     let repo = Repo::new();
 
     let reviewer = repo.spawn(&[
@@ -776,13 +776,185 @@ fn a_reviewer_needs_a_pr_and_a_worker_takes_none() {
         "--prompt",
         "Review.",
     ]);
-    let worker = repo.spawn(&[
-        "issue-12", "--issue", "12", "--pr", "40", "--prompt", "Work.",
-    ]);
 
     assert_eq!(reviewer.status.code(), Some(1), "{}", stderr(&reviewer));
-    assert_eq!(worker.status.code(), Some(2), "{}", stderr(&worker));
-    assert!(stderr(&worker).contains("--pr is only for `--role reviewer`"));
+}
+
+impl Repo {
+    /// Pushes a branch `branch` with one commit beyond `main`, and returns
+    /// that commit.
+    fn push_branch(&self, branch: &str) -> String {
+        git(&self.main, &["switch", "-q", "-c", branch]);
+        fs::write(self.main.join("work.txt"), "Work.\n").unwrap();
+        git(&self.main, &["add", "."]);
+        git(&self.main, &["commit", "-q", "-m", "work"]);
+        git(&self.main, &["push", "-q", "origin", branch]);
+        let head = rev_parse(&self.main, "HEAD");
+        git(&self.main, &["switch", "-q", "main"]);
+        git(&self.main, &["branch", "-q", "-D", branch]);
+        head
+    }
+
+    /// Makes `gh pr view <pr>` show it with `head` on `branch`.
+    fn pr(&self, pr: &str, state: &str, branch: &str, head: &str, fork: bool) {
+        let view = json!({
+            "state": state,
+            "headRefName": branch,
+            "headRefOid": head,
+            "isCrossRepository": fork,
+        });
+        self.stubs
+            .respond("gh", &["pr", "view", pr], &view.to_string(), 0);
+    }
+}
+
+fn rev_parse(dir: &Path, rev: &str) -> String {
+    let output = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[test]
+fn a_worker_takes_over_an_open_pr_on_its_branch() {
+    let repo = Repo::new();
+    let head = repo.push_branch("issue-2");
+    repo.pr("40", "OPEN", "issue-2", &head, false);
+    repo.launches(STARTED, 0);
+    // The PR used up its rounds before the owner unblocked it.
+    repo.store()
+        .update(|state| {
+            state.reviews.insert(
+                40,
+                Review {
+                    sha: head.clone(),
+                    passed: false,
+                    failed: vec!["a".repeat(40), head.clone()],
+                },
+            );
+        })
+        .unwrap();
+
+    let output = repo.spawn(&[
+        "issue-2-fix",
+        "--issue",
+        "2",
+        "--pr",
+        "40",
+        "--prompt",
+        "Carry on PR #40.",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let worktree = repo.main.join(".claude/worktrees/issue-2-fix");
+    assert_eq!(rev_parse(&worktree, "HEAD"), head);
+    // On the PR's branch, tracking it, so a plain `git push` updates the PR.
+    let upstream = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD", "HEAD@{upstream}"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&upstream.stdout),
+        "issue-2\norigin/issue-2\n"
+    );
+
+    let state = repo.store().read().unwrap();
+    let worker = &state.workers["issue-2-fix"];
+    assert_eq!(worker.branch, "issue-2");
+    assert_eq!(worker.review_of, None);
+    // Its review rounds start over.
+    assert!(state.reviews[&40].failed.is_empty());
+
+    let settings: Value =
+        serde_json::from_str(&repo.worker_file("issue-2-fix", "settings.json")).unwrap();
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    assert!(
+        allow.contains(&json!("Bash(git push origin issue-2)")),
+        "{allow:?}"
+    );
+    assert!(
+        !allow.contains(&json!("Bash(git push origin issue-2-fix)")),
+        "{allow:?}"
+    );
+    let prompt = repo.worker_file("issue-2-fix", "prompt.md");
+    let words = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("your own branch, issue-2, which"),
+        "{prompt}"
+    );
+    assert!(words.contains("You take over PR #40"), "{prompt}");
+
+    // It records verdicts on the PR as its worker.
+    repo.stubs.respond("gh", &["issue", "edit"], "", 0);
+    let review = repo.orchestral(&["review", "40", "--fail", "--sha", &head]);
+    assert_eq!(review.status.code(), Some(0), "{}", stderr(&review));
+    assert!(
+        stdout(&review).contains("failed review"),
+        "{}",
+        stdout(&review)
+    );
+    let state = repo.store().read().unwrap();
+    assert_eq!(state.reviews[&40].failed, [head]);
+    let events = fs::read_to_string(repo.store().dir().join("events.jsonl")).unwrap();
+    assert!(
+        events.contains("issue-2-fix took over PR #40 on issue #2"),
+        "{events}"
+    );
+    assert!(
+        events.contains("pr #40 (worker issue-2-fix): review failed at")
+            && events.contains("(round 1 of 2): issue-2-fix is fixing it"),
+        "{events}"
+    );
+}
+
+#[test]
+fn a_takeover_needs_an_open_pr_of_this_repository_without_a_worker() {
+    let repo = Repo::new();
+    let head = repo.push_branch("issue-2");
+    repo.pr("41", "MERGED", "issue-2", &head, false);
+    repo.pr("42", "OPEN", "issue-2", &head, true);
+    repo.pr("40", "OPEN", "issue-2", &head, false);
+    repo.launches(STARTED, 0);
+    let take = |name: &str, pr: &str| {
+        repo.spawn(&[name, "--issue", "2", "--pr", pr, "--prompt", "Carry on."])
+    };
+
+    assert_refused(
+        &take("issue-2-a", "41"),
+        "PR #41 is merged",
+        "only an open PR can be taken over",
+    );
+    assert_refused(
+        &take("issue-2-a", "42"),
+        "PR #42 is from a fork",
+        "only a PR from a branch in this repository can be taken over",
+    );
+    assert_eq!(take("issue-2-a", "40").status.code(), Some(0));
+    assert_refused(
+        &take("issue-2-b", "40"),
+        "PR #40 already has a worker, issue-2-a",
+        "clean up issue-2-a first",
+    );
+    let proposal = repo.spawn(&[
+        "issue-2-c",
+        "--issue",
+        "2",
+        "--pr",
+        "40",
+        "--proposal",
+        "--prompt",
+        "Propose.",
+    ]);
+    assert_refused(
+        &proposal,
+        "--proposal is only for a worker starting fresh",
+        "drop --proposal or --pr",
+    );
+    let state = repo.store().read().unwrap();
+    assert_eq!(state.workers.keys().collect::<Vec<_>>(), ["issue-2-a"]);
 }
 
 #[test]
