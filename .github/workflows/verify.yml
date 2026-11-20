@@ -1,12 +1,12 @@
-# Runs the project's verify suite on the self-hosted runner for every PR head.
-# Merges require this job to pass at the PR head.
-# Self-hosted only while the repository is private. Before it goes public, move this
-# to GitHub-hosted runners and remove the runner: fork PR code must never run on a
-# maintainer's machine.
+# Runs the project's verify suite on GitHub-hosted macOS and Ubuntu runners for every
+# PR head. The final `verify` job passes only when both platforms pass, so a merge can
+# require that one check.
 name: verify
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,10 +16,27 @@ concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  verify:
-    runs-on: [self-hosted, macOS, orchestral]
-    timeout-minutes: 60
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - run: make verify
+
+  verify:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.test.result }}" = success
