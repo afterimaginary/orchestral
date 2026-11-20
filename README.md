@@ -6,7 +6,7 @@ A small workflow layer for Claude Code, as a plugin plus a Rust binary. Give it 
 
 ## How it works
 
-You talk to one Claude Code session, the **orchestrator**. It turns a brief into milestones and GitHub issues, starts a **worker** session for each issue it can work on, and passes messages between you and the workers. Each worker works in its own git worktree, opens a PR, has it reviewed by a fresh subagent, and marks it ready. A background **supervisor** process watches the workers and GitHub, wakes the orchestrator when something happens, and merges PRs once they've been approved and every check passes.
+You talk to one Claude Code session, the **orchestrator**. It turns a brief into milestones and GitHub issues, starts a **worker** session for each issue it can work on, and passes messages between you and the workers. Each worker works in its own git worktree (with the ignored files your `.worktreeinclude` lists, such as `.env`), opens a PR, has it reviewed by a fresh subagent, and marks it ready. A background **supervisor** process watches the workers and GitHub, wakes the orchestrator when something happens, and merges PRs once they've been approved and every check passes.
 
 Claude decides and the binary enforces: the `orchestral` binary refuses anything that breaks your policy, such as going past the worker cap, the plan's usage limit or the fleet's token budget, and workers can't merge, approve or push to `main`.
 

@@ -163,10 +163,11 @@ The pause and the cap are checked again under the state lock as the worker is re
 Then it:
 
 1. Fetches `origin main` and adds a worktree at `.claude/worktrees/<name>` on a new branch `<name>` from `origin/main`, not tracking it, and adds `/.claude/worktrees/` and `/.proposals/` (where workers write proposal files) to `.git/info/exclude`.
-2. Writes the worker's `settings.json` and `prompt.md` to `.git/orchestral/workers/<name>/`.
-3. Records the worker in the state, so a crash during launch leaves a visible entry, with `--proposal` also recording when its proposal started.
-4. Runs `claude --bg` in the worktree with Remote Control, those settings and that prompt, auto permission mode, and the model and effort. `--model` and `--effort` override the policy's `default_model` and `default_effort`.
-5. Reads the job id from the `backgrounded · <id> · <session name>` line and saves it with the worker.
+2. Copies the files the main checkout's `.worktreeinclude` names into the worktree, as Claude Code does for its own worktrees, so the worker and its preview have ignored files such as `.env` or `.claude/` files kept out of git. Each line is a pattern git matches as it does `.gitignore`'s, such as `.env`, `.claude/*` or `.claude/skills/`, with `#` starting a comment. Only untracked files in the main checkout that git ignores are copied, never other workers' worktrees, and a file the worktree already has, such as a tracked one, is never overwritten. Without a `.worktreeinclude`, nothing is copied.
+3. Writes the worker's `settings.json` and `prompt.md` to `.git/orchestral/workers/<name>/`.
+4. Records the worker in the state, so a crash during launch leaves a visible entry, with `--proposal` also recording when its proposal started.
+5. Runs `claude --bg` in the worktree with Remote Control, those settings and that prompt, auto permission mode, and the model and effort. `--model` and `--effort` override the policy's `default_model` and `default_effort`.
+6. Reads the job id from the `backgrounded · <id> · <session name>` line and saves it with the worker.
 
 A failure after the worktree is added removes the worker, its worktree and its branch, so the same name can be tried again. The exception is `claude --bg` exiting `0` without printing a job id: a session may be running, so everything is kept and it's an error. When Claude Code doesn't trust the repository, spawn refuses and says to run `claude` once in the main checkout and accept the trust prompt. Claude Code trusts a worktree when it trusts its main checkout. Any other failure is an error.
 

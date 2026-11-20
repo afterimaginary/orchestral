@@ -3,8 +3,9 @@
 
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use serde::Serialize;
 use serde_json::json;
@@ -27,6 +28,10 @@ const WORKTREES: &str = ".claude/worktrees";
 const PROPOSALS: &str = ".proposals";
 
 const PLUGIN: &str = "orchestral";
+
+/// The main checkout's list of ignored files a new worktree should get, in
+/// Claude Code's format.
+const WORKTREE_INCLUDE: &str = ".worktreeinclude";
 
 pub struct Request {
     pub name: String,
@@ -195,6 +200,7 @@ impl Launch<'_> {
         let name = &request.name;
         let prepare = || -> Result<(PathBuf, PathBuf), Failure> {
             exclude_worktrees(self.store.dir())?;
+            copy_included(self.main, self.worktree)?;
             let dir = self.store.dir().join("workers").join(name);
             fs::create_dir_all(&dir).map_err(|err| io_error(&dir, err))?;
             let settings = dir.join("settings.json");
@@ -414,6 +420,90 @@ fn exclude_worktrees(store: &Path) -> Result<(), Failure> {
         text.push('\n');
     }
     write(&exclude, &text)
+}
+
+/// Copies the main checkout's files that its `.worktreeinclude` names into
+/// the new worktree, so a worker has the ignored files a session in the main
+/// checkout has, such as `.env` or excluded `.claude/` files. Git matches the
+/// patterns as it does `.gitignore`'s, and only untracked files it also
+/// ignores are copied. A file the worktree already has is never overwritten.
+fn copy_included(main: &Path, worktree: &Path) -> Result<(), Failure> {
+    if !main.join(WORKTREE_INCLUDE).is_file() {
+        return Ok(());
+    }
+    let listed = git(
+        main,
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            &format!("--exclude-from={WORKTREE_INCLUDE}"),
+        ],
+    )?;
+    // Other workers' worktrees are nested repositories, listed with a
+    // trailing slash, and never copied.
+    let candidates: Vec<&str> = listed
+        .split_terminator('\0')
+        .filter(|path| !path.ends_with('/') && !path.starts_with(&format!("{WORKTREES}/")))
+        .collect();
+    for path in ignored(main, &candidates)? {
+        let from = main.join(&path);
+        let to = worktree.join(&path);
+        if to.symlink_metadata().is_ok() {
+            continue;
+        }
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|err| io_error(parent, err))?;
+        }
+        let meta = from
+            .symlink_metadata()
+            .map_err(|err| io_error(&from, err))?;
+        if meta.file_type().is_symlink() {
+            let target = fs::read_link(&from).map_err(|err| io_error(&from, err))?;
+            std::os::unix::fs::symlink(target, &to).map_err(|err| io_error(&to, err))?;
+        } else {
+            fs::copy(&from, &to).map_err(|err| io_error(&to, err))?;
+        }
+    }
+    Ok(())
+}
+
+/// Which of `paths` git ignores in `main`.
+fn ignored(main: &Path, paths: &[&str]) -> Result<Vec<String>, Failure> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut child = Command::new("git")
+        .args(["check-ignore", "-z", "--stdin"])
+        .current_dir(main)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
+    let input: Vec<u8> = paths
+        .iter()
+        .flat_map(|path| path.bytes().chain([0]))
+        .collect();
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    // Written from a thread, so a long answer can't block the input.
+    let writer = std::thread::spawn(move || stdin.write_all(&input));
+    let output = child
+        .wait_with_output()
+        .map_err(|err| Failure::Error(format!("can't run git: {err}")))?;
+    let _ = writer.join();
+    // Exit 1 means none of them is ignored.
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return Err(Failure::Error(format!(
+            "git check-ignore: {}",
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split_terminator('\0')
+        .map(str::to_owned)
+        .collect())
 }
 
 /// The worker's settings. Hooks use the binary's absolute path and `PATH` is

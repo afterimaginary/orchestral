@@ -158,6 +158,84 @@ fn starts_a_worker_in_its_own_worktree() {
     assert!(!prompt.contains("design proposal"), "{prompt}");
 }
 
+/// Writes `text` to `path` under `dir`, making its directories.
+fn put(dir: &Path, path: &str, text: &str) {
+    let path = dir.join(path);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// A main checkout with a tracked `.claude/settings.json` and `.gitignore`,
+/// and agent files kept out of git by `.git/info/exclude`.
+fn repo_with_ignored_files() -> Repo {
+    let repo = Repo::new();
+    put(&repo.main, ".claude/settings.json", "{}\n");
+    put(&repo.main, ".gitignore", "/.env\n");
+    git(&repo.main, &["add", "."]);
+    git(&repo.main, &["commit", "-q", "-m", "settings"]);
+    git(&repo.main, &["push", "-q", "origin", "main"]);
+    put(
+        &repo.main,
+        ".git/info/exclude",
+        "/.claude/CLAUDE.md\n/.claude/skills/\n",
+    );
+    put(&repo.main, ".claude/CLAUDE.md", "Workflow.\n");
+    put(&repo.main, ".claude/skills/review/SKILL.md", "Review.\n");
+    put(&repo.main, ".env", "TOKEN=x\n");
+    // Untracked but not ignored, and a tracked file with a local change.
+    put(&repo.main, "notes.txt", "Notes.\n");
+    put(&repo.main, ".claude/settings.json", "{\"local\": true}\n");
+    repo
+}
+
+#[test]
+fn a_worktree_gets_the_ignored_files_worktreeinclude_names() {
+    let repo = repo_with_ignored_files();
+    put(
+        &repo.main,
+        ".worktreeinclude",
+        "# Agent files and secrets.\n.claude/*\n.env\nnotes.txt\n",
+    );
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let worktree = repo.main.join(".claude/worktrees/issue-12");
+    let read = |path: &str| fs::read_to_string(worktree.join(path)).unwrap();
+    assert_eq!(read(".claude/CLAUDE.md"), "Workflow.\n");
+    assert_eq!(read(".claude/skills/review/SKILL.md"), "Review.\n");
+    assert_eq!(read(".env"), "TOKEN=x\n");
+    // Tracked files come from the branch, and a file git doesn't ignore
+    // stays behind.
+    assert_eq!(read(".claude/settings.json"), "{}\n");
+    assert!(!worktree.join("notes.txt").exists());
+
+    // A second worker gets the files too, but not the first one's worktree.
+    let started = STARTED.replace("app-issue-12", "app-issue-13");
+    repo.launches(&started, 0);
+    let output = repo.spawn(&["issue-13", "--issue", "13", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let second = repo.main.join(".claude/worktrees/issue-13");
+    assert!(second.join(".claude/CLAUDE.md").exists());
+    assert!(!second.join(".claude/worktrees").exists());
+}
+
+#[test]
+fn without_a_worktreeinclude_no_ignored_files_are_copied() {
+    let repo = repo_with_ignored_files();
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let worktree = repo.main.join(".claude/worktrees/issue-12");
+    assert!(worktree.join(".claude/settings.json").exists());
+    assert!(!worktree.join(".claude/CLAUDE.md").exists());
+    assert!(!worktree.join(".env").exists());
+}
+
 #[test]
 fn a_proposal_worker_is_recorded_and_told_how_to_propose() {
     let repo = Repo::new();
