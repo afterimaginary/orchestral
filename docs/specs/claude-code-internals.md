@@ -94,7 +94,7 @@ A record may be half-written when read, so one that doesn't parse is skipped.
 
 ## `claude agents --json`
 
-`claude agents --json --all` prints a JSON array of sessions, including finished and stopped ones. The list comes from `~/.claude/jobs/<id>/state.json`, so it survives a reboot: on 2.1.316, sessions from weeks before the machine's last boot were still listed, as `failed` or `blocked`. The same `state.json` has `detail`, the session's own one-line account of what it's doing or waiting for, such as `#94 commit/push/PR blocked by classifier; awaiting your call`, and, while it's blocked, `needs`, such as `rate limited — wait and retry · You've hit your session limit · resets 11:30pm (America/Los_Angeles)`. Each entry has `id`, the short job id `claude --bg` printed, and `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
+`claude agents --json --all` prints a JSON array of sessions, including finished and stopped ones. The list comes from `~/.claude/jobs/<id>/state.json`, so it survives a reboot: on 2.1.316, sessions from weeks before the machine's last boot were still listed, as `failed` or `blocked`. The same `state.json` has `detail`, the session's own one-line account of what it's doing or waiting for, such as `#94 commit/push/PR blocked by classifier; awaiting your call`, and, while it's blocked, `needs`, such as `rate limited — wait and retry · You've hit your session limit · resets 11:30pm (Europe/Berlin)`. Each entry has `id`, the short job id `claude --bg` printed, and `sessionId`, `cwd`, `kind`, `startedAt` and `name`. Most also have:
 
 | Field | Meaning |
 | --- | --- |
@@ -128,8 +128,8 @@ Claude Code records the directories whose trust prompt was accepted in `.claude.
 `claude -p /usage --no-session-persistence --settings '{"disableAllHooks":true}'`, run from a temporary directory, prints the plan's usage windows (ADR-0008, fixture `usage.txt`). Each window is one line:
 
 ```
-Current session: 2% used · resets Nov 2 at 6:49am (America/Los_Angeles)
-Current week (all models): 26% used · resets Nov 4 at 12:59pm (America/Los_Angeles)
+Current session: 2% used · resets Nov 2 at 6:49am (Europe/Berlin)
+Current week (all models): 26% used · resets Nov 4 at 12:59pm (Europe/Berlin)
 ```
 
 The label is `session` or `week (<models>)`. The reset time has no year, drops `:00` on the hour, and is in the IANA time zone in parentheses. Reset times drift by a minute between reads of the same window, so a reset is confirmed as ADR-0008 describes, not by a changed time. A breakdown of what used the plan follows the windows.

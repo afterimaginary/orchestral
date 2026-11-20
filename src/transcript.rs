@@ -320,8 +320,8 @@ mod tests {
     #[test]
     fn project_dirs_replace_every_non_alphanumeric_character() {
         assert_eq!(
-            project_dir_name(Path::new("/Users/dev/src/my_app.v2")),
-            "-Users-dev-src-my-app-v2"
+            project_dir_name(Path::new("/home/dev/src/my_app.x")),
+            "-home-dev-src-my-app-x"
         );
     }
 

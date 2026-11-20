@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 
 use common::Stubs;
 use orchestral::sessions;
-use orchestral::state::{Store, WoundDown};
+use orchestral::state::{Review, Store, WoundDown};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -156,6 +156,84 @@ fn starts_a_worker_in_its_own_worktree() {
     // Only a proposal worker is told how to propose.
     let prompt = repo.worker_file("issue-12", "prompt.md");
     assert!(!prompt.contains("design proposal"), "{prompt}");
+}
+
+/// Writes `text` to `path` under `dir`, making its directories.
+fn put(dir: &Path, path: &str, text: &str) {
+    let path = dir.join(path);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// A main checkout with a tracked `.claude/settings.json` and `.gitignore`,
+/// and agent files kept out of git by `.git/info/exclude`.
+fn repo_with_ignored_files() -> Repo {
+    let repo = Repo::new();
+    put(&repo.main, ".claude/settings.json", "{}\n");
+    put(&repo.main, ".gitignore", "/.env\n");
+    git(&repo.main, &["add", "."]);
+    git(&repo.main, &["commit", "-q", "-m", "settings"]);
+    git(&repo.main, &["push", "-q", "origin", "main"]);
+    put(
+        &repo.main,
+        ".git/info/exclude",
+        "/.claude/CLAUDE.md\n/.claude/skills/\n",
+    );
+    put(&repo.main, ".claude/CLAUDE.md", "Workflow.\n");
+    put(&repo.main, ".claude/skills/review/SKILL.md", "Review.\n");
+    put(&repo.main, ".env", "TOKEN=x\n");
+    // Untracked but not ignored, and a tracked file with a local change.
+    put(&repo.main, "notes.txt", "Notes.\n");
+    put(&repo.main, ".claude/settings.json", "{\"local\": true}\n");
+    repo
+}
+
+#[test]
+fn a_worktree_gets_the_ignored_files_worktreeinclude_names() {
+    let repo = repo_with_ignored_files();
+    put(
+        &repo.main,
+        ".worktreeinclude",
+        "# Agent files and secrets.\n.claude/*\n.env\nnotes.txt\n",
+    );
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let worktree = repo.main.join(".claude/worktrees/issue-12");
+    let read = |path: &str| fs::read_to_string(worktree.join(path)).unwrap();
+    assert_eq!(read(".claude/CLAUDE.md"), "Workflow.\n");
+    assert_eq!(read(".claude/skills/review/SKILL.md"), "Review.\n");
+    assert_eq!(read(".env"), "TOKEN=x\n");
+    // Tracked files come from the branch, and a file git doesn't ignore
+    // stays behind.
+    assert_eq!(read(".claude/settings.json"), "{}\n");
+    assert!(!worktree.join("notes.txt").exists());
+
+    // A second worker gets the files too, but not the first one's worktree.
+    let started = STARTED.replace("app-issue-12", "app-issue-13");
+    repo.launches(&started, 0);
+    let output = repo.spawn(&["issue-13", "--issue", "13", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let second = repo.main.join(".claude/worktrees/issue-13");
+    assert!(second.join(".claude/CLAUDE.md").exists());
+    assert!(!second.join(".claude/worktrees").exists());
+}
+
+#[test]
+fn without_a_worktreeinclude_no_ignored_files_are_copied() {
+    let repo = repo_with_ignored_files();
+    repo.launches(STARTED, 0);
+
+    let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let worktree = repo.main.join(".claude/worktrees/issue-12");
+    assert!(worktree.join(".claude/settings.json").exists());
+    assert!(!worktree.join(".claude/CLAUDE.md").exists());
+    assert!(!worktree.join(".env").exists());
 }
 
 #[test]
@@ -488,18 +566,17 @@ fn a_window_at_the_plan_limit_is_refused() {
     let repo = Repo::new();
     repo.policy("plan_limit_percent: 80\n");
     repo.usage(
-        "Current session: 95% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n\
-         Current week (all models): 80% used · resets Nov 4 at 1pm (America/Los_Angeles)\n",
+        "Current session: 95% used · resets Nov 2 at 6:49am (Europe/Berlin)\n\
+         Current week (all models): 80% used · resets Nov 4 at 1pm (Europe/Berlin)\n",
     );
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
 
-    // The zone abbreviation, PST or PDT, depends on the year.
     assert_refused(
         &output,
         "the week (all models) window is 80% used, at or past plan_limit_percent (80%)",
-        "wait until it resets at Nov 4 at 1:00pm P",
+        "wait until it resets at Nov 4 at 1:00pm CET",
     );
     assert!(repo.bg_calls().is_empty());
 }
@@ -507,7 +584,7 @@ fn a_window_at_the_plan_limit_is_refused() {
 #[test]
 fn windows_under_the_plan_limit_spawn() {
     let repo = Repo::new();
-    repo.usage("Current session: 84% used · resets Nov 2 at 6:49am (America/Los_Angeles)\n");
+    repo.usage("Current session: 84% used · resets Nov 2 at 6:49am (Europe/Berlin)\n");
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
@@ -610,20 +687,23 @@ fn a_run_over_its_fleet_budget_is_refused() {
 #[test]
 fn a_worker_s_review_subagent_gets_the_policy_s_review_command() {
     let repo = Repo::new();
-    repo.policy("review_command: Run /refine on the PR.\n");
+    repo.policy("review_command: Run the review checklist on the PR.\n");
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&["issue-12", "--issue", "12", "--prompt", "Go."]);
 
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let prompt = repo.worker_file("issue-12", "prompt.md");
-    assert!(prompt.contains("\"Run /refine on the PR. Flag"), "{prompt}");
+    assert!(
+        prompt.contains("\"Run the review checklist on the PR. Flag"),
+        "{prompt}"
+    );
 }
 
 #[test]
 fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
     let repo = Repo::new();
-    repo.policy("review_command: Run /refine on the PR.\n");
+    repo.policy("review_command: Run the review checklist on the PR.\n");
     repo.launches(STARTED, 0);
 
     let output = repo.spawn(&[
@@ -644,7 +724,10 @@ fn a_reviewer_gets_the_review_prompt_and_the_policy_s_review_command() {
         prompt.contains("reviewing PR #40 against issue #12"),
         "{prompt}"
     );
-    assert!(prompt.contains("- Run /refine on the PR.\n"), "{prompt}");
+    assert!(
+        prompt.contains("- Run the review checklist on the PR.\n"),
+        "{prompt}"
+    );
     assert!(prompt.contains("review 40 --pass --sha <head>"), "{prompt}");
     // A reviewer may comment on its PR, and push nothing.
     let settings: Value =
@@ -686,7 +769,7 @@ fn a_pr_gets_one_reviewer() {
 }
 
 #[test]
-fn a_reviewer_needs_a_pr_and_a_worker_takes_none() {
+fn a_reviewer_needs_a_pr() {
     let repo = Repo::new();
 
     let reviewer = repo.spawn(&[
@@ -698,13 +781,185 @@ fn a_reviewer_needs_a_pr_and_a_worker_takes_none() {
         "--prompt",
         "Review.",
     ]);
-    let worker = repo.spawn(&[
-        "issue-12", "--issue", "12", "--pr", "40", "--prompt", "Work.",
-    ]);
 
     assert_eq!(reviewer.status.code(), Some(1), "{}", stderr(&reviewer));
-    assert_eq!(worker.status.code(), Some(2), "{}", stderr(&worker));
-    assert!(stderr(&worker).contains("--pr is only for `--role reviewer`"));
+}
+
+impl Repo {
+    /// Pushes a branch `branch` with one commit beyond `main`, and returns
+    /// that commit.
+    fn push_branch(&self, branch: &str) -> String {
+        git(&self.main, &["switch", "-q", "-c", branch]);
+        fs::write(self.main.join("work.txt"), "Work.\n").unwrap();
+        git(&self.main, &["add", "."]);
+        git(&self.main, &["commit", "-q", "-m", "work"]);
+        git(&self.main, &["push", "-q", "origin", branch]);
+        let head = rev_parse(&self.main, "HEAD");
+        git(&self.main, &["switch", "-q", "main"]);
+        git(&self.main, &["branch", "-q", "-D", branch]);
+        head
+    }
+
+    /// Makes `gh pr view <pr>` show it with `head` on `branch`.
+    fn pr(&self, pr: &str, state: &str, branch: &str, head: &str, fork: bool) {
+        let view = json!({
+            "state": state,
+            "headRefName": branch,
+            "headRefOid": head,
+            "isCrossRepository": fork,
+        });
+        self.stubs
+            .respond("gh", &["pr", "view", pr], &view.to_string(), 0);
+    }
+}
+
+fn rev_parse(dir: &Path, rev: &str) -> String {
+    let output = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[test]
+fn a_worker_takes_over_an_open_pr_on_its_branch() {
+    let repo = Repo::new();
+    let head = repo.push_branch("issue-2");
+    repo.pr("40", "OPEN", "issue-2", &head, false);
+    repo.launches(STARTED, 0);
+    // The PR used up its rounds before the owner unblocked it.
+    repo.store()
+        .update(|state| {
+            state.reviews.insert(
+                40,
+                Review {
+                    sha: head.clone(),
+                    passed: false,
+                    failed: vec!["a".repeat(40), head.clone()],
+                },
+            );
+        })
+        .unwrap();
+
+    let output = repo.spawn(&[
+        "issue-2-fix",
+        "--issue",
+        "2",
+        "--pr",
+        "40",
+        "--prompt",
+        "Carry on PR #40.",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let worktree = repo.main.join(".claude/worktrees/issue-2-fix");
+    assert_eq!(rev_parse(&worktree, "HEAD"), head);
+    // On the PR's branch, tracking it, so a plain `git push` updates the PR.
+    let upstream = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD", "HEAD@{upstream}"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&upstream.stdout),
+        "issue-2\norigin/issue-2\n"
+    );
+
+    let state = repo.store().read().unwrap();
+    let worker = &state.workers["issue-2-fix"];
+    assert_eq!(worker.branch, "issue-2");
+    assert_eq!(worker.review_of, None);
+    // Its review rounds start over.
+    assert!(state.reviews[&40].failed.is_empty());
+
+    let settings: Value =
+        serde_json::from_str(&repo.worker_file("issue-2-fix", "settings.json")).unwrap();
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    assert!(
+        allow.contains(&json!("Bash(git push origin issue-2)")),
+        "{allow:?}"
+    );
+    assert!(
+        !allow.contains(&json!("Bash(git push origin issue-2-fix)")),
+        "{allow:?}"
+    );
+    let prompt = repo.worker_file("issue-2-fix", "prompt.md");
+    let words = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("your own branch, issue-2, which"),
+        "{prompt}"
+    );
+    assert!(words.contains("You take over PR #40"), "{prompt}");
+
+    // It records verdicts on the PR as its worker.
+    repo.stubs.respond("gh", &["issue", "edit"], "", 0);
+    let review = repo.orchestral(&["review", "40", "--fail", "--sha", &head]);
+    assert_eq!(review.status.code(), Some(0), "{}", stderr(&review));
+    assert!(
+        stdout(&review).contains("failed review"),
+        "{}",
+        stdout(&review)
+    );
+    let state = repo.store().read().unwrap();
+    assert_eq!(state.reviews[&40].failed, [head]);
+    let events = fs::read_to_string(repo.store().dir().join("events.jsonl")).unwrap();
+    assert!(
+        events.contains("issue-2-fix took over PR #40 on issue #2"),
+        "{events}"
+    );
+    assert!(
+        events.contains("pr #40 (worker issue-2-fix): review failed at")
+            && events.contains("(round 1 of 2): issue-2-fix is fixing it"),
+        "{events}"
+    );
+}
+
+#[test]
+fn a_takeover_needs_an_open_pr_of_this_repository_without_a_worker() {
+    let repo = Repo::new();
+    let head = repo.push_branch("issue-2");
+    repo.pr("41", "MERGED", "issue-2", &head, false);
+    repo.pr("42", "OPEN", "issue-2", &head, true);
+    repo.pr("40", "OPEN", "issue-2", &head, false);
+    repo.launches(STARTED, 0);
+    let take = |name: &str, pr: &str| {
+        repo.spawn(&[name, "--issue", "2", "--pr", pr, "--prompt", "Carry on."])
+    };
+
+    assert_refused(
+        &take("issue-2-a", "41"),
+        "PR #41 is merged",
+        "only an open PR can be taken over",
+    );
+    assert_refused(
+        &take("issue-2-a", "42"),
+        "PR #42 is from a fork",
+        "only a PR from a branch in this repository can be taken over",
+    );
+    assert_eq!(take("issue-2-a", "40").status.code(), Some(0));
+    assert_refused(
+        &take("issue-2-b", "40"),
+        "PR #40 already has a worker, issue-2-a",
+        "clean up issue-2-a first",
+    );
+    let proposal = repo.spawn(&[
+        "issue-2-c",
+        "--issue",
+        "2",
+        "--pr",
+        "40",
+        "--proposal",
+        "--prompt",
+        "Propose.",
+    ]);
+    assert_refused(
+        &proposal,
+        "--proposal is only for a worker starting fresh",
+        "drop --proposal or --pr",
+    );
+    let state = repo.store().read().unwrap();
+    assert_eq!(state.workers.keys().collect::<Vec<_>>(), ["issue-2-a"]);
 }
 
 #[test]

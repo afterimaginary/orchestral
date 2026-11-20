@@ -5,19 +5,26 @@
 //! It prints only while its session holds the claim, and prints each event
 //! after `watch-cursor`, the last `seq` delivered. A session that takes over
 //! the claim carries on from there, so no event is lost.
+//!
+//! While it runs it also beats: it touches `watch/<session id>` in the store
+//! each poll, so `claim` can tell whether its session will hear events.
 
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::outcome::Failure;
 use crate::state::{Event, Store};
 
 /// How often it checks the claim and new events. Under 2 seconds, so it
 /// starts printing within 2 seconds of a claim.
-const POLL: Duration = Duration::from_secs(1);
+pub(crate) const POLL: Duration = Duration::from_secs(1);
+
+/// How old a beat may be and still mean its watch is running: a few polls,
+/// so a slow one isn't taken for a stopped one.
+const FRESH: Duration = Duration::from_secs(5);
 
 /// Runs until its session ends: stdout closes, or the session that started
 /// it exits and leaves it orphaned.
@@ -29,6 +36,7 @@ pub fn watch(cwd: &Path) -> Result<(), Failure> {
     loop {
         // A silent watch never writes, so it can't notice stdout closing.
         if std::os::unix::process::parent_id() == 1 {
+            stop_beating(store.as_ref(), &session_id);
             return Ok(());
         }
         // Outside a git repository it stays silent, but the directory may
@@ -39,11 +47,13 @@ pub fn watch(cwd: &Path) -> Result<(), Failure> {
         if let Some(store) = &store
             && !session_id.is_empty()
         {
+            beat(store, &session_id);
             let (lines, last) = deliverable(store, &session_id, &mut events);
             for line in lines {
-                writeln!(stdout, "{line}")
-                    .and_then(|()| stdout.flush())
-                    .map_err(|err| Failure::Error(format!("can't print events: {err}")))?;
+                if let Err(err) = writeln!(stdout, "{line}").and_then(|()| stdout.flush()) {
+                    stop_beating(Some(store), &session_id);
+                    return Err(Failure::Error(format!("can't print events: {err}")));
+                }
             }
             // Events already printed aren't read again by this process, so
             // a cursor it can't save only matters to a successor.
@@ -55,6 +65,50 @@ pub fn watch(cwd: &Path) -> Result<(), Failure> {
         }
         thread::sleep(POLL);
     }
+}
+
+/// Whether a `watch` for `session_id` beat in `store` within [`FRESH`].
+pub(crate) fn is_running(store: &Store, session_id: &str) -> bool {
+    let Some(path) = beat_path(store, session_id) else {
+        return false;
+    };
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .is_ok_and(|modified| {
+            SystemTime::now()
+                .duration_since(modified)
+                .is_ok_and(|age| age <= FRESH)
+        })
+}
+
+/// Records that this watch is running. Only in a store that exists, so a
+/// session in a repository orchestral never ran in leaves no trace there.
+/// A beat it can't write only costs a warning from `claim`.
+fn beat(store: &Store, session_id: &str) {
+    if !store.dir().is_dir() {
+        return;
+    }
+    let Some(path) = beat_path(store, session_id) else {
+        return;
+    };
+    let _ = fs::create_dir_all(store.dir().join("watch"))
+        .and_then(|()| fs::write(path, format!("{}\n", std::process::id())));
+}
+
+/// Removes this watch's beat as it exits, so beats don't pile up.
+fn stop_beating(store: Option<&Store>, session_id: &str) {
+    if let Some(path) = store.and_then(|store| beat_path(store, session_id)) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// `watch/<session id>`, for a session id that's safe as a file name.
+fn beat_path(store: &Store, session_id: &str) -> Option<PathBuf> {
+    let safe = !session_id.is_empty()
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    safe.then(|| store.dir().join("watch").join(session_id))
 }
 
 /// The lines to print now, events after the cursor while `session_id` holds

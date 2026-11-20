@@ -3,12 +3,15 @@
 
 use std::fmt;
 use std::path::Path;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
 use crate::outcome::Failure;
 use crate::sessions::{self, Record};
 use crate::state::{Orchestrator, Store};
+use crate::watch;
 
 /// What `resolve` takes to mean the claimed orchestrator.
 pub const ORCHESTRATOR: &str = "orchestrator";
@@ -18,6 +21,9 @@ pub struct Claimed {
     pub session_id: String,
     /// The holder whose claim was taken over, when it had ended.
     pub replaced: Option<String>,
+    /// Problems that don't stop the claim but need fixing before workers
+    /// start, such as no `watch` running for this session.
+    pub warnings: Vec<String>,
 }
 
 impl fmt::Display for Claimed {
@@ -26,7 +32,11 @@ impl fmt::Display for Claimed {
         if let Some(old) = &self.replaced {
             write!(f, ", taking over from ended session {old}")?;
         }
-        write!(f, ".")
+        write!(f, ".")?;
+        for warning in &self.warnings {
+            write!(f, "\nwarning: {warning}")?;
+        }
+        Ok(())
     }
 }
 
@@ -54,7 +64,7 @@ pub fn claim(cwd: &Path) -> Result<Claimed, Failure> {
     let store = Store::for_repo(cwd)?;
     let records = live_records()?;
     let mut already_held = false;
-    let claimed = store.update(|state| {
+    let mut claimed = store.update(|state| {
         let replaced = match &state.orchestrator {
             Some(holder) if holder.session_id == session_id => {
                 already_held = true;
@@ -76,6 +86,7 @@ pub fn claim(cwd: &Path) -> Result<Claimed, Failure> {
         Ok(Claimed {
             session_id: session_id.clone(),
             replaced,
+            warnings: Vec::new(),
         })
     })??;
     if !already_held {
@@ -84,7 +95,40 @@ pub fn claim(cwd: &Path) -> Result<Claimed, Failure> {
             &format!("session {session_id} claimed the repository"),
         )?;
     }
+    if !watch_running(&store, &session_id) {
+        claimed.warnings.push(no_monitor_warning());
+    }
     Ok(claimed)
+}
+
+/// Whether a `watch` for `session_id` is running. A watch beats only once
+/// the store exists, and one may have just started, so it waits a couple of
+/// polls for a beat before saying no.
+fn watch_running(store: &Store, session_id: &str) -> bool {
+    let wait = watch::POLL * 2;
+    let start = Instant::now();
+    loop {
+        if watch::is_running(store, session_id) {
+            return true;
+        }
+        if start.elapsed() >= wait {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Events reach the orchestrator only through `watch`, so without one this
+/// session would never hear from its workers.
+fn no_monitor_warning() -> String {
+    let watch = std::env::current_exe()
+        .map(|exe| format!("`{} watch`", exe.display()))
+        .unwrap_or_else(|_| "`orchestral watch` from the plugin's `bin`".into());
+    format!(
+        "no event monitor is running for this session, so fleet events won't reach it; \
+         start {watch} as a persistent background monitor, or restart the session \
+         so the plugin's `orchestral-events` monitor starts, then claim again"
+    )
 }
 
 /// The address of a worker, or of the orchestrator for `orchestrator`.

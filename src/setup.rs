@@ -23,6 +23,9 @@ pub const TESTED_CLAUDE: &str = "2.1.314";
 const BLOCK_START: &str = "# >>> orchestral >>>";
 const BLOCK_END: &str = "# <<< orchestral <<<";
 
+/// Where a marketplace install's build sits in its version's directory.
+const BUILD: &str = "target/release/orchestral";
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -237,15 +240,30 @@ fn install_pre_push(main: &Path) -> Result<PathBuf, Failure> {
 fn block() -> Result<String, Failure> {
     let exe = std::env::current_exe()
         .map_err(|err| Failure::Error(format!("can't find this binary: {err}")))?;
-    let exe = exe.display().to_string().replace('\'', "'\\''");
+    let newest = match versions_dir(&exe) {
+        Some(versions) => format!(
+            "# A plugin update installs its build next to this one, so run the newest.
+orchestral_versions='{}'
+for orchestral_copy in \"$orchestral_versions\"/*/{BUILD}; do
+  if [ -x \"$orchestral_copy\" ] && {{ [ ! -x \"$orchestral_bin\" ] || [ \"$orchestral_copy\" -nt \"$orchestral_bin\" ]; }}; then
+    orchestral_bin=$orchestral_copy
+  fi
+done
+",
+            quoted(versions)
+        ),
+        None => String::new(),
+    };
+    let exe = quoted(&exe);
     Ok(format!(
         "{BLOCK_START}
 # Rejects a worker's push to main. Managed by `orchestral init`.
 orchestral_refs=$(cat)
-if [ -x '{exe}' ]; then
-  printf '%s\\n' \"$orchestral_refs\" | '{exe}' hook pre-push \"$@\" || exit 1
+orchestral_bin='{exe}'
+{newest}if [ -x \"$orchestral_bin\" ]; then
+  printf '%s\\n' \"$orchestral_refs\" | \"$orchestral_bin\" hook pre-push \"$@\" || exit 1
 else
-  echo \"orchestral isn't at {exe} any more; run orchestral init again\" >&2
+  echo \"orchestral isn't at $orchestral_bin any more; run orchestral init again\" >&2
   # Without the binary, still reject a worker's push to main, as
   # guard::pre_push does.
   if [ -n \"$ORCHESTRAL_WORKER\" ] && printf '%s\\n' \"$orchestral_refs\" |
@@ -260,6 +278,48 @@ ORCHESTRAL_REFS
 {BLOCK_END}
 "
     ))
+}
+
+/// The directory holding every installed version of the plugin, when `exe`
+/// is a marketplace install's build, at
+/// `plugins/cache/<marketplace>/<plugin>/<version>/target/release/orchestral`
+/// (ADR-0012).
+fn versions_dir(exe: &Path) -> Option<&Path> {
+    let versions = exe.ancestors().nth(4)?;
+    let cache = versions.ancestors().nth(2)?;
+    (exe.ends_with(BUILD) && cache.ends_with("plugins/cache")).then_some(versions)
+}
+
+/// `path` for use inside single quotes in the hook.
+fn quoted(path: &Path) -> String {
+    path.display().to_string().replace('\'', "'\\''")
+}
+
+/// The binary the hook runs: `exe`, or a build in another version's
+/// directory under `versions` that's newer, as the hook's loop picks.
+fn newest(exe: PathBuf, versions: Option<&Path>) -> Option<PathBuf> {
+    let executable = |path: &Path| {
+        fs::metadata(path)
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    };
+    let modified = |path: &Path| fs::metadata(path).and_then(|meta| meta.modified()).ok();
+    let mut copies: Vec<PathBuf> = versions
+        .and_then(|versions| fs::read_dir(versions).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path().join(BUILD)))
+        .collect();
+    copies.sort();
+    let mut bin = executable(&exe).then_some(exe);
+    for copy in copies.into_iter().filter(|copy| executable(copy)) {
+        if bin
+            .as_deref()
+            .is_none_or(|bin| modified(&copy) > modified(bin))
+        {
+            bin = Some(copy);
+        }
+    }
+    bin
 }
 
 /// `hook` with `block` in place of any earlier one, or after its first
@@ -383,8 +443,9 @@ fn policy(cwd: &Path) -> Check {
     ok("policy", format!("valid, from {sources}"))
 }
 
-/// Whether the pre-push hook has Orchestral's block, and the binary it calls
-/// is still there. A plugin update moves the binary.
+/// Whether the pre-push hook has Orchestral's block, and a binary it calls
+/// is still there. A plugin update moves the binary, and the hook follows a
+/// marketplace install to its newest version.
 fn hook(main: &Path) -> Check {
     let hook = git(
         main,
@@ -392,29 +453,36 @@ fn hook(main: &Path) -> Check {
     )
     .map(|hooks| PathBuf::from(hooks.trim()).join("pre-push"));
     let text = hook.ok().and_then(|hook| fs::read_to_string(hook).ok());
-    let Some(text) = text.filter(|text| text.contains(BLOCK_START)) else {
+    let Some(block) = text
+        .as_deref()
+        .and_then(|text| text.find(BLOCK_START).map(|start| &text[start..]))
+    else {
         return warn(
             "hook",
             "the pre-push hook isn't installed; run `orchestral init`".into(),
         );
     };
-    let exe = text[text.find(BLOCK_START).unwrap_or(0)..]
-        .split_once("if [ -x '")
-        .and_then(|(_, rest)| rest.split_once("' ]; then"))
-        .map(|(exe, _)| exe.replace("'\\''", "'"));
-    match exe {
-        // As the hook's `[ -x ]` test.
-        Some(exe)
-            if fs::metadata(&exe)
-                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0) =>
-        {
-            ok("hook", format!("calls {exe}"))
-        }
-        _ => warn(
+    let Some(exe) = assigned(block, "orchestral_bin") else {
+        return warn(
+            "hook",
+            "the pre-push hook is out of date; run `orchestral init` again".into(),
+        );
+    };
+    let versions = assigned(block, "orchestral_versions").map(PathBuf::from);
+    match newest(PathBuf::from(exe), versions.as_deref()) {
+        Some(bin) => ok("hook", format!("calls {}", bin.display())),
+        None => warn(
             "hook",
             "the pre-push hook calls a binary that has moved; run `orchestral init` again".into(),
         ),
     }
+}
+
+/// The single-quoted value the hook's `block` assigns to `name`.
+fn assigned(block: &str, name: &str) -> Option<String> {
+    let (_, rest) = block.split_once(&format!("\n{name}='"))?;
+    let (value, _) = rest.split_once("'\n")?;
+    Some(value.replace("'\\''", "'"))
 }
 
 fn portless() -> Check {
@@ -513,6 +581,25 @@ mod tests {
             with_block(Some(hook), BLOCK),
             format!("#!/bin/sh\n{BLOCK}make ready\n")
         );
+    }
+
+    #[test]
+    fn only_a_marketplace_install_has_a_versions_directory() {
+        let installed = Path::new(
+            "/home/dev/.claude/plugins/cache/market/orchestral/abc123/target/release/orchestral",
+        );
+        assert_eq!(
+            versions_dir(installed),
+            Some(Path::new(
+                "/home/dev/.claude/plugins/cache/market/orchestral"
+            ))
+        );
+        let checkout = Path::new("/home/dev/src/orchestral/target/release/orchestral");
+        assert_eq!(versions_dir(checkout), None);
+        let debug = Path::new(
+            "/home/dev/.claude/plugins/cache/market/orchestral/abc123/target/debug/orchestral",
+        );
+        assert_eq!(versions_dir(debug), None);
     }
 
     #[test]

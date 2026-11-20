@@ -213,3 +213,28 @@ fn a_cursor_from_before_a_state_reset_is_ignored() {
     assert_eq!(watch.line(QUIET).as_deref(), Some("one"));
     repo.wait_for_cursor("1\n");
 }
+
+#[test]
+fn beats_for_its_session_while_running() {
+    let repo = Repo::new();
+    repo.record("one");
+    let beat = repo.store().dir().join("watch").join(ME);
+    let _watch = Watch::start(&repo.main, ME);
+    let start = Instant::now();
+    while !beat.exists() {
+        assert!(start.elapsed() < QUIET, "no beat at {}", beat.display());
+        thread::sleep(Duration::from_millis(50));
+    }
+    let first = fs::metadata(&beat).unwrap().modified().unwrap();
+    thread::sleep(Duration::from_millis(2500));
+    assert!(fs::metadata(&beat).unwrap().modified().unwrap() > first);
+}
+
+#[test]
+fn leaves_no_store_in_a_repository_without_one() {
+    let repo = Repo::new();
+    let mut watch = Watch::start(&repo.main, ME);
+    assert_eq!(watch.line(QUIET), None);
+    assert!(watch.is_running());
+    assert!(!repo.store().dir().exists());
+}

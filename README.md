@@ -2,11 +2,21 @@
 
 A small workflow layer for Claude Code, as a plugin plus a Rust binary. Give it a brief, and it plans the work, runs a fleet of worker sessions, respects your budget, and brings you in for the designs and decisions that are yours.
 
-**Status:** early. Every part runs end to end on a test repository, from planning through review to merge. Long unattended runs, such as a fleet idling overnight, are still being tested, so stay within reach on a first run. Progress is in [`STATE.md`](STATE.md).
+![A real run: a worker takes a GitHub issue in a test repository to a reviewed PR, and `orchestral status` and `merge-check` show where it stands](docs/demo.gif)
+
+A real run, with the waits cut: a worker takes an issue to a reviewed PR. In normal use you don't type these commands; the orchestrator session runs them and tells you what needs you. [`demo/demo.tape`](demo/demo.tape) records it again.
+
+## Why
+
+Running several Claude Code sessions at once makes you the dispatcher. You split the work, start each session, remember which one is waiting on you, check what each PR did, watch the plan's usage limits, and merge. Most of that is bookkeeping, and the rest, the decisions, gets lost in it.
+
+Orchestral does the bookkeeping. One session plans and dispatches, a small binary enforces the limits you set and keeps the fleet moving while you're away, and every question, design choice and merge that's yours to make comes to you in one place, with reminders until you answer. It has taken a project from a brief to a public release: [cc-notify-tts](https://github.com/afterimaginary/cc-notify-tts) was planned and built by an Orchestral fleet.
+
+**Status:** early. Every part runs end to end, from planning through review to merge. Long unattended runs, such as a fleet idling for days, are still being tested ([#2](https://github.com/afterimaginary/orchestral/issues/2), [#44](https://github.com/afterimaginary/orchestral/issues/44)), so stay within reach on a first run.
 
 ## How it works
 
-You talk to one Claude Code session, the **orchestrator**. It turns a brief into milestones and GitHub issues, starts a **worker** session for each issue it can work on, and passes messages between you and the workers. Each worker works in its own git worktree, opens a PR, has it reviewed by a fresh subagent, and marks it ready. A background **supervisor** process watches the workers and GitHub, wakes the orchestrator when something happens, and merges PRs once they've been approved and every check passes.
+You talk to one Claude Code session, the **orchestrator**. It turns a brief into milestones and GitHub issues, starts a **worker** session for each issue it can work on, and passes messages between you and the workers. Each worker works in its own git worktree (with the ignored files your `.worktreeinclude` lists, such as `.env`), opens a PR, has it reviewed by a fresh subagent, and marks it ready. A background **supervisor** process watches the workers and GitHub, wakes the orchestrator when something happens, and merges PRs once they've been approved and every check passes.
 
 Claude decides and the binary enforces: the `orchestral` binary refuses anything that breaks your policy, such as going past the worker cap, the plan's usage limit or the fleet's token budget, and workers can't merge, approve or push to `main`.
 
@@ -41,10 +51,10 @@ claude --plugin-dir /path/to/orchestral
 ## Set up a project
 
 1. Open Claude Code in the project once and accept the trust prompt. Workers can't start in an untrusted folder.
-2. In that session, ask Claude to run the plugin's `orchestral init` by its full path, `~/.claude/plugins/cache/afterimaginary/orchestral/<version>/bin/orchestral`, where `<version>` is the newest folder there. Use the full path because another `orchestral` on `PATH` could be found first, and `init` writes the path of the binary it ran into the hook. It checks `claude`, `gh`, `git` and trust, creates a policy in your config directory, and installs a pre-push hook that stops workers pushing to `main`.
+2. In that session, ask Claude to run the plugin's `orchestral init` by its full path, `~/.claude/plugins/cache/afterimaginary/orchestral/<version>/bin/orchestral`, where `<version>` is the newest folder there. Use the full path because another `orchestral` on `PATH` could be found first, and `init` writes the path of the binary it ran into the hook. The hook moves on to the newest installed version by itself when the plugin updates. It checks `claude`, `gh`, `git` and trust, creates a policy in your config directory, and installs a pre-push hook that stops workers pushing to `main`.
 3. Edit the policy file `init` names. Set `fleet_token_budget`, the tokens the whole fleet may use in a run. Below the settings, write your rules in plain words, such as "Ask me before changing auth or billing."
 
-The policy is yours, not the project's, so it lives outside the repository, in `~/.config/orchestral` (or `$XDG_CONFIG_HOME/orchestral`), and workers can't change it from a branch. `policy.md` there applies to every repository, and `<owner>/<repo>/policy.md` to one GitHub repository, overriding the global settings one by one and adding its rules after the global ones. `orchestral policy` shows the result. A project that tracks an older `.orchestral/policy.md` gets it moved there by `init`; then remove it from the repository.
+The policy is yours, not the project's, so it lives outside the repository, in `~/.config/orchestral` (or `$XDG_CONFIG_HOME/orchestral`), and workers can't change it from a branch. `policy.md` there applies to every repository, and `<owner>/<repo>/policy.md` to one GitHub repository, overriding the global settings one by one and adding its rules after the global ones. `orchestral policy` shows the result. If a project keeps its policy in `.orchestral/policy.md`, `init` moves it to your config directory.
 
 A policy for a first run:
 
@@ -110,19 +120,19 @@ Requires a Rust toolchain. To run the checks before every push:
 git config core.hooksPath .githooks
 ```
 
-| Command       | Does                                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------ |
-| `make ready`  | Format check, lints, unit tests and CLI tests.                                             |
-| `make verify` | `ready`, integration tests, a release build and plugin validation. CI runs it on every PR. |
-| `make e2e`     | Real runs against the installed, logged-in `claude`. Never part of `verify` or CI.          |
-| `make sandbox` | A real worker on an issue in the sandbox repository. Run before each milestone closes.     |
+| Command        | Does                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `make ready`   | Format check, lints, unit tests and CLI tests.                                             |
+| `make verify`  | `ready`, integration tests, a release build and plugin validation. CI runs it on every PR. |
+| `make e2e`     | Real runs against the installed, logged-in `claude`. Never part of `verify` or CI.         |
+| `make sandbox` | A real worker on an issue in the sandbox repository.                                       |
 
 Integration tests run offline: `tests/common/mod.rs` puts stub `claude`, `gh`, `portless` and `tailscale` scripts on `PATH`, which record their calls and reply with canned output. Output captured from Claude Code is kept under `tests/fixtures/claude/<version>/`.
 
 Stubs can't catch a change in Claude Code itself, so `tests/e2e.rs` holds real runs, ignored by `cargo test`:
 
 - **`make e2e`** runs `compatibility`, which rereads a fresh print session's transcript, the plan limits and `claude agents` with the parsers, and `local_runner`, which rebuilds a repository with a local bare remote at `$TMPDIR/orchestral-e2e/repo` and runs `init`, `up`, `spawn`, `status`, `stop` and `resume` with a real worker on Sonnet. Claude Code only starts background sessions in a trusted directory, so run `claude` in that path once and accept the trust prompt; the runner refuses until then, and never changes Claude Code's settings itself.
-- **`make sandbox`** uses the sandbox clone at `~/src/orchestral-sandbox`. It refuses with local changes or live workers, files an issue, spawns a worker that opens a PR, checks `status` shows it, then closes the PR and issue and removes the worker. It grows as the fleet gains steps such as review and merge.
+- **`make sandbox`** uses a clone of a throwaway GitHub repository you own, at `$ORCHESTRAL_SANDBOX` (default `~/src/orchestral-sandbox`). It refuses with local changes or live workers, files an issue, spawns a worker that opens a PR, checks `status` shows it, then closes the PR and issue and removes the worker. It grows as the fleet gains steps such as review and merge.
 
 Both clear the caller's Claude Code session variables, so they run as if from a plain terminal.
 

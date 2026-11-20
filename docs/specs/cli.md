@@ -33,13 +33,13 @@ Shows the plan's usage windows, as percent used and reset time. When the limits 
 It reads them by running `claude -p /usage --no-session-persistence --settings '{"disableAllHooks":true}'` from a new temporary directory, without the calling session's `CLAUDECODE` or `CLAUDE_CODE_SESSION_ID` (ADR-0008). Each `Current …` line of that output is one window, and the rest is ignored. A window's reset time is read in the time zone its line gives, in the current year unless that puts it more than 180 days in the past, when it's the next year. A line without a reset time gives a window with none.
 
 ```text
-session: 2% used, resets Nov 2 at 6:49am PST
-week (all models): 26% used, resets Nov 4 at 12:59pm PST
-week (Fable): 0% used, resets Nov 4 at 12:59pm PST
+session: 2% used, resets Nov 2 at 6:49am CET
+week (all models): 26% used, resets Nov 4 at 12:59pm CET
+week (Fable): 0% used, resets Nov 4 at 12:59pm CET
 ```
 
 ```json
-{"available":true,"windows":[{"name":"session","percent":2,"resets":"2026-11-02T06:49:00-08:00[America/Los_Angeles]"}]}
+{"available":true,"windows":[{"name":"session","percent":2,"resets":"2026-11-02T06:49:00+01:00[Europe/Berlin]"}]}
 ```
 
 The limits are unavailable when `claude` can't run, exits non-zero (the reason then includes its first error line), or hasn't finished within 60 seconds, when it's stopped, when the output has no `Current` lines, or when any `Current` line doesn't parse, so a changed format is never guessed at:
@@ -84,7 +84,7 @@ The supervisor:
   - also **every minute**, after the poll, it merges each open PR whose merge check passes (see `merge-check`), and is the only thing that merges. A PR with no route is the owner's, so it merges only once they approved its head commit. It rules out from the poll's snapshot each PR that can't pass yet: while the fleet is paused, or a PR that's held, a draft, whose CI hasn't passed, whose review didn't pass at its head, that's on the owner's route without their approval of its head, or on the supervisor's with `supervisor_merges` off. It reads the rest from GitHub, runs the whole check, and merges with `gh pr merge <n> --squash|--merge|--rebase --match-head-commit <head>`, the method from the policy's `merge_method`, at the head the check passed (ADR-0003). A refused merge, such as when the head moved, is logged and checked again from scratch the next minute. A merge records `pr #42 "Add login" (worker issue-12): merged by the supervisor at 4f2c9e1: clean up issue-12, and start any work it unblocks`, and the PR is dropped from the snapshot so the next poll doesn't report it again,
   - also **every minute**, after the merges, it asks the owner to merge each PR that only needs their approval: an open PR in the poll's snapshot that isn't a draft, whose CI passed, whose review passed at its head, and that's on the owner's route (see `merge-check`), where `merge-check` fails nothing but `approved by the owner`. It adds the `needs-discussion` label to the PR, creating the label first when the repository has none, records it in the state's `asked`, and records `pr #40: ready for the owner to merge, and labelled needs-discussion: nothing to do until they approve it`. Each PR is asked about once. A PR asked about that no longer looks ready in the snapshot, because it went back to draft, its CI didn't pass at a new push, its review isn't a pass at its head, or it was routed to the supervisor, loses the label and is no longer asked about, so its reminders stop until it's ready again. A PR that's no longer open is forgotten. It works from the last successful poll. A `gh` call that fails for one PR is logged and tried again the next minute, and doesn't hold up the others,
   - also **every minute**, after the poll, it records a `heartbeat` event when a live session holds the claim and has had nothing for 55 minutes: no event recorded, no claim, and no request of its own, such as a conversation with the owner. A claim held by a session that has ended gets no heartbeats, so its successor doesn't receive a pile of them. Every event wakes the orchestrator, so the heartbeat only fills a 55-minute gap, which keeps its 1-hour prompt cache warm. It never needs action: `heartbeat: 2 workers open, your context 41%, budget about 1.2M of 3.0M; no action needed`. The context is the orchestrator's own, from its transcript, and the budget is this run's estimate against the policy's `fleet_token_budget`; either is left out when it can't be read. Heartbeats stop when the supervisor exits, after `--keepalive-hours` with no worker open,
-  - **every 5 minutes**, it reads and logs the plan windows. When a window reaches `plan_limit_percent`, the fleet winds down: it records `limits: the session window is 87% used, past plan_limit_percent (85%): start nothing new until it resets at Nov 2 at 6:00pm PST, and let workers finish their turn`, naming the window that resets last, as spawn's refusal does. Running workers aren't stopped. If another window passes the limit meanwhile, the fleet stays wound down for that one. Once no window is at the limit, and a read shows the window below it or its reset time has passed, it records `limits: the session window has reset: start ready work again`. Each change is one event, recorded before the state is saved, so a crash between them repeats the event rather than losing it.
+  - **every 5 minutes**, it reads and logs the plan windows. When a window reaches `plan_limit_percent`, the fleet winds down: it records `limits: the session window is 87% used, past plan_limit_percent (85%): start nothing new until it resets at Nov 2 at 6:00pm CET, and let workers finish their turn`, naming the window that resets last, as spawn's refusal does. Running workers aren't stopped. If another window passes the limit meanwhile, the fleet stays wound down for that one. Once no window is at the limit, and a read shows the window below it or its reset time has passed, it records `limits: the session window has reset: start ready work again`. Each change is one event, recorded before the state is saved, so a crash between them repeats the event rather than losing it.
   - **every 2 seconds**, on a thread of its own, it keeps the previews in line with what `orchestral try` asked for (see below), and **every minute**, after the poll, it stops the previews of PRs that merged or closed, as the poll's snapshot shows. A poll that failed stops nothing,
   - The minute and 5-minute ticks run on threads of their own, so a slow `claude` call never delays the 2-second tick. Each is skipped while its last run is still going,
 - every 2 seconds also checks whether it can exit, and exits once no worker is open, no preview is wanted or running (a failed one doesn't count), no open issue that gained the `needs-discussion` or `blocked` label during the run still has it, as the GitHub snapshot records (a label already there at the first poll counts only on an issue a worker is on), no PR it asked the owner to merge is still open, and `--keepalive-hours` (default 8, from 0 to 8784, fractions allowed) have passed since either was, by the wall clock, so time asleep counts. It checks again under the lock before removing its pid file, so a worker spawned at that moment keeps it running. A state file it can't read counts as work open.
@@ -108,8 +108,8 @@ A `Design proposals` line shows what proposals used this run, the finished ones 
 Fleet: not paused
 Budget: about 120000 tokens (estimate) of 3000000 used this run
 Plan limits:
-  session: 9% used, resets Nov 2 at 6:50am PST
-  week (all models): 27% used, resets Nov 4 at 1:00pm PST
+  session: 9% used, resets Nov 2 at 6:50am CET
+  week (all models): 27% used, resets Nov 4 at 1:00pm CET
 Workers: 2 of 3
   issue-12 · issue #12 · PR #40 · running, waiting: input needed · context 33954 tokens (17%) · cache cold · wake about 67908 tokens (estimate)
   issue-13 · issue #13 · unknown
@@ -138,13 +138,14 @@ Before a run has started, the budget line reads `Budget: no run has started; <n>
 
 ### `orchestral spawn <name> --issue <n> [--role worker|reviewer] [--pr <n>] [--proposal] --prompt <text> [--model <m>] [--effort <e>] [--json]`
 
-Starts a worker on an issue as a background Claude Code session. With `--role reviewer --pr <n>`, it starts a reviewer of that PR instead: the same kind of session, with the reviewer prompt below. The orchestrate skill doesn't start reviewers, since authors review their own PRs (ADR-0011). `--pr` is required for a reviewer and refused for a worker. `--proposal` starts a worker on its issue's design proposal, which `status` counts the spend of until `orchestral proposal-done <name>`; it's refused for a reviewer. `<name>` uses lowercase letters, digits and dashes, and is also the branch name. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
+Starts a worker on an issue as a background Claude Code session. With `--role reviewer --pr <n>`, it starts a reviewer of that PR instead: the same kind of session, with the reviewer prompt below. The orchestrate skill doesn't start reviewers, since authors review their own PRs (ADR-0011). `--pr` is required for a reviewer. For a worker, `--pr <n>` takes over that open PR from an earlier worker: the worker works on the PR's head branch instead of a new one, so it's the PR's worker, and `review`, `status` and `cleanup` find it by that branch. Taking over starts the PR's review rounds over, clearing its failed commits from `reviews`, since a PR is taken over after its worker is lost or after the owner unblocks it, and the fresh worker should get both rounds. `--proposal` starts a worker on its issue's design proposal, which `status` counts the spend of until `orchestral proposal-done <name>`; it's refused for a reviewer and for a takeover. `<name>` uses lowercase letters, digits and dashes, and is also the branch name, except for a takeover. The session is named `<repo slug>-<name>`, where the slug is the main checkout's directory name.
 
 It refuses, exiting `2`, when:
 
 - the session name is longer than 32 characters,
 - a worker with that name is already in the state,
 - for a reviewer, the PR already has one,
+- for a takeover, the PR isn't open, is from a fork, or another worker is on its branch (clean that one up first),
 - a live session already has that session name,
 - the fleet is paused (see `orchestral pause`),
 - the state already has `workers` workers, the policy's cap. Every recorded worker counts, stopped or not, until it's cleaned up,
@@ -158,15 +159,16 @@ When the plan limits can't be read, spawn warns on stderr and carries on, so una
 warning: plan limits are unavailable, so they weren't checked: claude -p /usage exited with exit status: 1
 ```
 
-The pause and the cap are checked again under the state lock as the worker is recorded, so two spawns at once can't both take the last place.
+The pause, the cap, a PR's reviewer and a taken-over PR's worker are checked again under the state lock as the worker is recorded, so two spawns at once can't both take the last place.
 
 Then it:
 
-1. Fetches `origin main` and adds a worktree at `.claude/worktrees/<name>` on a new branch `<name>` from `origin/main`, not tracking it, and adds `/.claude/worktrees/` and `/.proposals/` (where workers write proposal files) to `.git/info/exclude`.
-2. Writes the worker's `settings.json` and `prompt.md` to `.git/orchestral/workers/<name>/`.
-3. Records the worker in the state, so a crash during launch leaves a visible entry, with `--proposal` also recording when its proposal started.
-4. Runs `claude --bg` in the worktree with Remote Control, those settings and that prompt, auto permission mode, and the model and effort. `--model` and `--effort` override the policy's `default_model` and `default_effort`.
-5. Reads the job id from the `backgrounded · <id> · <session name>` line and saves it with the worker.
+1. Fetches `origin main` and adds a worktree at `.claude/worktrees/<name>` on a new branch `<name>` from `origin/main`, not tracking it. For a takeover, it fetches the PR's head branch instead and adds the worktree on a local branch of that name, tracking `origin/<branch>`, so a plain `git push` updates the PR. Either way, it adds `/.claude/worktrees/` and `/.proposals/` (where workers write proposal files) to `.git/info/exclude`.
+2. Copies the files the main checkout's `.worktreeinclude` names into the worktree, as Claude Code does for its own worktrees, so the worker and its preview have ignored files such as `.env` or `.claude/` files kept out of git. Each line is a pattern git matches as it does `.gitignore`'s, such as `.env`, `.claude/*` or `.claude/skills/`, with `#` starting a comment. Only untracked files in the main checkout that git ignores are copied, never other workers' worktrees, and a file the worktree already has, such as a tracked one, is never overwritten. Without a `.worktreeinclude`, nothing is copied.
+3. Writes the worker's `settings.json` and `prompt.md` to `.git/orchestral/workers/<name>/`.
+4. Records the worker in the state, so a crash during launch leaves a visible entry, with `--proposal` also recording when its proposal started, and a takeover clearing the PR's failed review rounds.
+5. Runs `claude --bg` in the worktree with Remote Control, those settings and that prompt, auto permission mode, and the model and effort. `--model` and `--effort` override the policy's `default_model` and `default_effort`.
+6. Reads the job id from the `backgrounded · <id> · <session name>` line and saves it with the worker.
 
 A failure after the worktree is added removes the worker, its worktree and its branch, so the same name can be tried again. The exception is `claude --bg` exiting `0` without printing a job id: a session may be running, so everything is kept and it's an error. When Claude Code doesn't trust the repository, spawn refuses and says to run `claude` once in the main checkout and accept the trust prompt. Claude Code trusts a worktree when it trusts its main checkout. Any other failure is an error.
 
@@ -178,12 +180,12 @@ The worker's settings apply to its process only:
 | `isolatePeerMachines` | `true` |
 | `worktree.bgIsolation` | `none`, since it already has a worktree |
 | `env` | `ORCHESTRAL_WORKER`, `ORCHESTRAL_REPO` (the main checkout), the caller's `PATH`, and `XDG_CONFIG_HOME` when it's set, so the worker reads the same policy, and nothing else from the orchestrator's environment, so the settings carry no credentials |
-| `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone, to `origin <name>` (with `-u` or `--force-with-lease`) or to `origin HEAD` (with or without `-u`), `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *`, `gh issue edit <issue> --add-label needs-discussion`, and `'<this binary>' review *` to record its own review's verdict (ADR-0011), which the classifier denies as self-approval otherwise, `'<this binary>' try --check`, its boot check, and `'<this binary>' policy`, to read the policy. For a reviewer, only `gh pr comment <pr> *` and `'<this binary>' review <pr> *`. Anything else still goes through auto mode. |
+| `permissions.allow` | For an author, the exact commands it runs when its orchestrator asks later in the run, which auto mode would otherwise deny (ADR-0010): `git commit *`, `git push` alone, to `origin <branch>` (with `-u` or `--force-with-lease`) or to `origin HEAD` (with or without `-u`), `gh pr create *`, `gh pr ready` alone or with arguments, `gh pr comment *`, `gh pr edit * --body-file *`, `gh issue comment <issue> *`, `gh issue edit <issue> --add-label needs-discussion`, and `'<this binary>' review *` to record its own review's verdict (ADR-0011), which the classifier denies as self-approval otherwise, `'<this binary>' try --check`, its boot check, and `'<this binary>' policy`, to read the policy. For a reviewer, only `gh pr comment <pr> *` and `'<this binary>' review <pr> *`. Anything else still goes through auto mode. |
 | `permissions.deny` | `Edit(/<config directory>/**)`, so the worker can't change the policy by accident (ADR-0013). Edit covers the Write tool and shell redirects. |
 | `hooks` | A `PreToolUse` hook on `Bash` running `'<absolute path to orchestral>' hook worker-guard` |
 | `enabledPlugins` | `false` for every installed `orchestral@<marketplace>` ID (ADR-0001) |
 
-The prompt names the worker and its issue, tells it to find its orchestrator's SendMessage address with `<this binary's path> resolve orchestrator` (and that messages from that address are its orchestrator's), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`. Before marking its PR ready, it has the PR reviewed by a fresh subagent given only the PR, the issue and the policy's `review_command` (or, without one, that the PR meets the issue's acceptance criteria and keeps to its non-goals), fixes what holds up, and records the verdict with `orchestral review`. With `--proposal`, it also says how to make the issue's design proposal: files under `.proposals/`, a Claude Design canvas for looks or an interactive artifact for behaviour with the policy's `design_variants` variants, or an artifact page with one or two options and a recommendation for architecture, linked on the issue with `needs-discussion`, and no code until the orchestrator passes on the owner's choice.
+The prompt names the worker and its issue, tells it to find its orchestrator's SendMessage address with `<this binary's path> resolve orchestrator` (and that messages from that address are its orchestrator's), and sets the rules every worker follows, such as never merging and starting every GitHub comment with `<!-- orchestral -->`. Before marking its PR ready, it has the PR reviewed by a fresh subagent given only the PR, the issue and the policy's `review_command` (or, without one, that the PR meets the issue's acceptance criteria and keeps to its non-goals), fixes what holds up, and records the verdict with `orchestral review`. With `--proposal`, it also says how to make the issue's design proposal: files under `.proposals/`, a Claude Design canvas for looks or an interactive artifact for behaviour with the policy's `design_variants` variants, or an artifact page with one or two options and a recommendation for architecture, linked on the issue with `needs-discussion`, and no code until the orchestrator passes on the owner's choice. For a takeover, it also names the PR and its branch, and says to read the PR first, keep what it has, push to its branch rather than open another PR, and that its review rounds start over.
 
 A reviewer's prompt names the PR and its issue. It says what to check: the policy's `review_command` verbatim when set, or else that the PR meets the issue's acceptance criteria and keeps to its non-goals. It asks for realistic failures in normal use rather than speculative hardening. The reviewer posts one PR comment, then records its verdict on the head commit it reviewed with `orchestral review`, and never edits code.
 
@@ -395,8 +397,15 @@ Makes the calling Claude Code session the repository's orchestrator, so two orch
 
 It refuses, exiting `2`, while another live session holds the claim. A holder whose session has ended loses the claim to the next caller, and claiming again from the holder succeeds.
 
+Events reach the orchestrator only through `orchestral watch`, so after claiming it checks that one is running for this session: its beat, `watch/<session id>` in the state directory, changed within the last 5 seconds. It waits up to 2 seconds for one, since a `watch` beats only once the state directory exists, and one may have just started. Without one, the claim still holds and exits `0`, with a `warning:` line saying how to start one: run `<plugin>/bin/orchestral watch` as a persistent background monitor, or restart the session so the plugin's monitor starts, then claim again. A session that opened before its folder was trusted, for example, never starts the plugin's monitor. With `--json`, the warnings are in `warnings`.
+
 ```text
 Session 00000000-0000-4000-8000-0000000000c1 is the orchestrator.
+```
+
+```text
+Session 00000000-0000-4000-8000-0000000000c1 is the orchestrator.
+warning: no event monitor is running for this session, so fleet events won't reach it; start `<plugin>/bin/orchestral watch` as a persistent background monitor, or restart the session so the plugin's `orchestral-events` monitor starts, then claim again
 ```
 
 ### `orchestral watch`
@@ -406,10 +415,11 @@ The event stream: the one way events reach the orchestrator. The plugin's monito
 Every second it:
 
 - finds the repository from its working directory, and stays silent outside one,
+- once the state directory exists, writes its pid to `watch/<CLAUDE_CODE_SESSION_ID>` there, a beat that tells `claim` it's running, whether or not its session holds the claim. It never creates the state directory, so a repository orchestral never ran in gets nothing,
 - reads the state, and stays silent unless the claim's session is its own `CLAUDE_CODE_SESSION_ID`, so it starts printing within 2 seconds of its session claiming,
 - prints the `text` of each complete event in `events.jsonl` with a `seq` after `watch-cursor`, one line each, with any line breaks in the text replaced by spaces. Then it saves the last `seq` printed as the cursor, so a crash in between repeats an event rather than losing it.
 
-A session that takes over the claim carries on from the cursor, so no event is lost. The cursor never moves back, so while two sessions' `watch` overlap during a handoff, an event can be printed twice but never skipped. A cursor at or past the state's `next_seq` was left by a state that has since been reset, and is ignored. An unreadable state or events file counts as nothing to print. It never exits by itself, only when its session ends: its stdout closes, or the session exits and leaves it orphaned.
+A session that takes over the claim carries on from the cursor, so no event is lost. The cursor never moves back, so while two sessions' `watch` overlap during a handoff, an event can be printed twice but never skipped. A cursor at or past the state's `next_seq` was left by a state that has since been reset, and is ignored. An unreadable state or events file counts as nothing to print. It never exits by itself, only when its session ends: its stdout closes, or the session exits and leaves it orphaned. It removes its beat as it exits.
 
 ### `orchestral resolve <name> [--json]`
 
@@ -433,7 +443,7 @@ Sets a repository up. First it checks that `claude` and `gh` are installed and l
    - When the repository tracks `.orchestral/policy.md`, on `origin/main` or in the main checkout before the first push, and that file doesn't exist yet, it copies the tracked policy there and says to remove it from the repository with `git rm .orchestral/policy.md`.
    - Otherwise, when neither policy file exists, it creates that file from a template. The template's `fleet_token_budget` is an example to replace.
    - Otherwise it keeps the existing files.
-2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. If the binary later moves, as a plugin update does, the block warns on each push and, when `ORCHESTRAL_WORKER` is set, still rejects a push to `refs/heads/main` itself, until init runs again. `doctor` warns when the hook is missing or calls a binary that has moved. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
+2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. When init runs from a marketplace install, whose build is at `plugins/cache/<marketplace>/<plugin>/<version>/target/release/orchestral` (ADR-0012), the block runs the newest executable build among that plugin's version directories, comparing modification times with the recorded binary, so a plugin update needs no new init. If no binary is left there, or init ran from elsewhere and the binary moved, the block warns on each push and, when `ORCHESTRAL_WORKER` is set, still rejects a push to `refs/heads/main` itself, until init runs again. `doctor` warns when the hook is missing, out of date, or has no binary left to call, and otherwise names the binary it calls. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
 
 ```text
 Created /home/dev/.config/orchestral/acme/app/policy.md. Set fleet_token_budget there.
@@ -471,7 +481,7 @@ Checks what a run needs and prints one line per check, as `ok`, `warn` or `FAIL`
 | `git` | Fails when it's missing. |
 | `trust` | Fails when Claude Code doesn't trust the main checkout. |
 | `policy` | Fails when the policy can't be read, and names the files it read when it can. Warns when the repository still tracks `.orchestral/policy.md`, which isn't read. |
-| `hook` | Warns when the pre-push hook isn't installed, or calls a binary that has moved; `orchestral init` fixes both. |
+| `hook` | Warns when the pre-push hook isn't installed, is out of date, or has no binary left to call; `orchestral init` fixes each. |
 | `portless` | Warns when it's missing, since previews can run without it. |
 | `tailscale` | Warns when it's missing or not running, since previews can run without it. |
 

@@ -12,6 +12,7 @@ State lives in `orchestral/` inside the repository's git common directory, which
 | `events.jsonl` | Every event, one per line, append-only. |
 | `github.json` | The supervisor's last GitHub snapshot: open issues and PRs, PR drafts, heads, CI results and reviews, comment ids seen recently, when the last poll succeeded, and its failures and backoff. |
 | `watch-cursor` | The `seq` of the last event `orchestral watch` delivered to the orchestrator, as a number and a newline. |
+| `watch/<session id>` | The beat of a running `orchestral watch` for that session: its pid, rewritten every second, so its modification time says whether it still runs. `claim` reads it. |
 | `lock` | The advisory lock. Its contents don't matter. |
 | `supervisor.pid` | The running supervisor, as `{"pid": n, "started": "<ps lstart>"}`. The start time tells it from a later process that reuses the pid. |
 | `logs/supervisor.log` | The supervisor's log, one timestamped line per entry. |
@@ -30,7 +31,7 @@ A JSON object with a `schema` version, currently `14`. A file with any other ver
 | `paused` | Whether the fleet is paused. While it is, spawns are refused. |
 | `run_started_at` | When the current run started, in RFC 3339 UTC, or null before the first run. The supervisor sets it when it starts with no worker open, and the fleet budget counts from here. |
 | `observed` | What the supervisor last saw each launched worker's session doing, by worker name: `busy`, `idle`, `waiting` or `exited`, or `lost` once a restarted supervisor finds it can't be resumed. |
-| `reviews` | The latest review verdict on each PR, by PR number: the head commit it's for as `sha`, whether it `passed`, and the commits that `failed` review, oldest first. |
+| `reviews` | The latest review verdict on each PR, by PR number: the head commit it's for as `sha`, whether it `passed`, and the commits that `failed` review, oldest first. A worker taking over the PR with `spawn --pr` clears `failed`. |
 | `wound_down` | The plan window the fleet wound down for, as `window` and its reset time `resets_at` (RFC 3339 UTC, or null), until it resets. Null otherwise. |
 | `usage` | The run's fleet usage as the supervisor last read it: `estimated_tokens` and when, `at`. Null until the first read of a run. |
 | `budget_reached` | Whether this run's usage has reached `fleet_token_budget`. A new run clears it and `usage`. |

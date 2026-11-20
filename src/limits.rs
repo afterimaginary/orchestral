@@ -11,7 +11,7 @@ use jiff::tz::TimeZone;
 use jiff::{ToSpan, Zoned};
 use serde::Serialize;
 
-/// How reset times are shown, such as `Nov 4 at 1:00pm PST`.
+/// How reset times are shown, such as `Nov 4 at 1:00pm CET`.
 pub const RESET_FORMAT: &str = "%b %-d at %-I:%M%P %Z";
 
 /// How long a read may take. A read normally takes a few seconds.
@@ -146,7 +146,7 @@ pub fn parse(output: &str, now: &Zoned) -> Result<Vec<Window>, String> {
     Ok(windows)
 }
 
-/// Parses `session: 2% used · resets Nov 2 at 6:49am (America/Los_Angeles)`.
+/// Parses `session: 2% used · resets Nov 2 at 6:49am (Europe/Berlin)`.
 /// The reset part is optional.
 fn parse_window(line: &str, now: &Zoned) -> Option<Window> {
     let (name, rest) = line.split_once(": ")?;
@@ -162,7 +162,7 @@ fn parse_window(line: &str, now: &Zoned) -> Option<Window> {
     })
 }
 
-/// Parses `Nov 2 at 6:49am (America/Los_Angeles)`, or `Nov 4 at 1pm (…)` on
+/// Parses `Nov 2 at 6:49am (Europe/Berlin)`, or `Nov 4 at 1pm (…)` on
 /// the hour. The line gives no year: it's the current year, unless that puts
 /// the time more than 180 days in the past, when it's the next year.
 fn parse_reset(text: &str, now: &Zoned) -> Option<Zoned> {
@@ -193,7 +193,7 @@ mod tests {
         datetime
             .parse::<DateTime>()
             .unwrap()
-            .in_tz("America/Los_Angeles")
+            .in_tz("Europe/Berlin")
             .unwrap()
     }
 
@@ -221,8 +221,7 @@ mod tests {
 
     #[test]
     fn a_time_on_the_hour_has_no_minutes() {
-        let output =
-            "Current week (all models): 26% used · resets Nov 4 at 1pm (America/Los_Angeles)";
+        let output = "Current week (all models): 26% used · resets Nov 4 at 1pm (Europe/Berlin)";
 
         let windows = parse(output, &at("2026-11-02T04:00")).unwrap();
 
@@ -249,7 +248,7 @@ mod tests {
     #[test]
     fn a_reset_just_passed_stays_in_the_current_year() {
         // A read just after a reset can still print the old time.
-        let output = "Current session: 44% used · resets Nov 2 at 1:49am (America/Los_Angeles)";
+        let output = "Current session: 44% used · resets Nov 2 at 1:49am (Europe/Berlin)";
 
         let windows = parse(output, &at("2026-11-02T01:52")).unwrap();
 
@@ -258,8 +257,7 @@ mod tests {
 
     #[test]
     fn a_reset_more_than_180_days_back_is_next_year() {
-        let output =
-            "Current week (all models): 5% used · resets Jan 3 at 9am (America/Los_Angeles)";
+        let output = "Current week (all models): 5% used · resets Jan 3 at 9am (Europe/Berlin)";
 
         let windows = parse(output, &at("2026-12-30T10:00")).unwrap();
 

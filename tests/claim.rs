@@ -1,13 +1,15 @@
 //! `orchestral claim` and `orchestral resolve`, from session records.
 //!
 //! This test process stands in for live sessions, and a pid no process has
-//! for dead ones.
+//! for dead ones. A real `orchestral watch` stands in for a session's event
+//! monitor.
 
 mod common;
 
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, SystemTime};
 
 use common::Stubs;
 use orchestral::sessions;
@@ -18,6 +20,31 @@ use tempfile::TempDir;
 const ME: &str = "00000000-0000-4000-8000-0000000000c1";
 const OTHER: &str = "00000000-0000-4000-8000-0000000000c2";
 const GONE_PID: u32 = 4_000_000;
+const NO_MONITOR: &str = "warning: no event monitor is running for this session";
+
+/// A session's `orchestral watch`, killed when dropped.
+struct Watch(Child);
+
+impl Watch {
+    fn start(cwd: &Path, session_id: &str) -> Watch {
+        let child = Command::new(env!("CARGO_BIN_EXE_orchestral"))
+            .arg("watch")
+            .current_dir(cwd)
+            .env("CLAUDE_CODE_SESSION_ID", session_id)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Watch(child)
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 struct Repo {
     dir: TempDir,
@@ -143,6 +170,7 @@ fn holder(repo: &Repo) -> Option<String> {
 #[test]
 fn claim_records_this_session() {
     let repo = Repo::new();
+    let _watch = Watch::start(&repo.main, ME);
 
     let output = repo.run(&["claim"], Some(ME));
 
@@ -152,6 +180,53 @@ fn claim_records_this_session() {
         format!("Session {ME} is the orchestrator.\n")
     );
     assert_eq!(holder(&repo).as_deref(), Some(ME));
+}
+
+#[test]
+fn claim_warns_without_an_event_monitor() {
+    let repo = Repo::new();
+
+    let output = repo.run(&["claim", "--json"], Some(ME));
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let printed: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let warnings = printed["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1);
+    let warning = warnings[0].as_str().unwrap();
+    assert!(warning.starts_with("no event monitor is running for this session"));
+    assert!(warning.contains(" watch` as a persistent background monitor"));
+    assert!(warning.contains("restart the session"));
+    assert_eq!(holder(&repo).as_deref(), Some(ME));
+}
+
+#[test]
+fn claim_ignores_another_sessions_monitor() {
+    let repo = Repo::new();
+    let _watch = Watch::start(&repo.main, OTHER);
+
+    let output = repo.run(&["claim"], Some(ME));
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains(NO_MONITOR), "{}", stdout(&output));
+}
+
+#[test]
+fn claim_warns_when_the_monitor_stopped_beating() {
+    let repo = Repo::new();
+    let beat = repo.store().dir().join("watch").join(ME);
+    fs::create_dir_all(beat.parent().unwrap()).unwrap();
+    fs::write(&beat, "4000000\n").unwrap();
+    File::options()
+        .write(true)
+        .open(&beat)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(60))
+        .unwrap();
+
+    let output = repo.run(&["claim"], Some(ME));
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains(NO_MONITOR), "{}", stdout(&output));
 }
 
 #[test]

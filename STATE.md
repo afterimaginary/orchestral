@@ -4,14 +4,14 @@
 
 ## Where We Are
 
-The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on a self-hosted runner. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `cleanup`, which removes a finished worker by its PR's state, `claim`, `resolve`, `init`, `doctor`, `policy`, which prints the policy in effect, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The repository is private and written to be made public later.
+The repository is set up with the plugin manifest, `make ready`, `make verify` and a `verify` check on GitHub-hosted macOS and Ubuntu runners. Milestone 1's tests are recorded as ADR-0001 to ADR-0008, with one, a long idle, deferred. The binary has its CLI conventions, `limits`, which reads the plan's usage windows from `/usage`, `spawn`, which refuses while paused or past the worker cap, plan limit or fleet budget (which counts from the run start the supervisor records), `pause`, `unpause`, `status`, which shows workers, plan windows, budget and pause, `up`, which starts the supervisor, which records an event when a worker goes idle, waits or exits, and for GitHub issues, PRs, CI and comments, and writes an idle heartbeat, `watch`, which the plugin's monitor runs to deliver those events to the orchestrator, `stop`, `resume`, `cleanup`, which removes a finished worker by its PR's state, `claim`, `resolve`, `init`, `doctor`, `policy`, which prints the policy in effect, and the worker guard and pre-push hooks. `make e2e` and `make sandbox` run real workers on demand. The `/orchestral:orchestrate` skill starts a fleet: doctor, claim, up, policy and status, then spawns workers and reacts to fleet events. No other product behaviour exists yet. The first release is v0.1.0.
 
 ## Features
 
 - [ ] Prove the risky parts
 - [x] Core: one worker, started and watched by the binary
 - [ ] Autonomous loop
-- [ ] User decision points: designs, findings, merges, previews
+- [x] User decision points: designs, findings, merges, previews
 - [ ] Test project
 
 ## Recently Done
@@ -63,13 +63,14 @@ The repository is set up with the plugin manifest, `make ready`, `make verify` a
 - Comment commands: the owner's `/approve`, `/hold` and `/unhold` comments record an approval of the head they saw and set or clear a hold, a new commit lapses an approval, and other comments go to the PR's worker (#50)
 - Boot check: `orchestral try --check` boots a worker's preview from its worktree and checks it answers before the PR reaches the owner, workers attach screenshots as an artifact page, and the orchestrator starts a preview for each PR waiting on the owner (#53)
 - Installs from this repository's marketplace, building its binary on first use (ADR-0012)
-- The policy moves out of managed repositories into `~/.config/orchestral`, with `orchestral policy` and an `init` import, and the plugin installs at local scope (#131, in review)
+- The policy moves out of managed repositories into `~/.config/orchestral`, with `orchestral policy` and an `init` import, and the plugin installs at local scope (#131)
+- Release preparation: `verify` on GitHub-hosted macOS and Ubuntu runners, `SECURITY.md`, the pre-push hook follows plugin updates (#126), `claim` warns when no event monitor is running (#128), workers get the files `.worktreeinclude` lists (#129), and `spawn --pr` lets a fresh worker take over a PR (#130)
 
 ## Up Next
 
 1. #2 (a 48-hour idle) is deferred until a machine can stay up that long.
 2. Milestone 3 (Autonomous loop): the long-idle run (#44) is deferred.
-3. Milestone 4 (User decision points): done once the boot check (#53) merges.
+3. First public release, v0.1.0.
 
 ## Needs Your Decision
 
@@ -77,6 +78,5 @@ None.
 
 ## Notes
 
-- Public-facing repository (see `CONTRIBUTING.md`): issues, PRs and commits must be presentable, with no personal identifiers.
-- `verify` runs on a self-hosted runner while the repository is private. Before it goes public, it must move to GitHub-hosted runners and the runner must be removed.
+- `verify` runs on GitHub-hosted macOS and Ubuntu runners; the final `verify` job passes only when both do.
 - Work order: earliest milestone, then the lowest-numbered issue whose dependencies are closed.
