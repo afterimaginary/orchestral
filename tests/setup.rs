@@ -4,8 +4,10 @@
 mod common;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::{Duration, SystemTime};
 
 use common::Stubs;
 use serde_json::{Value, json};
@@ -388,6 +390,90 @@ fn the_hook_still_rejects_a_workers_push_to_main_after_the_binary_moves() {
     assert!(owner.status.success(), "{}", stderr(&owner));
     assert!(stderr(&owner).contains("run orchestral init again"));
     assert_eq!(repo.doctor().1["hook"], "warn");
+}
+
+#[test]
+fn the_hook_runs_the_newest_install_after_a_plugin_update() {
+    let repo = Repo::new();
+    repo.write_policy();
+    // A marketplace install, built in its version's directory in the plugin
+    // cache.
+    let versions = repo
+        .dir
+        .path()
+        .join("claude/plugins/cache/market/orchestral");
+    let build = |version: &str| versions.join(version).join("target/release/orchestral");
+    let old = build("v1");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_orchestral"), &old).unwrap();
+    let output = repo
+        .stubs
+        .command(&old)
+        .arg("init")
+        .current_dir(&repo.main)
+        .env("CLAUDE_CONFIG_DIR", repo.config())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let hook = fs::read_to_string(repo.main.join(".git/hooks/pre-push")).unwrap();
+    assert!(hook.contains(&old.display().to_string()), "{hook}");
+
+    // An update installs and builds a new version, which records each run,
+    // and later removes the old one.
+    let new = build("v2");
+    fs::create_dir_all(new.parent().unwrap()).unwrap();
+    let runs = repo.dir.path().join("runs");
+    fs::write(
+        &new,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\nexec '{}' \"$@\"\n",
+            runs.display(),
+            env!("CARGO_BIN_EXE_orchestral")
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&new, fs::Permissions::from_mode(0o755)).unwrap();
+    let earlier = SystemTime::now() - Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(earlier)
+        .unwrap();
+
+    let push = |target: &str, worker: Option<&str>| {
+        let mut command = Command::new("git");
+        command
+            .args(["push", "-q", "origin", &format!("HEAD:{target}")])
+            .current_dir(&repo.main)
+            .env_remove("ORCHESTRAL_WORKER");
+        if let Some(worker) = worker {
+            command.env("ORCHESTRAL_WORKER", worker);
+        }
+        command.output().unwrap()
+    };
+    for removed in [false, true] {
+        if removed {
+            fs::remove_dir_all(versions.join("v1")).unwrap();
+        }
+        fs::remove_file(&runs).ok();
+        git(&repo.main, &["commit", "-q", "--allow-empty", "-m", "work"]);
+        let worker = push("main", Some("issue-12"));
+        assert!(!worker.status.success(), "{}", stderr(&worker));
+        assert!(stderr(&worker).contains("workers can't push to main"));
+        assert!(!stderr(&worker).contains("run orchestral init again"));
+        let ran = fs::read_to_string(&runs).unwrap_or_default();
+        assert!(ran.contains("hook pre-push"), "{ran:?}");
+        let owner = push("main", None);
+        assert!(owner.status.success(), "{}", stderr(&owner));
+        assert!(!stderr(&owner).contains("run orchestral init again"));
+        let output = repo.run(&["doctor"]);
+        let printed = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            printed.contains(&format!("calls {}", new.display())),
+            "{printed}"
+        );
+    }
 }
 
 #[test]

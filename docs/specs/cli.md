@@ -443,7 +443,7 @@ Sets a repository up. First it checks that `claude` and `gh` are installed and l
    - When the repository tracks `.orchestral/policy.md`, on `origin/main` or in the main checkout before the first push, and that file doesn't exist yet, it copies the tracked policy there and says to remove it from the repository with `git rm .orchestral/policy.md`.
    - Otherwise, when neither policy file exists, it creates that file from a template. The template's `fleet_token_budget` is an example to replace.
    - Otherwise it keeps the existing files.
-2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. If the binary later moves, as a plugin update does, the block warns on each push and, when `ORCHESTRAL_WORKER` is set, still rejects a push to `refs/heads/main` itself, until init runs again. `doctor` warns when the hook is missing or calls a binary that has moved. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
+2. Installs the pre-push hook in the hooks directory git uses, which is `core.hooksPath` when set. Orchestral's lines sit between `# >>> orchestral >>>` and `# <<< orchestral <<<`, right after the `#!` line. Running init again replaces that block. An existing hook keeps its own lines, and still gets the refs git passes on stdin. An existing hook that isn't a shell script is refused. When init runs from a marketplace install, whose build is at `plugins/cache/<marketplace>/<plugin>/<version>/target/release/orchestral` (ADR-0012), the block runs the newest executable build among that plugin's version directories, comparing modification times with the recorded binary, so a plugin update needs no new init. If no binary is left there, or init ran from elsewhere and the binary moved, the block warns on each push and, when `ORCHESTRAL_WORKER` is set, still rejects a push to `refs/heads/main` itself, until init runs again. `doctor` warns when the hook is missing, out of date, or has no binary left to call, and otherwise names the binary it calls. When git tracks the hook file, as with a `core.hooksPath` inside the repository, init says not to commit the block, since it names this machine's binary.
 
 ```text
 Created /home/dev/.config/orchestral/acme/app/policy.md. Set fleet_token_budget there.
@@ -481,7 +481,7 @@ Checks what a run needs and prints one line per check, as `ok`, `warn` or `FAIL`
 | `git` | Fails when it's missing. |
 | `trust` | Fails when Claude Code doesn't trust the main checkout. |
 | `policy` | Fails when the policy can't be read, and names the files it read when it can. Warns when the repository still tracks `.orchestral/policy.md`, which isn't read. |
-| `hook` | Warns when the pre-push hook isn't installed, or calls a binary that has moved; `orchestral init` fixes both. |
+| `hook` | Warns when the pre-push hook isn't installed, is out of date, or has no binary left to call; `orchestral init` fixes each. |
 | `portless` | Warns when it's missing, since previews can run without it. |
 | `tailscale` | Warns when it's missing or not running, since previews can run without it. |
 
