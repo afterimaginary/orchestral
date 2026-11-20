@@ -395,8 +395,15 @@ Makes the calling Claude Code session the repository's orchestrator, so two orch
 
 It refuses, exiting `2`, while another live session holds the claim. A holder whose session has ended loses the claim to the next caller, and claiming again from the holder succeeds.
 
+Events reach the orchestrator only through `orchestral watch`, so after claiming it checks that one is running for this session: its beat, `watch/<session id>` in the state directory, changed within the last 5 seconds. It waits up to 2 seconds for one, since a `watch` beats only once the state directory exists, and one may have just started. Without one, the claim still holds and exits `0`, with a `warning:` line saying how to start one: run `<plugin>/bin/orchestral watch` as a persistent background monitor, or restart the session so the plugin's monitor starts, then claim again. A session that opened before its folder was trusted, for example, never starts the plugin's monitor. With `--json`, the warnings are in `warnings`.
+
 ```text
 Session 00000000-0000-4000-8000-0000000000c1 is the orchestrator.
+```
+
+```text
+Session 00000000-0000-4000-8000-0000000000c1 is the orchestrator.
+warning: no event monitor is running for this session, so fleet events won't reach it; start `<plugin>/bin/orchestral watch` as a persistent background monitor, or restart the session so the plugin's `orchestral-events` monitor starts, then claim again
 ```
 
 ### `orchestral watch`
@@ -406,10 +413,11 @@ The event stream: the one way events reach the orchestrator. The plugin's monito
 Every second it:
 
 - finds the repository from its working directory, and stays silent outside one,
+- once the state directory exists, writes its pid to `watch/<CLAUDE_CODE_SESSION_ID>` there, a beat that tells `claim` it's running, whether or not its session holds the claim. It never creates the state directory, so a repository orchestral never ran in gets nothing,
 - reads the state, and stays silent unless the claim's session is its own `CLAUDE_CODE_SESSION_ID`, so it starts printing within 2 seconds of its session claiming,
 - prints the `text` of each complete event in `events.jsonl` with a `seq` after `watch-cursor`, one line each, with any line breaks in the text replaced by spaces. Then it saves the last `seq` printed as the cursor, so a crash in between repeats an event rather than losing it.
 
-A session that takes over the claim carries on from the cursor, so no event is lost. The cursor never moves back, so while two sessions' `watch` overlap during a handoff, an event can be printed twice but never skipped. A cursor at or past the state's `next_seq` was left by a state that has since been reset, and is ignored. An unreadable state or events file counts as nothing to print. It never exits by itself, only when its session ends: its stdout closes, or the session exits and leaves it orphaned.
+A session that takes over the claim carries on from the cursor, so no event is lost. The cursor never moves back, so while two sessions' `watch` overlap during a handoff, an event can be printed twice but never skipped. A cursor at or past the state's `next_seq` was left by a state that has since been reset, and is ignored. An unreadable state or events file counts as nothing to print. It never exits by itself, only when its session ends: its stdout closes, or the session exits and leaves it orphaned. It removes its beat as it exits.
 
 ### `orchestral resolve <name> [--json]`
 

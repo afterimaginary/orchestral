@@ -13,7 +13,7 @@ Run Orchestral by its full path, `${CLAUDE_PLUGIN_ROOT}/bin/orchestral`, as ever
 ## Start
 
 1. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral doctor`. If any check prints `FAIL`, tell the owner which checks failed and what each says, and stop.
-2. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral claim` to make this session the repository's orchestrator. If another live session holds the claim, tell the owner, and stop.
+2. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral claim` to make this session the repository's orchestrator. If another live session holds the claim, tell the owner, and stop. If it prints `warning: no event monitor is running`, no fleet events will reach you, so spawn nothing yet: start the `watch` command the warning names with the Monitor tool, as a persistent monitor, and claim again. If the warning remains, tell the owner to restart this session so the plugin's monitor starts, and stop.
 3. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral up` to start the supervisor, or find it running.
 4. Read the policy as Orchestral enforces it: `${CLAUDE_PLUGIN_ROOT}/bin/orchestral policy`. Its settings are the fleet's limits, and the prose after them is the owner's rules, the ones for every project first and then this project's. Follow them.
 5. Run `${CLAUDE_PLUGIN_ROOT}/bin/orchestral status` to see the workers, plan windows, budget and pause state. Treat each worker that's already idle (`done`) with a `(draft)` PR as if it had just gone idle, since no event will say so.
