@@ -14,6 +14,23 @@ Orchestral does the bookkeeping. One session plans and dispatches, a small binar
 
 **Status:** early. Every part runs end to end, from planning through review to merge. Long unattended runs, such as a fleet idling for days, are still being tested ([#2](https://github.com/afterimaginary/orchestral/issues/2), [#44](https://github.com/afterimaginary/orchestral/issues/44)), so stay within reach on a first run.
 
+## Quick start
+
+You need Claude Code and the GitHub CLI logged in, and Rust 1.89 or later (see [Requirements](#requirements)). In a terminal inside a GitHub project:
+
+```bash
+claude plugin marketplace add afterimaginary/orchestral
+claude plugin install orchestral@afterimaginary --scope local
+```
+
+Then open Claude Code in the project, accept the trust prompt, and in that session:
+
+1. Ask Claude to run the plugin's `orchestral init`. It creates your policy file.
+2. Set `fleet_token_budget` in that file: the tokens the fleet may use in a run.
+3. Run `/orchestral:orchestrate plan from docs/brief.md`. Nothing is filed until you approve the plan.
+
+[Set up a project](#set-up-a-project) and [Run it](#run-it) have the details.
+
 ## How it works
 
 You talk to one Claude Code session, the **orchestrator**. It turns a brief into milestones and GitHub issues, starts a **worker** session for each issue it can work on, and passes messages between you and the workers. Each worker works in its own git worktree (with the ignored files your `.worktreeinclude` lists, such as `.env`), opens a PR, has it reviewed by a fresh subagent, and marks it ready. A background **supervisor** process watches the workers and GitHub, wakes the orchestrator when something happens, and merges PRs once they've been approved and every check passes.
